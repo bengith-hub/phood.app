@@ -520,38 +520,38 @@ CREATE POLICY "All read config" ON config FOR SELECT USING (true);
 
 -- Fournisseurs: all read, admin writes
 CREATE POLICY "All read fournisseurs" ON fournisseurs FOR SELECT USING (true);
-CREATE POLICY "Admin manages fournisseurs" ON fournisseurs FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages fournisseurs" ON fournisseurs FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates fournisseurs" ON fournisseurs FOR UPDATE USING (get_my_role() = 'admin');
 CREATE POLICY "Admin deletes fournisseurs" ON fournisseurs FOR DELETE USING (get_my_role() = 'admin');
 
 -- Categories: all read, admin writes
 CREATE POLICY "All read categories" ON categories FOR SELECT USING (true);
-CREATE POLICY "Admin manages categories" ON categories FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages categories" ON categories FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates categories" ON categories FOR UPDATE USING (get_my_role() = 'admin');
 
 -- Mercuriale: all read, admin writes
 CREATE POLICY "All read mercuriale" ON mercuriale FOR SELECT USING (true);
-CREATE POLICY "Admin manages mercuriale" ON mercuriale FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages mercuriale" ON mercuriale FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates mercuriale" ON mercuriale FOR UPDATE USING (get_my_role() = 'admin');
 CREATE POLICY "Admin deletes mercuriale" ON mercuriale FOR DELETE USING (get_my_role() = 'admin');
 
 -- Historique prix: all read, admin + system writes
 CREATE POLICY "All read historique_prix" ON historique_prix FOR SELECT USING (true);
-CREATE POLICY "Admin manages historique_prix" ON historique_prix FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages historique_prix" ON historique_prix FOR INSERT WITH CHECK (get_my_role() = 'admin');
 
 -- Ingredients: all read, admin writes
 CREATE POLICY "All read ingredients" ON ingredients_restaurant FOR SELECT USING (true);
-CREATE POLICY "Admin manages ingredients" ON ingredients_restaurant FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages ingredients" ON ingredients_restaurant FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates ingredients" ON ingredients_restaurant FOR UPDATE USING (get_my_role() = 'admin');
 
 -- Recettes: all read, admin writes
 CREATE POLICY "All read recettes" ON recettes FOR SELECT USING (true);
-CREATE POLICY "Admin manages recettes" ON recettes FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages recettes" ON recettes FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates recettes" ON recettes FOR UPDATE USING (get_my_role() = 'admin');
 
 -- Recette ingredients: all read, admin writes
 CREATE POLICY "All read recette_ingredients" ON recette_ingredients FOR SELECT USING (true);
-CREATE POLICY "Admin manages recette_ingredients" ON recette_ingredients FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages recette_ingredients" ON recette_ingredients FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates recette_ingredients" ON recette_ingredients FOR UPDATE USING (get_my_role() = 'admin');
 CREATE POLICY "Admin deletes recette_ingredients" ON recette_ingredients FOR DELETE USING (get_my_role() = 'admin');
 
@@ -596,7 +596,7 @@ CREATE POLICY "Admin manages stocks" ON stocks FOR ALL USING (get_my_role() = 'a
 
 -- Zones stockage: all read, admin writes
 CREATE POLICY "All read zones" ON zones_stockage FOR SELECT USING (true);
-CREATE POLICY "Admin manages zones" ON zones_stockage FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages zones" ON zones_stockage FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates zones" ON zones_stockage FOR UPDATE USING (get_my_role() = 'admin');
 
 -- Inventaires: all read/create, admin validates
@@ -614,7 +614,7 @@ CREATE POLICY "All update inventaire_lignes" ON inventaire_lignes FOR UPDATE USI
 CREATE POLICY "All read ventes" ON ventes_historique FOR SELECT USING (true);
 CREATE POLICY "All read meteo" ON meteo_daily FOR SELECT USING (true);
 CREATE POLICY "All read evenements" ON evenements FOR SELECT USING (true);
-CREATE POLICY "Admin manages evenements" ON evenements FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages evenements" ON evenements FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates evenements" ON evenements FOR UPDATE USING (get_my_role() = 'admin');
 
 CREATE POLICY "All read factures" ON factures_pennylane FOR SELECT USING (true);
@@ -633,7 +633,7 @@ CREATE POLICY "Users update own notifications" ON notifications FOR UPDATE USING
 
 -- Modeles inventaires
 CREATE POLICY "All read modeles" ON modeles_inventaires FOR SELECT USING (true);
-CREATE POLICY "Admin manages modeles" ON modeles_inventaires FOR INSERT USING (get_my_role() = 'admin');
+CREATE POLICY "Admin manages modeles" ON modeles_inventaires FOR INSERT WITH CHECK (get_my_role() = 'admin');
 CREATE POLICY "Admin updates modeles" ON modeles_inventaires FOR UPDATE USING (get_my_role() = 'admin');
 
 -- ============================================================
