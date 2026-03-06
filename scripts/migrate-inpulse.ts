@@ -277,6 +277,10 @@ VALUES (${escSql(r.id)}, ${escSql(r.name)}, ${escSql(type)}, ${escSql(r.category
 sql.push('')
 
 // ── 6. Recette Ingredients (mappings) ──
+// Build sets of excluded IDs (test category) to skip orphan references
+const excludedRecipeIds = new Set(data.recipes.filter(r => r.category?.toLowerCase() === 'test').map(r => r.id))
+const excludedIngredientIds = new Set(data.ingredients.filter(i => i.category?.toLowerCase() === 'test').map(i => i.id))
+
 sql.push('-- Recette Ingredients (mappings)')
 for (const r of data.recipes) {
   if (r.category?.toLowerCase() === 'test') continue
@@ -285,6 +289,10 @@ for (const r of data.recipes) {
     const isIngredient = m.lnkEntityEntitymappingrel?.isIngredient ?? true
     const childUnit = m.lnkEntityEntitymappingrel?.unit || 'unit'
     const phoodUnit = mapUnit(childUnit)
+
+    // Skip mappings referencing excluded (test) items
+    if (isIngredient && excludedIngredientIds.has(m.childEntityId)) continue
+    if (!isIngredient && excludedRecipeIds.has(m.childEntityId)) continue
 
     if (isIngredient) {
       sql.push(`INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
