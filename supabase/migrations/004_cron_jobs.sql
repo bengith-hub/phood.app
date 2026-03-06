@@ -6,8 +6,8 @@
 --   1. Enable pg_cron extension in Supabase Dashboard > Database > Extensions
 --   2. Enable pg_net extension in Supabase Dashboard > Database > Extensions
 --   3. Deploy Edge Functions: supabase functions deploy
---   4. Replace {PROJECT_REF} with your Supabase project reference
---   5. Replace {SERVICE_ROLE_KEY} with your service role key
+--   4. Replace pfcvtpavwjchwdarhixc with your Supabase project reference
+--   5. Replace eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmY3Z0cGF2d2pjaHdkYXJoaXhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjc5MDA5MywiZXhwIjoyMDg4MzY2MDkzfQ.4SrufD-jJHa1JrH0Ma20potu7XiOnFWEY7XlFldCEbM with your service role key
 -- ============================================================
 
 -- Enable extensions (must be done by superuser / via Dashboard first)
@@ -27,9 +27,9 @@ SELECT cron.schedule(
   '0 5 * * *',
   $$
   SELECT net.http_post(
-    url := 'https://{PROJECT_REF}.supabase.co/functions/v1/sync-zelty-ca',
+    url := 'https://pfcvtpavwjchwdarhixc.supabase.co/functions/v1/sync-zelty-ca',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer {SERVICE_ROLE_KEY}',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmY3Z0cGF2d2pjaHdkYXJoaXhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjc5MDA5MywiZXhwIjoyMDg4MzY2MDkzfQ.4SrufD-jJHa1JrH0Ma20potu7XiOnFWEY7XlFldCEbM',
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
@@ -43,9 +43,9 @@ SELECT cron.schedule(
   '30 5 * * *',
   $$
   SELECT net.http_post(
-    url := 'https://{PROJECT_REF}.supabase.co/functions/v1/sync-pennylane',
+    url := 'https://pfcvtpavwjchwdarhixc.supabase.co/functions/v1/sync-pennylane',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer {SERVICE_ROLE_KEY}',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmY3Z0cGF2d2pjaHdkYXJoaXhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjc5MDA5MywiZXhwIjoyMDg4MzY2MDkzfQ.4SrufD-jJHa1JrH0Ma20potu7XiOnFWEY7XlFldCEbM',
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
@@ -59,9 +59,9 @@ SELECT cron.schedule(
   '0 6 * * *',
   $$
   SELECT net.http_post(
-    url := 'https://{PROJECT_REF}.supabase.co/functions/v1/sync-meteo',
+    url := 'https://pfcvtpavwjchwdarhixc.supabase.co/functions/v1/sync-meteo',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer {SERVICE_ROLE_KEY}',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmY3Z0cGF2d2pjaHdkYXJoaXhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjc5MDA5MywiZXhwIjoyMDg4MzY2MDkzfQ.4SrufD-jJHa1JrH0Ma20potu7XiOnFWEY7XlFldCEbM',
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
@@ -75,9 +75,9 @@ SELECT cron.schedule(
   '30 6 * * *',
   $$
   SELECT net.http_post(
-    url := 'https://{PROJECT_REF}.supabase.co/functions/v1/sync-gbp-hours',
+    url := 'https://pfcvtpavwjchwdarhixc.supabase.co/functions/v1/sync-gbp-hours',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer {SERVICE_ROLE_KEY}',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmY3Z0cGF2d2pjaHdkYXJoaXhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjc5MDA5MywiZXhwIjoyMDg4MzY2MDkzfQ.4SrufD-jJHa1JrH0Ma20potu7XiOnFWEY7XlFldCEbM',
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
