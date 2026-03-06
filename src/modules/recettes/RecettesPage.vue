@@ -1,0 +1,193 @@
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useRecettesStore } from '@/stores/recettes'
+import { useIngredientsStore } from '@/stores/ingredients'
+
+const router = useRouter()
+const recettesStore = useRecettesStore()
+const ingredientsStore = useIngredientsStore()
+
+const search = ref('')
+const tab = ref<'recettes' | 'ingredients' | 'sous_recettes'>('recettes')
+
+const filteredRecettes = computed(() => {
+  const q = search.value.toLowerCase()
+  const list = tab.value === 'sous_recettes'
+    ? recettesStore.sousRecettes
+    : recettesStore.plats
+
+  if (!q) return list
+  return list.filter(r =>
+    r.nom.toLowerCase().includes(q) ||
+    r.categorie?.toLowerCase().includes(q)
+  )
+})
+
+const filteredIngredients = computed(() => {
+  if (tab.value !== 'ingredients') return []
+  const q = search.value.toLowerCase()
+  if (!q) return ingredientsStore.actifs
+  return ingredientsStore.search(q)
+})
+
+const ALLERGEN_LABELS: Record<string, string> = {
+  gluten: 'Gluten', crustaces: 'Crustacés', oeufs: 'Oeufs', poissons: 'Poissons',
+  arachides: 'Arachides', soja: 'Soja', lait: 'Lait', fruits_a_coque: 'Fruits à coque',
+  celeri: 'Céleri', moutarde: 'Moutarde', sesame: 'Sésame', sulfites: 'Sulfites',
+  lupin: 'Lupin', mollusques: 'Mollusques',
+}
+
+onMounted(async () => {
+  await Promise.all([
+    recettesStore.fetchAll(),
+    ingredientsStore.fetchAll(),
+  ])
+})
+</script>
+
+<template>
+  <div class="recettes-page">
+    <div class="page-header">
+      <h1>Recettes & Ingrédients</h1>
+      <button class="btn-allergenes" @click="router.push('/recettes/allergenes')">
+        Vérif allergènes
+      </button>
+    </div>
+
+    <div class="tabs">
+      <button :class="{ active: tab === 'recettes' }" @click="tab = 'recettes'">
+        Recettes ({{ recettesStore.plats.length }})
+      </button>
+      <button :class="{ active: tab === 'ingredients' }" @click="tab = 'ingredients'">
+        Ingrédients ({{ ingredientsStore.actifs.length }})
+      </button>
+      <button :class="{ active: tab === 'sous_recettes' }" @click="tab = 'sous_recettes'">
+        Sous-recettes ({{ recettesStore.sousRecettes.length }})
+      </button>
+    </div>
+
+    <input
+      v-model="search"
+      type="search"
+      :placeholder="tab === 'ingredients' ? 'Rechercher un ingrédient...' : 'Rechercher une recette...'"
+      class="search-input"
+    />
+
+    <div v-if="recettesStore.loading || ingredientsStore.loading" class="loading">Chargement...</div>
+
+    <div v-else-if="tab !== 'ingredients'" class="item-list">
+      <div v-if="filteredRecettes.length === 0" class="empty">Aucun résultat</div>
+      <div v-for="r in filteredRecettes" :key="r.id" class="item-card">
+        <div class="item-main">
+          <span class="item-name">{{ r.nom }}</span>
+          <span v-if="r.categorie" class="item-cat">{{ r.categorie }}</span>
+        </div>
+        <div class="item-meta">
+          <span v-if="r.cout_matiere > 0" class="item-cost">{{ r.cout_matiere.toFixed(2) }} €</span>
+          <span v-if="r.zelty_product_id" class="badge-zelty">Zelty</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-else class="item-list">
+      <div v-if="filteredIngredients.length === 0" class="empty">Aucun résultat</div>
+      <div v-for="ing in filteredIngredients" :key="ing.id" class="item-card">
+        <div class="item-main">
+          <span class="item-name">{{ ing.nom }}</span>
+          <span v-if="ing.categorie" class="item-cat">{{ ing.categorie }}</span>
+        </div>
+        <div class="item-meta">
+          <span class="item-unit">{{ ing.unite_stock }}</span>
+          <span v-if="ing.cout_unitaire > 0" class="item-cost">{{ ing.cout_unitaire.toFixed(2) }} €/{{ ing.unite_stock }}</span>
+        </div>
+        <div v-if="ing.allergenes.length > 0" class="item-allergens">
+          <span v-for="a in ing.allergenes" :key="a" class="allergen-badge">
+            {{ ALLERGEN_LABELS[a] || a }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+h1 { font-size: 28px; }
+.btn-allergenes {
+  background: var(--color-warning);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--bg-main);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+.tabs button {
+  flex: 1;
+  height: 44px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.tabs button.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.search-input {
+  width: 100%;
+  height: 52px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 16px;
+  font-size: 18px;
+  background: var(--bg-surface);
+  margin-bottom: 16px;
+}
+.search-input:focus { outline: none; border-color: var(--color-primary); }
+
+.loading, .empty { text-align: center; color: var(--text-tertiary); padding: 40px; }
+
+.item-list { display: flex; flex-direction: column; gap: 6px; }
+.item-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+.item-main { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.item-name { font-size: 16px; font-weight: 600; }
+.item-cat { font-size: 13px; color: var(--text-tertiary); }
+.item-meta { display: flex; gap: 12px; font-size: 14px; }
+.item-cost { color: var(--color-primary); font-weight: 600; }
+.item-unit { color: var(--text-tertiary); }
+.badge-zelty {
+  background: #6366f1; color: white; padding: 2px 6px; border-radius: 6px;
+  font-size: 11px; font-weight: 600;
+}
+.item-allergens { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.allergen-badge {
+  background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+}
+</style>

@@ -347,6 +347,7 @@ Si besoin de changer le conditionnement d'un article, c'est l'admin qui modifie 
 | `heure_limite_commande` | string | Heure limite pour passer commande (ex: "14:00") |
 | `jours_livraison` | array | Jours de livraison possibles |
 | `delai_commande_livraison` | object | Mapping jour commande → jour livraison (ex: "lundi" → "mercredi") |
+| `creneau_livraison` | object | Créneau horaire de livraison estimé : `{debut: "07:00", fin: "09:00"}`. Configurable par l'admin. Utilisé pour l'heure de l'événement Google Calendar "🚚 Livraison". Si non renseigné → défaut 07:00-08:00 |
 | `franco_minimum` | number | Montant minimum de commande (franco) - **BLOQUANT** : envoi impossible si non atteint |
 | `conditions_paiement` | string | Conditions de paiement |
 | `mode_envoi` | string | "email" (défaut) ou "EDI" (futur) |
@@ -2102,9 +2103,13 @@ Le dashboard est orienté **opérationnel** pour donner en un coup d'oeil les in
 │  ├── BC20260303-001 - Transgourmet - envoyée ✅              │
 │  └── BC20260303-002 - Promocash - brouillon 📝              │
 │                                                             │
-│  🚚 RÉCEPTIONS À FAIRE                                      │
-│  ├── Transgourmet - livraison prévue aujourd'hui             │
-│  └── TTfoods - livraison prévue demain                      │
+│  🚚 LIVRAISONS DU JOUR                          [2 prévues] │
+│  ├── Transgourmet — 5 réf. / ~45 kg — BC20260305-001  📋    │
+│  │   Arrivée estimée : matin (transporteur régulier)         │
+│  └── Promocash — 3 réf. / ~12 kg — BC20260304-002     📋    │
+│      Arrivée estimée : avant 14h (retrait en magasin)        │
+│                                                              │
+│  📅 PROCHAINE LIVRAISON : demain — TTfoods (1 réf.)         │
 │                                                             │
 │  📊 STOCKS BAS (< tampon)                                   │
 │  ├── Poulet émincé : 2 kg (tampon: 5 kg)                    │
@@ -2113,6 +2118,28 @@ Le dashboard est orienté **opérationnel** pour donner en un coup d'oeil les in
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Widget "Livraisons du jour" — Détails :**
+
+Le widget affiche les commandes envoyées dont la `date_livraison_prevue` correspond à aujourd'hui. Pour chaque livraison :
+- **Fournisseur** + nombre de références + estimation poids/volume total
+- **Numéro BC** cliquable (ouvre le détail de la commande → l'opérateur peut préparer le contrôle)
+- **Icône 📋** : accès direct au contrôle de réception
+- Badge compteur `[N prévues]` visible même sans ouvrir le widget
+
+Le widget affiche aussi la **prochaine livraison** après aujourd'hui (J+1 ou plus) pour anticiper.
+
+**Statuts visuels :**
+| Icône | Signification |
+|---|---|
+| 🟡 | Livraison attendue (pas encore reçue) |
+| 🟢 | Livraison reçue, contrôle BL terminé |
+| 🔴 | Livraison en retard (date dépassée, pas encore reçue) |
+
+**Livraisons transporteur (date estimée) :**
+Certains fournisseurs livrent via transporteur sans créneau garanti. La date de livraison est estimée d'après le profil fournisseur (`delai_commande_livraison`). Un indicateur `(estimé)` est affiché pour ces livraisons.
+
+> **Astuce Google Nest Mini :** Les livraisons du jour sont également visibles via les événements Google Calendar (voir section 11.6). En configurant une **routine Google Home** ("Chaque matin à 7h30, lis mon calendrier"), le Nest Mini annonce automatiquement les livraisons attendues. L'opérateur n'a même pas besoin d'ouvrir l'app.
 
 ### 8.2 KPIs Coût matière (V1)
 
@@ -2534,23 +2561,61 @@ Le système crée des **événements récurrents** (format RRULE RFC 5545) dans 
 4. Les événements sont créés dans le Google Calendar choisi
 ```
 
-**Cycle de vie d'un événement commande :**
+**Deux types d'événements Google Calendar :**
+
+#### A. Événements de rappel COMMANDE (récurrents)
 
 | Action | Effet sur l'événement GC |
 |---|---|
-| Événement créé | Titre : "Commande [Fournisseur] — avant [heure limite]" |
+| Événement créé | Titre : "📝 Commande [Fournisseur] — avant [heure limite]" |
 | Commande envoyée via PhoodApp | Instance mise à jour : "✅ Commandé — [Fournisseur] — BC{numero}" |
 | Commande sautée (assez de stock) | Instance mise à jour : "⏭️ Sauté — [Fournisseur]" + log dans l'app |
 | Commande reportée | Instance déplacée à la date choisie par l'utilisateur |
 
-**Points importants :**
-- Les événements **restent dans le calendrier** même après action (historique visible dans GC)
-- Le calendrier cible est **configurable** par l'admin dans les paramètres (ex: calendrier dédié "Commandes Phood" ou calendrier existant)
-- Les événements incluent un **lien vers la commande** dans PhoodApp (URL dans la description)
-- Métadonnées custom via `extendedProperties.private` (ex: `{ orderStatus: 'ordered', orderId: 'BC20260310-001' }`)
-- Si le profil fournisseur change (jours de commande modifiés), les événements futurs sont mis à jour automatiquement
-- L'équipe peut s'abonner au calendrier pour recevoir les notifications GC sur leur téléphone
-- Modification d'une instance = elle devient une "exception" au récurrent (l'instance a un ID différent du parent)
+#### B. Événements de LIVRAISON attendue (ponctuels, créés automatiquement)
+
+Quand une commande est **envoyée** au fournisseur, PhoodApp crée automatiquement un événement ponctuel sur la **date de livraison prévue** :
+
+| Action | Effet sur l'événement GC |
+|---|---|
+| Commande envoyée | Création : "🚚 Livraison [Fournisseur] — [N] réf. / [X] kg — BC{numero}" |
+| Livraison reçue (contrôle BL démarré) | Mise à jour : "✅ Reçu — [Fournisseur] — BC{numero}" |
+| Livraison en retard (date dépassée) | Mise à jour : "⚠️ Retard — [Fournisseur] — BC{numero}" (automatique via CRON) |
+
+**Contenu de l'événement livraison :**
+
+```
+Titre : 🚚 Livraison Transgourmet — 5 réf. / 45 kg — BC20260305-001
+Heure : selon creneau_livraison du profil fournisseur (ex: 07:00–09:00). Défaut : 07:00–08:00
+Description :
+  Commande BC20260305-001
+  5 références commandées :
+  • Poulet émincé × 3 cartons (15 kg)
+  • Riz jasmin × 2 sacs (20 kg)
+  • Huile sésame × 1 bidon (5 L)
+  • Sauce soja × 1 bidon (5 L)
+  • Nems poulet × 1 carton (50 pcs)
+  📋 Ouvrir le contrôle : https://app.phood-restaurant.fr/reception/BC20260305-001
+```
+
+**Métadonnées :** `extendedProperties.private` : `{ type: 'delivery', orderId: 'BC20260305-001', status: 'pending' }`
+
+#### Configuration Google Nest Mini (une seule fois)
+
+Les événements livraison permettent au **Google Nest Mini** d'annoncer les livraisons du jour sans aucun développement supplémentaire :
+
+1. Ouvrir l'app **Google Home** sur le téléphone
+2. Aller dans **Routines** → Créer une routine
+3. Déclencheur : **Heure programmée** → 7h30, tous les jours
+4. Action : **Lire le calendrier** → sélectionner le calendrier "Commandes Phood"
+5. Appareil : Google Nest Mini de la cuisine
+
+Résultat : chaque matin à 7h30, le Nest Mini annonce :
+> *"Aujourd'hui, vous avez 2 événements. Livraison Transgourmet, 5 références 45 kilos. Livraison Promocash, 3 références 12 kilos."*
+
+Si aucune livraison n'est prévue → le Nest Mini dit simplement "Aucun événement aujourd'hui".
+
+> **Recommandation :** Utiliser un **calendrier GC dédié** (ex: "Commandes & Livraisons Phood") plutôt que le calendrier personnel, pour que le Nest Mini ne lise que les événements PhoodApp.
 
 ### 11.7 Google Business Profile (horaires d'ouverture)
 
