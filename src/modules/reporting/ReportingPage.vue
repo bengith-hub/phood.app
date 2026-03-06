@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useReportingStore, type ProduitRanking, type PrevisionJour } from '@/stores/reporting'
+import { useReportingStore, type PrevisionJour } from '@/stores/reporting'
 import { useRecettesStore } from '@/stores/recettes'
 
 const reportingStore = useReportingStore()

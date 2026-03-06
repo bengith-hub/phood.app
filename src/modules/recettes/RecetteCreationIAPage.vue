@@ -90,22 +90,22 @@ const dropdownResults = computed(() => {
 
 function openMatchDropdown(idx: number) {
   activeDropdownIdx.value = idx
-  dropdownSearch.value = parsedIngredients.value[idx].nom_extrait
+  dropdownSearch.value = parsedIngredients.value[idx]!.nom_extrait
 }
 
 function selectMatch(idx: number, ing: IngredientRestaurant) {
-  parsedIngredients.value[idx].matched_id = ing.id
-  parsedIngredients.value[idx].matched_nom = ing.nom
-  parsedIngredients.value[idx].confiance = 1
-  parsedIngredients.value[idx].createNew = false
+  parsedIngredients.value[idx]!.matched_id = ing.id
+  parsedIngredients.value[idx]!.matched_nom = ing.nom
+  parsedIngredients.value[idx]!.confiance = 1
+  parsedIngredients.value[idx]!.createNew = false
   activeDropdownIdx.value = null
   dropdownSearch.value = ''
 }
 
 function markCreateNew(idx: number) {
-  parsedIngredients.value[idx].createNew = true
-  parsedIngredients.value[idx].matched_id = null
-  parsedIngredients.value[idx].matched_nom = null
+  parsedIngredients.value[idx]!.createNew = true
+  parsedIngredients.value[idx]!.matched_id = null
+  parsedIngredients.value[idx]!.matched_nom = null
   activeDropdownIdx.value = null
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useInventaireStore } from '@/stores/inventaire'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useStocksStore } from '@/stores/stocks'
@@ -69,22 +69,6 @@ const filteredIngredients = computed(() => {
 })
 
 /** Ingredients filtered for the active inventaire (by zone or explicit selection) */
-const inventaireIngredients = computed(() => {
-  if (!activeInventaire.value) return []
-  const inv = activeInventaire.value
-  if (inv.type === 'complet') {
-    return ingredientsStore.actifs
-  }
-  // Partiel: filter by zones and/or specific ingredients
-  return ingredientsStore.actifs.filter(ing => {
-    if (inv.zones.length > 0 && ing.zone_stockage_id && inv.zones.includes(ing.zone_stockage_id)) {
-      return true
-    }
-    // Check if ingredient is explicitly selected (stored in zones array as "ing:xxx" prefix)
-    const ingIds = inv.zones.filter(z => z.startsWith('ing:')).map(z => z.slice(4))
-    return ingIds.includes(ing.id)
-  })
-})
 
 /** Group counting lines by zone */
 const lignesByZone = computed(() => {
@@ -339,7 +323,7 @@ async function openInventaire(inv: Inventaire) {
 
   // Default to first zone
   if (lignesByZone.value.length > 0) {
-    activeZoneId.value = lignesByZone.value[0].zoneId
+    activeZoneId.value = lignesByZone.value[0]!.zoneId
   } else {
     activeZoneId.value = null
   }
@@ -363,20 +347,20 @@ function recalcLigne(ligne: LigneComptage) {
 }
 
 function incrementSaisie(ligne: LigneComptage, idx: number) {
-  ligne.saisies[idx].qty = Math.round((ligne.saisies[idx].qty + 1) * 1000) / 1000
+  ligne.saisies[idx]!.qty = Math.round((ligne.saisies[idx]!.qty + 1) * 1000) / 1000
   recalcLigne(ligne)
 }
 
 function decrementSaisie(ligne: LigneComptage, idx: number) {
-  if (ligne.saisies[idx].qty > 0) {
-    ligne.saisies[idx].qty = Math.round((ligne.saisies[idx].qty - 1) * 1000) / 1000
+  if (ligne.saisies[idx]!.qty > 0) {
+    ligne.saisies[idx]!.qty = Math.round((ligne.saisies[idx]!.qty - 1) * 1000) / 1000
     recalcLigne(ligne)
   }
 }
 
 function setSaisieQty(ligne: LigneComptage, idx: number, val: string) {
   const num = parseFloat(val)
-  ligne.saisies[idx].qty = isNaN(num) ? 0 : Math.max(0, num)
+  ligne.saisies[idx]!.qty = isNaN(num) ? 0 : Math.max(0, num)
   recalcLigne(ligne)
 }
 

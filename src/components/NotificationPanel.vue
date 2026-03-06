@@ -74,7 +74,7 @@ const grouped = computed<NotificationGroup[]>(() => {
 
   return order
     .filter(label => groups[label] && groups[label].length > 0)
-    .map(label => ({ label, items: groups[label] }))
+    .map(label => ({ label, items: groups[label]! }))
 })
 
 const isEmpty = computed(() => store.notifications.length === 0)

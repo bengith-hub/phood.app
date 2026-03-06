@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecettesStore } from '@/stores/recettes'
 import { useIngredientsStore } from '@/stores/ingredients'
@@ -7,7 +7,6 @@ import { useAuth } from '@/composables/useAuth'
 import { supabase } from '@/lib/supabase'
 import type {
   Recette,
-  RecetteIngredient,
   RecetteType,
   RecetteVariante,
   RecetteModificateur,

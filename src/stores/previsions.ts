@@ -235,7 +235,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let w = 1; w <= weeks; w++) {
       const pastDate = new Date(targetDate)
       pastDate.setDate(pastDate.getDate() - (w * 7))
-      const pastStr = pastDate.toISOString().split('T')[0]
+      const pastStr = pastDate.toISOString().split('T')[0]!
       const vente = ventesParDate.value.get(pastStr)
       if (vente && vente.cloture_validee) {
         results.push(vente)
@@ -276,7 +276,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       checkDate.setDate(checkDate.getDate() + offset)
       if (checkDate.getDay() !== targetDow) continue
 
-      const checkStr = checkDate.toISOString().split('T')[0]
+      const checkStr = checkDate.toISOString().split('T')[0]!
       const vente = ventesParDate.value.get(checkStr)
       if (vente && vente.cloture_validee) {
         const diff = Math.abs(offset)
@@ -516,13 +516,13 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
     // 2. Weather coefficient (INVERTED for shopping center)
     const meteoDay = meteoParDate.value.get(dateStr) || null
-    const weatherCoeff = calculateWeatherCoefficient(meteoDay, factors)
+    calculateWeatherCoefficient(meteoDay, factors)
 
     // 3. Weather break detection
-    const breakCoeff = detectWeatherBreak(dateStr, factors)
+    detectWeatherBreak(dateStr, factors)
 
     // 4. Temperature extreme
-    const tempCoeff = calculateTemperatureCoefficient(meteoDay, targetDate, factors)
+    calculateTemperatureCoefficient(meteoDay, targetDate, factors)
 
     // 5. Events (vacances, soldes, ferie, custom)
     const dayEvents = getEventsForDate(dateStr)
@@ -575,7 +575,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let i = 0; i < 7; i++) {
       const d = new Date(start)
       d.setDate(d.getDate() + i)
-      const dateStr = d.toISOString().split('T')[0]
+      const dateStr = d.toISOString().split('T')[0]!
       results.push(calculateForecast(dateStr))
     }
 

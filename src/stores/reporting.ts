@@ -46,7 +46,7 @@ export interface PrevisionJour {
 
 // ── Helper: date formatting ──────────────────────────────────
 function toDateStr(d: Date): string {
-  return d.toISOString().split('T')[0]
+  return d.toISOString().split('T')[0]!
 }
 
 function startOfWeek(d: Date): Date {
@@ -65,9 +65,6 @@ function endOfWeek(d: Date): Date {
   return end
 }
 
-function startOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1)
-}
 
 function endOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0)
@@ -121,7 +118,7 @@ export const useReportingStore = defineStore('reporting', () => {
    * Load all data needed for the reporting module.
    * Fetches the last 8 weeks or 6 months depending on the period.
    */
-  async function fetchAll(recettes: Recette[]) {
+  async function fetchAll(_recettes: Recette[]) {
     loading.value = true
     error.value = null
 
@@ -229,7 +226,7 @@ export const useReportingStore = defineStore('reporting', () => {
         const cmReel = monthFactures.reduce((sum, f) => sum + f.montant_ht, 0)
 
         rows.push({
-          label: MOIS_FR[ms.getMonth()].substring(0, 3),
+          label: MOIS_FR[ms.getMonth()]!.substring(0, 3),
           dateDebut: msStr,
           dateFin: meStr,
           ca,
@@ -358,7 +355,7 @@ export const useReportingStore = defineStore('reporting', () => {
 
       jours.push({
         date: dayStr,
-        jourSemaine: JOURS_FR[day.getDay()],
+        jourSemaine: JOURS_FR[day.getDay()]!,
         prevision,
         reel,
         ecartPct,
