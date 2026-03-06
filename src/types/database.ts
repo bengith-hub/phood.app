@@ -20,6 +20,9 @@ export interface Fournisseur {
   jours_commande: number[] // [1,3,5] = lun, mer, ven
   jours_livraison: number[] // jours de la semaine
   delai_livraison_jours: number
+  delai_commande_livraison: Record<string, string> | null // mapping jour commande → jour livraison
+  creneau_livraison: { debut: string; fin: string } | null // ex: {debut: "07:00", fin: "09:00"}
+  heure_limite_commande: string | null // ex: "14:00"
   franco_minimum: number // en euros, BLOQUANT
   notes: string | null
   actif: boolean

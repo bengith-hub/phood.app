@@ -79,6 +79,7 @@ CREATE TABLE fournisseurs (
   heure_limite_commande TEXT, -- "14:00"
   jours_livraison INTEGER[] NOT NULL DEFAULT '{}',
   delai_commande_livraison JSONB, -- {"1": 3, "3": 5} jour commande → jour livraison
+  creneau_livraison JSONB, -- {"debut": "07:00", "fin": "09:00"}
   franco_minimum NUMERIC NOT NULL DEFAULT 0,
   conditions_paiement TEXT,
   mode_envoi TEXT NOT NULL DEFAULT 'email',

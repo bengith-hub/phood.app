@@ -56,6 +56,16 @@ const router = createRouter({
           meta: { requiresAdmin: true },
         },
         {
+          path: 'mercuriale',
+          name: 'mercuriale',
+          component: () => import('@/modules/commandes/MercurialePage.vue'),
+        },
+        {
+          path: 'mercuriale/:fournisseurId',
+          name: 'mercuriale-fournisseur',
+          component: () => import('@/modules/commandes/MercurialePage.vue'),
+        },
+        {
           path: 'inventaire',
           name: 'inventaire',
           component: () => import('@/modules/inventaire/InventairePage.vue'),
