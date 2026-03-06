@@ -131,6 +131,65 @@ Recette / Produit Caisse (synchro Zelty, variantes taille, modificateurs extra/s
 
 Architecture : `pg_cron` → `pg_net` (HTTP call) → Edge Function (Deno). Monitoring via table `cron_logs`.
 
+## 7.5 Aide à la commande
+
+Lors de la passation de commande, le système affiche pour chaque produit :
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Poulet émincé (Transgourmet)                            │
+│                                                         │
+│ Stock actuel : 12 kg                                    │
+│ Stock tampon : 5 kg                                     │
+│ Prévision conso (3 jours) : 18 kg                       │
+│ ──────────────────────────────                          │
+│ Recommandation : 11 kg         [  -  ] [ 11 ] [  +  ]  │
+│                                                         │
+│ 📦 Stock couvre jusqu'au : sam. 8 mars (3.8 jours)      │
+│ 🔄 Rotation : ~1 jour/carton (5 kg) 🚀                 │
+│                                                         │
+│ Dernière commande : 24/02 - 15 kg - 4.50€/kg           │
+│ Prix actuel : 4.65€/kg (+3.3%)                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Indicateurs de couverture et rotation :**
+
+📦 **Stock couvre jusqu'au** — Date calculée automatiquement :
+
+```
+jours_couverture = (stock_actuel + quantite_commandee − stock_tampon) / consommation_moyenne_journaliere
+date_couverture = date_livraison_prevue + jours_couverture
+```
+
+- La consommation moyenne est calculée sur les 4 dernières semaines (même jour de semaine)
+- La quantité commandée est celle affichée dans le champ (recommandation ou ajustée manuellement)
+- **Mise à jour en temps réel** : quand l'opérateur modifie la quantité avec `[+]` / `[-]`, la date de couverture se recalcule instantanément
+- Si la date de couverture dépasse la prochaine livraison possible du même fournisseur → affichage vert. Sinon → orange
+
+🔄 **Rotation** — Durée de vie d'un conditionnement de commande :
+
+```
+duree_rotation = conditionnement_en_unite_stock / consommation_moyenne_journaliere
+```
+
+Exemples types :
+| Produit | Conditionnement | Conso/jour | Rotation | Icône |
+|---|---|---|---|---|
+| Poulet émincé (5 kg) | 5 kg | 6 kg/j | < 1 jour | 🚀 |
+| Huile de sésame (5L) | 5 L | 0.15 L/j | ~1 mois | 🔄 |
+| Sauce soja (5L) | 5 L | 0.03 L/j | ~6 mois | 🐌 |
+| Épice citronnelle (500g) | 500 g | 5 g/j | ~3 mois | 🐌 |
+
+**Icônes de rotation :**
+| Icône | Durée | Signification |
+|---|---|---|
+| 🚀 | < 1 semaine | Rotation rapide — produit à commander fréquemment |
+| 🔄 | 1 semaine - 2 mois | Rotation moyenne |
+| 🐌 | > 2 mois | Rotation lente — attention au sur-stock |
+
+> **Note :** La rotation est purement informative en V1. Le croisement avec la DLC/DDM (`dlc_ddm_jours` en mercuriale) pour alerter sur un risque de gaspillage est prévu en V2 dans le cadre du suivi DLC complet.
+
 ## Données existantes
 - inpulse export : `/Projet/PhoodApp/inpulse_export_phood_actifs.json` (6.85 MB, 383 ingrédients actifs, 209 avec fournisseurs)
 - Recettes : `/RECETTES/` (Google Drive)
