@@ -1,29 +1,18 @@
-// Sync Google Business Profile hours → horaires_ouverture
+// Sync Google Places API hours → horaires_ouverture
 // Triggered daily at 07:30 via pg_cron → pg_net
-// Uses OAuth 2.0 (not service account — GBP requires it)
-// Fallback: manual entry in Supabase if GBP API not accessible
+// Uses Places API (New) with API key — no OAuth needed
+// Replaces GBP API which requires special access approval from Google
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const GBP_API_BASE = 'https://mybusinessbusinessinformation.googleapis.com/v1'
+// Places API (New) day mapping: 0=Sunday, 1=Monday, ..., 6=Saturday
+// Our DB uses the same convention: 0=dimanche, 1=lundi, ..., 6=samedi
+// So no mapping needed — they match directly
 
-// Day mapping: GBP uses MONDAY=0..SUNDAY=6, our DB uses 0=dimanche..6=samedi
-const GBP_DAY_TO_DB: Record<string, number> = {
-  SUNDAY: 0,
-  MONDAY: 1,
-  TUESDAY: 2,
-  WEDNESDAY: 3,
-  THURSDAY: 4,
-  FRIDAY: 5,
-  SATURDAY: 6,
-}
-
-interface GBPPeriod {
-  openDay: string
-  openTime: { hours: number; minutes: number }
-  closeDay: string
-  closeTime: { hours: number; minutes: number }
+interface PlacesPeriod {
+  open: { day: number; hour: number; minute: number }
+  close: { day: number; hour: number; minute: number }
 }
 
 serve(async (req) => {
@@ -47,14 +36,10 @@ serve(async (req) => {
 
     const startTime = Date.now()
 
-    // OAuth 2.0 token refresh (GBP requires OAuth, not service account)
-    const gbpRefreshToken = Deno.env.get('GBP_REFRESH_TOKEN')
-    const googleClientId = Deno.env.get('GOOGLE_CLIENT_ID')
-    const googleClientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET')
-    const gbpLocationName = Deno.env.get('GBP_LOCATION_NAME') // e.g. "locations/12345"
+    const placesApiKey = Deno.env.get('GOOGLE_PLACES_API_KEY')
+    const placeId = Deno.env.get('PHOOD_BEGLES_PLACE_ID')
 
-    if (!gbpRefreshToken || !googleClientId || !googleClientSecret || !gbpLocationName) {
-      // Fallback: GBP not configured, skip silently
+    if (!placesApiKey || !placeId) {
       const durationMs = Date.now() - startTime
       if (log?.id) {
         await supabase
@@ -63,53 +48,35 @@ serve(async (req) => {
             status: 'success',
             finished_at: new Date().toISOString(),
             duration_ms: durationMs,
-            error_message: 'GBP not configured — skipped (using manual hours)',
+            error_message: 'Places API not configured — skipped (using manual hours)',
           })
           .eq('id', log.id)
       }
 
       return new Response(
-        JSON.stringify({ success: true, skipped: true, reason: 'GBP not configured' }),
+        JSON.stringify({ success: true, skipped: true, reason: 'Places API not configured' }),
         { headers: { 'Content-Type': 'application/json' } }
       )
     }
 
-    // Refresh access token
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: googleClientId,
-        client_secret: googleClientSecret,
-        refresh_token: gbpRefreshToken,
-        grant_type: 'refresh_token',
-      }),
-    })
-
-    if (!tokenResponse.ok) {
-      throw new Error(`OAuth token refresh failed: ${tokenResponse.status}`)
-    }
-
-    const tokenData = await tokenResponse.json()
-    const accessToken = tokenData.access_token
-
-    // Fetch location details including hours
-    const locationResponse = await fetch(
-      `${GBP_API_BASE}/${gbpLocationName}?readMask=regularHours`,
+    // Fetch place details with opening hours
+    const placesResponse = await fetch(
+      `https://places.googleapis.com/v1/places/${placeId}`,
       {
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json',
+          'X-Goog-Api-Key': placesApiKey,
+          'X-Goog-FieldMask': 'regularOpeningHours',
         },
       }
     )
 
-    if (!locationResponse.ok) {
-      throw new Error(`GBP API error: ${locationResponse.status}`)
+    if (!placesResponse.ok) {
+      const errorBody = await placesResponse.text()
+      throw new Error(`Places API error ${placesResponse.status}: ${errorBody}`)
     }
 
-    const location = await locationResponse.json()
-    const periods: GBPPeriod[] = location.regularHours?.periods || []
+    const placeData = await placesResponse.json()
+    const periods: PlacesPeriod[] = placeData.regularOpeningHours?.periods || []
 
     // Build hours map (all days default to closed)
     const hoursMap: Record<number, { ouverture: string; fermeture: string; ferme: boolean }> = {}
@@ -118,11 +85,11 @@ serve(async (req) => {
     }
 
     for (const period of periods) {
-      const dayNum = GBP_DAY_TO_DB[period.openDay]
-      if (dayNum === undefined) continue
+      const dayNum = period.open.day
+      if (dayNum < 0 || dayNum > 6) continue
 
-      const openTime = `${String(period.openTime.hours).padStart(2, '0')}:${String(period.openTime.minutes || 0).padStart(2, '0')}`
-      const closeTime = `${String(period.closeTime.hours).padStart(2, '0')}:${String(period.closeTime.minutes || 0).padStart(2, '0')}`
+      const openTime = `${String(period.open.hour).padStart(2, '0')}:${String(period.open.minute || 0).padStart(2, '0')}`
+      const closeTime = `${String(period.close.hour).padStart(2, '0')}:${String(period.close.minute || 0).padStart(2, '0')}`
 
       hoursMap[dayNum] = {
         ouverture: openTime,
@@ -136,12 +103,12 @@ serve(async (req) => {
     for (const [dayStr, hours] of Object.entries(hoursMap)) {
       const jourSemaine = parseInt(dayStr)
 
-      // Delete existing for this day, then insert (simple approach for 7 rows)
+      // Delete existing places-sourced rows for this day, then insert
       await supabase
         .from('horaires_ouverture')
         .delete()
         .eq('jour_semaine', jourSemaine)
-        .eq('source', 'gbp')
+        .eq('source', 'places')
 
       const { error } = await supabase
         .from('horaires_ouverture')
@@ -151,7 +118,7 @@ serve(async (req) => {
             heure_ouverture: hours.ouverture,
             heure_fermeture: hours.fermeture,
             est_ferme: hours.ferme,
-            source: 'gbp',
+            source: 'places',
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'jour_semaine' }

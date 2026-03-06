@@ -23,7 +23,7 @@ En cours de finalisation. Contient TOUTES les spécifications fonctionnelles, te
 | Email | Gmail API v1 | Service Account + Domain-Wide Delegation. Envoi via `team.begles@phood-restaurant.fr`. MIME via nodemailer/MailComposer |
 | Comptabilité | PennyLane API v2 | Token entreprise lecture seule. Changelog polling quotidien. Détection dépannage + rapprochement factures/BL + coût réel |
 | Calendrier | Google Calendar API v3 | Même service account que Gmail. RRULE RFC 5545, modification instances, extendedProperties.private |
-| Horaires | Google Business Profile API v1 | OAuth 2.0 obligatoire (pas de service account). Approbation requise. Fallback : saisie manuelle Supabase |
+| Horaires | Google Places API (New) | Clé API simple. Place ID Bègles : `ChIJRRTmT5gmVQ0Rk4sBmRERCLI`. Remplace GBP API (accès refusé par Google) |
 | Météo | Open-Meteo | Free tier sans clé API. Modèles Météo-France AROME 1.5km + ARPEGE. Coordonnées : lat=44.83, lon=-0.57 |
 | PDF | jsPDF + jspdf-autotable | Génération client-side (~526 KB bundle). Bons de commande brandés Phood. Fonctionne hors-ligne |
 | Backup | Google Drive API | Sauvegarde automatique quotidienne des données Supabase |
@@ -69,7 +69,7 @@ Recette / Produit Caisse (synchro Zelty, variantes taille, modificateurs extra/s
 
 ### Google Cloud (un seul projet)
 - **Service Account + Domain-Wide Delegation** pour Gmail + Calendar (scopes : `gmail.send`, `calendar`)
-- **OAuth 2.0** séparé pour Business Profile (scope : `business.manage`)
+- **Places API (New)** pour horaires d'ouverture (clé API simple, pas d'OAuth). Remplace GBP API v1 dont l'accès a été refusé par Google
 - Clé JSON service account → variable d'env Netlify (base64)
 
 ### Zelty (caisse)
@@ -127,7 +127,7 @@ Recette / Produit Caisse (synchro Zelty, variantes taille, modificateurs extra/s
 | Sync CA Zelty | 06:00 | Zelty `/closures` | `ventes_historique` |
 | Sync factures PennyLane | 06:30 | PennyLane `/changelogs/supplier_invoices` | `factures_pennylane` |
 | Prévisions météo | 07:00 | Open-Meteo `/v1/meteofrance` | `meteo_daily` |
-| Sync horaires GBP | 07:30 | GBP `/locations/{id}` | `horaires_ouverture` |
+| Sync horaires Places | 07:30 | Places API `/v1/places/{id}` | `horaires_ouverture` |
 
 Architecture : `pg_cron` → `pg_net` (HTTP call) → Edge Function (Deno). Monitoring via table `cron_logs`.
 
