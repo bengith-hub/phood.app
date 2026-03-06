@@ -30,7 +30,7 @@ export function useLocking(resourceType: string) {
             isLocked.value = false
             isMyLock.value = false
           } else {
-            const firstPresence = presences[0]
+            const firstPresence = presences[0]!
             lockedBy.value = firstPresence
             isLocked.value = true
             isMyLock.value = firstPresence.user_id === userId

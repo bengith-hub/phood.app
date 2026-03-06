@@ -24,7 +24,7 @@ export function useAutoSave<T extends Record<string, unknown>>(
     // Always save to IndexedDB first
     try {
       const dexieTableName = options.dexieTable || options.table
-      const dexieTable = (db as Record<string, unknown>)[dexieTableName]
+      const dexieTable = (db as unknown as Record<string, unknown>)[dexieTableName]
       if (dexieTable && typeof (dexieTable as { put: Function }).put === 'function') {
         await (dexieTable as { put: Function }).put({
           ...data.value,

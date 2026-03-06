@@ -19,7 +19,7 @@ const filtered = computed(() => {
   return store.fournisseurs.filter(f =>
     f.nom.toLowerCase().includes(q) ||
     f.contact_nom?.toLowerCase().includes(q) ||
-    f.email_commande?.toLowerCase().includes(q)
+    f.contact_email?.toLowerCase().includes(q)
   )
 })
 
@@ -29,8 +29,8 @@ function openEditor(fournisseur?: Fournisseur) {
     : {
         nom: '',
         contact_nom: '',
-        email_commande: '',
-        telephone: '',
+        contact_email: '',
+        contact_telephone: '',
         jours_commande: [],
         jours_livraison: [],
         delai_livraison_jours: 1,
@@ -108,13 +108,13 @@ onMounted(() => store.fetchAll())
             <span class="detail-label">Contact</span>
             <span>{{ f.contact_nom }}</span>
           </div>
-          <div v-if="f.email_commande" class="detail">
+          <div v-if="f.contact_email" class="detail">
             <span class="detail-label">Email</span>
-            <span>{{ f.email_commande }}</span>
+            <span>{{ f.contact_email }}</span>
           </div>
-          <div v-if="f.telephone" class="detail">
+          <div v-if="f.contact_telephone" class="detail">
             <span class="detail-label">Tél</span>
-            <span>{{ f.telephone }}</span>
+            <span>{{ f.contact_telephone }}</span>
           </div>
           <div class="detail">
             <span class="detail-label">Commande</span>
@@ -148,11 +148,11 @@ onMounted(() => store.fetchAll())
             </div>
             <div class="field">
               <label>Téléphone</label>
-              <input v-model="editingFournisseur.telephone" type="tel" />
+              <input v-model="editingFournisseur.contact_telephone" type="tel" />
             </div>
             <div class="field full">
               <label>Email commande</label>
-              <input v-model="editingFournisseur.email_commande" type="email" />
+              <input v-model="editingFournisseur.contact_email" type="email" />
             </div>
             <div class="field">
               <label>Franco minimum (€)</label>

@@ -136,8 +136,8 @@ function decrement(produit: Mercuriale) {
 function getCondLabel(produit: Mercuriale): string {
   const conds = produit.conditionnements as Conditionnement[]
   if (!conds || conds.length === 0) return produit.unite_stock
-  const cond = conds[produit.conditionnement_commande_idx] || conds[0]
-  return cond.nom
+  const cond = conds[produit.conditionnement_commande_idx] ?? conds[0]
+  return cond?.nom ?? produit.unite_stock
 }
 
 async function handleEnvoyer() {
@@ -152,7 +152,7 @@ async function handleEnvoyer() {
         mercuriale_id: l.mercuriale_id,
         quantite: l.quantite,
         conditionnement_idx: l.conditionnement_idx,
-        prix_unitaire_ht: l.prix_unitaire,
+        prix_unitaire: l.prix_unitaire,
         montant_ht: montantHt,
         montant_ttc: montantHt * (1 + l.tva_taux / 100),
       })
@@ -177,7 +177,7 @@ async function handleSaveDraft() {
         mercuriale_id: l.mercuriale_id,
         quantite: l.quantite,
         conditionnement_idx: l.conditionnement_idx,
-        prix_unitaire_ht: l.prix_unitaire,
+        prix_unitaire: l.prix_unitaire,
         montant_ht: montantHt,
         montant_ttc: montantHt * (1 + l.tva_taux / 100),
       })
@@ -212,7 +212,7 @@ onMounted(async () => {
           mercuriale_id: l.mercuriale_id,
           quantite: l.quantite,
           conditionnement_idx: l.conditionnement_idx,
-          prix_unitaire: l.prix_unitaire_ht,
+          prix_unitaire: l.prix_unitaire,
           tva_taux: mercurialeStore.getById(l.mercuriale_id)?.tva_taux || 5.5,
         })
       }

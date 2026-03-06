@@ -80,7 +80,7 @@ onMounted(async () => {
   ])
   // Auto-select first fournisseur if none selected
   if (!selectedFournisseurId.value && fournisseurs.value.length > 0) {
-    selectFournisseur(fournisseurs.value[0].id)
+    selectFournisseur(fournisseurs.value[0]!.id)
   } else if (selectedFournisseurId.value) {
     selectFournisseur(selectedFournisseurId.value)
   }

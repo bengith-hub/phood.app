@@ -55,7 +55,7 @@ export function generateCommandePdf(data: PdfData): jsPDF {
       merc?.ref_fournisseur || '',
       condLabel,
       String(l.quantite),
-      `${l.prix_unitaire_ht.toFixed(2)} €`,
+      `${l.prix_unitaire.toFixed(2)} €`,
       `${l.montant_ht.toFixed(2)} €`,
     ]
   })
@@ -109,6 +109,6 @@ function getCondLabel(merc: Mercuriale | undefined, idx: number): string {
   if (!merc) return ''
   const conds = merc.conditionnements as Conditionnement[]
   if (!conds || conds.length === 0) return merc.unite_stock
-  const cond = conds[idx] || conds[0]
-  return cond.nom
+  const cond = conds[idx] ?? conds[0]
+  return cond?.nom ?? merc.unite_stock
 }
