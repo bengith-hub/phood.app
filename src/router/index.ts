@@ -66,6 +66,11 @@ const router = createRouter({
           component: () => import('@/modules/commandes/MercurialePage.vue'),
         },
         {
+          path: 'stocks',
+          name: 'stocks',
+          component: () => import('@/modules/dashboard/StocksPage.vue'),
+        },
+        {
           path: 'inventaire',
           name: 'inventaire',
           component: () => import('@/modules/inventaire/InventairePage.vue'),

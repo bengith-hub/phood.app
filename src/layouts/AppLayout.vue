@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
 import { useOffline } from '@/composables/useOffline'
+import { useNotificationsStore } from '@/stores/notifications'
 
 const route = useRoute()
 const router = useRouter()
 const { profile, signOut } = useAuth()
 const { isOnline } = useOffline()
+const notificationsStore = useNotificationsStore()
 
 const navItems = computed(() => [
   { name: 'Dashboard', icon: '📊', route: '/' },
@@ -38,7 +40,12 @@ async function handleSignOut() {
       </div>
       <div class="top-bar-right">
         <span class="user-name">{{ profile?.nom }}</span>
-        <button class="btn-icon" title="Notifications">🔔</button>
+        <button class="btn-icon notif-btn" title="Notifications">
+          🔔
+          <span v-if="notificationsStore.unreadCount > 0" class="notif-count">
+            {{ notificationsStore.unreadCount > 99 ? '99+' : notificationsStore.unreadCount }}
+          </span>
+        </button>
         <button class="btn-icon" @click="handleSignOut" title="Déconnexion">⏻</button>
       </div>
     </header>
@@ -129,6 +136,24 @@ async function handleSignOut() {
 
 .btn-icon:active {
   background: var(--bg-hover);
+}
+
+.notif-btn { position: relative; }
+.notif-count {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #ef4444;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
 }
 
 .main-content {
