@@ -50,8 +50,23 @@ onMounted(async () => {
   <div class="recettes-page">
     <div class="page-header">
       <h1>Recettes & Ingrédients</h1>
-      <button class="btn-allergenes" @click="router.push('/recettes/allergenes')">
-        Vérif allergènes
+      <div class="header-actions">
+        <button class="btn-allergenes" @click="router.push('/recettes/allergenes')">
+          Vérif allergènes
+        </button>
+        <button class="btn-rentabilite" @click="router.push('/recettes/rentabilite')">
+          Rentabilité
+        </button>
+      </div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="quick-actions">
+      <button class="action-btn" @click="router.push('/recettes/new')">
+        + Nouvelle recette
+      </button>
+      <button class="action-btn action-ia" @click="router.push('/recettes/creation-ia')">
+        Création IA
       </button>
     </div>
 
@@ -78,7 +93,12 @@ onMounted(async () => {
 
     <div v-else-if="tab !== 'ingredients'" class="item-list">
       <div v-if="filteredRecettes.length === 0" class="empty">Aucun résultat</div>
-      <div v-for="r in filteredRecettes" :key="r.id" class="item-card">
+      <div
+        v-for="r in filteredRecettes"
+        :key="r.id"
+        class="item-card clickable"
+        @click="router.push(`/recettes/${r.id}`)"
+      >
         <div class="item-main">
           <span class="item-name">{{ r.nom }}</span>
           <span v-if="r.categorie" class="item-cat">{{ r.categorie }}</span>
@@ -119,6 +139,10 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 h1 { font-size: 28px; }
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
 .btn-allergenes {
   background: var(--color-warning);
   color: white;
@@ -128,6 +152,42 @@ h1 { font-size: 28px; }
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
+}
+.btn-rentabilite {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.action-btn {
+  flex: 1;
+  height: 52px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.action-btn:active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.action-btn.action-ia {
+  border-style: dashed;
+  color: #6366f1;
+  border-color: #6366f1;
 }
 
 .tabs {
@@ -174,6 +234,13 @@ h1 { font-size: 28px; }
   background: var(--bg-surface);
   border-radius: var(--radius-md);
   padding: 14px 16px;
+}
+.item-card.clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+.item-card.clickable:active {
+  box-shadow: 0 0 0 2px var(--color-primary);
 }
 .item-main { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
 .item-name { font-size: 16px; font-weight: 600; }

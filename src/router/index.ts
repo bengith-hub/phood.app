@@ -19,6 +19,7 @@ const router = createRouter({
           name: 'dashboard',
           component: () => import('@/modules/dashboard/DashboardPage.vue'),
         },
+        // Commandes
         {
           path: 'commandes',
           name: 'commandes',
@@ -34,11 +35,13 @@ const router = createRouter({
           name: 'commande-detail',
           component: () => import('@/modules/commandes/CommandeEditPage.vue'),
         },
+        // Réception
         {
           path: 'reception',
           name: 'reception',
           component: () => import('@/modules/reception/ReceptionPage.vue'),
         },
+        // Recettes & Ingrédients
         {
           path: 'recettes',
           name: 'recettes',
@@ -49,6 +52,34 @@ const router = createRouter({
           name: 'allergenes',
           component: () => import('@/modules/recettes/AllergeneSearchPage.vue'),
         },
+        {
+          path: 'recettes/new',
+          name: 'recette-new',
+          component: () => import('@/modules/recettes/RecetteDetailPage.vue'),
+        },
+        {
+          path: 'recettes/creation-ia',
+          name: 'recette-creation-ia',
+          component: () => import('@/modules/recettes/RecetteCreationIAPage.vue'),
+        },
+        {
+          path: 'recettes/rentabilite',
+          name: 'rentabilite',
+          component: () => import('@/modules/recettes/RentabilitePage.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'recettes/cout-matiere',
+          name: 'cout-matiere',
+          component: () => import('@/modules/recettes/CoutMatierePage.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'recettes/:id',
+          name: 'recette-detail',
+          component: () => import('@/modules/recettes/RecetteDetailPage.vue'),
+        },
+        // Fournisseurs & Mercuriale
         {
           path: 'fournisseurs',
           name: 'fournisseurs',
@@ -65,17 +96,34 @@ const router = createRouter({
           name: 'mercuriale-fournisseur',
           component: () => import('@/modules/commandes/MercurialePage.vue'),
         },
+        // Stocks
         {
           path: 'stocks',
           name: 'stocks',
           component: () => import('@/modules/dashboard/StocksPage.vue'),
         },
+        // Inventaire
         {
           path: 'inventaire',
           name: 'inventaire',
           component: () => import('@/modules/inventaire/InventairePage.vue'),
           meta: { requiresAdmin: true },
         },
+        // Prévisions
+        {
+          path: 'previsions',
+          name: 'previsions',
+          component: () => import('@/modules/previsions/PrevisionsPage.vue'),
+          meta: { requiresAdmin: true },
+        },
+        // Factures
+        {
+          path: 'factures',
+          name: 'factures',
+          component: () => import('@/modules/factures/FacturesPage.vue'),
+          meta: { requiresAdmin: true },
+        },
+        // Reporting
         {
           path: 'reporting',
           name: 'reporting',

@@ -4,8 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useCommandesStore } from '@/stores/commandes'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useMercurialeStore } from '@/stores/mercuriale'
+import { useStocksStore } from '@/stores/stocks'
+import { useIngredientsStore } from '@/stores/ingredients'
 import { useAuth } from '@/composables/useAuth'
 import { useAutoSave } from '@/composables/useAutoSave'
+import { generateCommandePdf } from '@/lib/pdf-commande'
+import StockCoverageRow from './StockCoverageRow.vue'
+import type { StockCoverageInfo } from './StockCoverageRow.vue'
 import type { Commande, CommandeLigne, Mercuriale, Conditionnement } from '@/types/database'
 
 const route = useRoute()
@@ -13,6 +18,8 @@ const router = useRouter()
 const commandesStore = useCommandesStore()
 const fournisseursStore = useFournisseursStore()
 const mercurialeStore = useMercurialeStore()
+const stocksStore = useStocksStore()
+const ingredientsStore = useIngredientsStore()
 const { user, isManagerOrAbove } = useAuth()
 
 const commandeId = ref<string | null>(route.params.id as string || null)
@@ -22,8 +29,11 @@ const selectedFournisseurId = ref<string>(route.params.fournisseurId as string |
 const dateLivraison = ref('')
 const notes = ref('')
 const searchQuery = ref('')
+const showPdfModal = ref(false)
+const pdfBlobUrl = ref<string | null>(null)
+const showStockDetails = ref(false)
 
-// Ligne items: mercuriale_id → quantity
+// Ligne items: mercuriale_id -> quantity
 interface LigneEdit {
   mercuriale_id: string
   quantite: number
@@ -106,6 +116,99 @@ const { status: saveStatus } = useAutoSave(autoSaveData, {
   intervalMs: 5000,
 })
 
+// ─── Stock coverage & rotation helpers (section 7.5) ───
+
+/**
+ * Estimate average daily consumption for an ingredient.
+ * Uses a simple heuristic: look at current stock and tampon to derive
+ * an approximate daily usage. In a full implementation, this would come
+ * from historical sales data (tickets Zelty decomposed into ingredients).
+ */
+function getConsoMoyenneJour(ingredientId: string): number {
+  const ing = ingredientsStore.getById(ingredientId)
+  if (!ing) return 0
+  // Heuristic: tampon typically covers 2-3 days of safety stock
+  // So average daily conso ~ tampon / 2
+  const tampon = ing.stock_tampon
+  if (tampon <= 0) return 0
+  return tampon / 2
+}
+
+function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCoverageInfo | null {
+  const ingredientId = produit.ingredient_restaurant_id
+  if (!ingredientId) return null
+
+  const ing = ingredientsStore.getById(ingredientId)
+  if (!ing) return null
+
+  const stock = stocksStore.getByIngredient(ingredientId)
+  const stockActuel = stock?.quantite ?? 0
+  const stockTampon = ing.stock_tampon
+  const consoJour = getConsoMoyenneJour(ingredientId)
+  const previsionConso3j = consoJour * 3
+
+  // Recommendation: enough to cover 5 days above tampon
+  const targetStock = stockTampon + consoJour * 5
+  const recommandationQty = Math.max(0, Math.ceil(targetStock - stockActuel))
+
+  // Convert commanded qty from order units to stock units
+  const qtyEnUniteStock = qtyCommandee * produit.coefficient_conversion
+
+  // Coverage date
+  let dateCouverture: string | null = null
+  let coverageOk = false
+
+  if (consoJour > 0 && dateLivraison.value) {
+    const livDate = new Date(dateLivraison.value)
+    const stockApresLivraison = stockActuel + qtyEnUniteStock - stockTampon
+    const joursCouverts = Math.floor(stockApresLivraison / consoJour)
+    const coverageDate = new Date(livDate)
+    coverageDate.setDate(coverageDate.getDate() + Math.max(0, joursCouverts))
+    dateCouverture = coverageDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+
+    // Check if coverage extends past estimated next delivery (assume 3-5 day cycle)
+    const prochaineLivraison = new Date(livDate)
+    prochaineLivraison.setDate(prochaineLivraison.getDate() + 4) // approximate
+    coverageOk = coverageDate.getTime() >= prochaineLivraison.getTime()
+  }
+
+  // Rotation: how long does one order unit last
+  let rotationJours: number | null = null
+  let rotationLabel = ''
+  let rotationIcon = ''
+
+  if (consoJour > 0) {
+    const conditionUnit = produit.coefficient_conversion
+    rotationJours = conditionUnit / consoJour
+
+    if (rotationJours < 7) {
+      rotationLabel = 'Rapide'
+      rotationIcon = '\uD83D\uDD34'
+    } else if (rotationJours <= 60) {
+      rotationLabel = 'Moyenne'
+      rotationIcon = '\uD83D\uDFE1'
+    } else {
+      rotationLabel = 'Lente'
+      rotationIcon = '\uD83D\uDFE2'
+    }
+  }
+
+  return {
+    stockActuel,
+    stockTampon,
+    previsionConso3j,
+    recommandationQty,
+    dateCouverture,
+    rotationJours,
+    rotationLabel,
+    rotationIcon,
+    coverageOk,
+    unite: ing.unite_stock,
+  }
+}
+
+// ─── Quantity helpers ───
+
 function getQuantite(mercurialeId: string): number {
   return lignes.value.get(mercurialeId)?.quantite || 0
 }
@@ -141,6 +244,76 @@ function getCondLabel(produit: Mercuriale): string {
   const cond = conds.find(c => c.utilise_commande) ?? conds[0]
   return cond?.nom ?? produit.unite_stock
 }
+
+// ─── PDF preview ───
+
+function handlePdfPreview() {
+  if (!commandeId.value || !fournisseur.value) return
+
+  const lignesArray: CommandeLigne[] = []
+  for (const l of lignes.value.values()) {
+    if (l.quantite > 0) {
+      const montantHt = l.quantite * l.prix_unitaire_ht
+      lignesArray.push({
+        id: '',
+        commande_id: commandeId.value,
+        mercuriale_id: l.mercuriale_id,
+        quantite: l.quantite,
+        conditionnement_idx: l.conditionnement_idx,
+        prix_unitaire_ht: l.prix_unitaire_ht,
+        montant_ht: montantHt,
+        montant_ttc: montantHt * (1 + l.tva / 100),
+        created_at: '',
+      })
+    }
+  }
+
+  const commandeData: Commande = commande.value || {
+    id: commandeId.value,
+    numero: commandeId.value,
+    fournisseur_id: selectedFournisseurId.value,
+    statut: 'brouillon',
+    date_commande: new Date().toISOString().slice(0, 10),
+    date_livraison_prevue: dateLivraison.value || null,
+    montant_total_ht: totalHT.value,
+    montant_total_ttc: totalTTC.value,
+    notes: notes.value || null,
+    pdf_url: null,
+    created_by: user.value?.id || '',
+    locked_by: null,
+    locked_at: null,
+    created_at: '',
+    updated_at: '',
+  }
+
+  const pdf = generateCommandePdf({
+    commande: commandeData,
+    lignes: lignesArray,
+    fournisseur: fournisseur.value,
+    getMercuriale: (id: string) => mercurialeStore.getById(id),
+  })
+
+  // Clean up previous blob URL
+  if (pdfBlobUrl.value) {
+    URL.revokeObjectURL(pdfBlobUrl.value)
+  }
+
+  const blob = pdf.output('blob')
+  pdfBlobUrl.value = URL.createObjectURL(blob)
+  showPdfModal.value = true
+}
+
+function closePdfModal() {
+  showPdfModal.value = false
+}
+
+function openPdfNewTab() {
+  if (pdfBlobUrl.value) {
+    window.open(pdfBlobUrl.value, '_blank')
+  }
+}
+
+// ─── Actions ───
 
 async function handleEnvoyer() {
   if (!commandeId.value || !francoAtteint.value) return
@@ -197,6 +370,8 @@ onMounted(async () => {
     fournisseursStore.fetchAll(),
     mercurialeStore.fetchAll(),
     commandesStore.fetchAll(),
+    stocksStore.fetchAll(),
+    ingredientsStore.fetchAll(),
   ])
 
   if (commandeId.value) {
@@ -243,12 +418,12 @@ watch(selectedFournisseurId, async (newId) => {
     <!-- Header -->
     <div class="page-header">
       <div>
-        <button class="btn-back" @click="router.push('/commandes')">← Retour</button>
+        <button class="btn-back" @click="router.push('/commandes')">&#x2190; Retour</button>
         <h1>{{ commande?.numero || 'Nouvelle commande' }}</h1>
       </div>
       <div class="header-actions">
         <span class="save-status" :class="saveStatus">
-          {{ saveStatus === 'saved' ? 'Sauvegardé' : saveStatus === 'saving' ? 'Sauvegarde...' : saveStatus === 'offline' ? 'Hors-ligne' : 'Erreur' }}
+          {{ saveStatus === 'saved' ? 'Sauvegard\u00E9' : saveStatus === 'saving' ? 'Sauvegarde...' : saveStatus === 'offline' ? 'Hors-ligne' : 'Erreur' }}
         </span>
       </div>
     </div>
@@ -264,7 +439,7 @@ watch(selectedFournisseurId, async (newId) => {
           @click="selectedFournisseurId = f.id"
         >
           <span class="f-name">{{ f.nom }}</span>
-          <span v-if="f.franco_minimum > 0" class="f-franco">Franco {{ f.franco_minimum }} €</span>
+          <span v-if="f.franco_minimum > 0" class="f-franco">Franco {{ f.franco_minimum }} &#x20AC;</span>
         </button>
       </div>
     </div>
@@ -275,7 +450,7 @@ watch(selectedFournisseurId, async (newId) => {
       <div class="info-bar">
         <span class="info-fournisseur">{{ fournisseur?.nom }}</span>
         <div class="info-meta">
-          <label>Livraison prévue :
+          <label>Livraison pr&eacute;vue :
             <input v-model="dateLivraison" type="date" class="date-input" />
           </label>
         </div>
@@ -291,15 +466,20 @@ watch(selectedFournisseurId, async (newId) => {
         </div>
         <div class="franco-text">
           <span v-if="francoMinimum > 0">
-            {{ totalHT.toFixed(2) }} € / {{ francoMinimum.toFixed(0) }} € franco
+            {{ totalHT.toFixed(2) }} &#x20AC; / {{ francoMinimum.toFixed(0) }} &#x20AC; franco
             <span v-if="!francoAtteint && nbArticles > 0" class="franco-manquant">
-              (manque {{ francoManquant.toFixed(2) }} €)
+              (manque {{ francoManquant.toFixed(2) }} &#x20AC;)
             </span>
           </span>
-          <span v-else>{{ totalHT.toFixed(2) }} € HT</span>
+          <span v-else>{{ totalHT.toFixed(2) }} &#x20AC; HT</span>
           <span class="article-count">{{ nbArticles }} article{{ nbArticles > 1 ? 's' : '' }}</span>
         </div>
       </div>
+
+      <!-- Stock details toggle -->
+      <button class="btn-toggle-stock" @click="showStockDetails = !showStockDetails">
+        {{ showStockDetails ? 'Masquer les stocks' : 'Afficher les stocks' }}
+      </button>
 
       <!-- Search -->
       <input
@@ -313,33 +493,41 @@ watch(selectedFournisseurId, async (newId) => {
       <div class="product-list">
         <div v-for="group in filteredProduits" :key="group.categorie" class="cat-group">
           <h3 class="cat-title">{{ group.categorie }}</h3>
-          <div v-for="p in group.produits" :key="p.id" class="product-row">
-            <div class="product-info">
-              <span class="product-name">{{ p.designation }}</span>
-              <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} €/{{ p.unite_stock }}</span>
-              <span class="product-cond">{{ getCondLabel(p) }}</span>
+          <div v-for="p in group.produits" :key="p.id" class="product-card">
+            <div class="product-row">
+              <div class="product-info">
+                <span class="product-name">{{ p.designation }}</span>
+                <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} &#x20AC;/{{ p.unite_stock }}</span>
+                <span class="product-cond">{{ getCondLabel(p) }}</span>
+              </div>
+              <div class="qty-controls" :class="{ 'has-qty': getQuantite(p.id) > 0 }">
+                <button
+                  class="qty-btn minus"
+                  @click="decrement(p)"
+                  :disabled="!isDraft || getQuantite(p.id) === 0"
+                >&#x2212;</button>
+                <input
+                  :value="getQuantite(p.id)"
+                  @change="setQuantite(p, Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0))"
+                  type="number"
+                  inputmode="numeric"
+                  min="0"
+                  class="qty-input"
+                  :disabled="!isDraft"
+                />
+                <button
+                  class="qty-btn plus"
+                  @click="increment(p)"
+                  :disabled="!isDraft"
+                >+</button>
+              </div>
             </div>
-            <div class="qty-controls" :class="{ 'has-qty': getQuantite(p.id) > 0 }">
-              <button
-                class="qty-btn minus"
-                @click="decrement(p)"
-                :disabled="!isDraft || getQuantite(p.id) === 0"
-              >−</button>
-              <input
-                :value="getQuantite(p.id)"
-                @change="setQuantite(p, Math.max(0, parseInt(($event.target as HTMLInputElement).value) || 0))"
-                type="number"
-                inputmode="numeric"
-                min="0"
-                class="qty-input"
-                :disabled="!isDraft"
-              />
-              <button
-                class="qty-btn plus"
-                @click="increment(p)"
-                :disabled="!isDraft"
-              >+</button>
-            </div>
+
+            <!-- Stock coverage & rotation (section 7.5) -->
+            <StockCoverageRow
+              v-if="showStockDetails && p.ingredient_restaurant_id"
+              :coverage="getStockCoverage(p, getQuantite(p.id))"
+            />
           </div>
         </div>
       </div>
@@ -347,13 +535,20 @@ watch(selectedFournisseurId, async (newId) => {
       <!-- Notes -->
       <div class="notes-section">
         <label>Notes</label>
-        <textarea v-model="notes" rows="2" placeholder="Instructions spéciales..." :disabled="!isDraft" />
+        <textarea v-model="notes" rows="2" placeholder="Instructions sp\u00E9ciales..." :disabled="!isDraft" />
       </div>
 
       <!-- Actions -->
       <div class="actions-bar" v-if="isDraft">
         <button class="btn-secondary" @click="handleSaveDraft">
           Sauvegarder brouillon
+        </button>
+        <button
+          class="btn-outline"
+          :disabled="nbArticles === 0"
+          @click="handlePdfPreview"
+        >
+          Aper&ccedil;u PDF
         </button>
         <button
           class="btn-primary"
@@ -365,6 +560,33 @@ watch(selectedFournisseurId, async (newId) => {
         </button>
       </div>
     </div>
+
+    <!-- PDF Preview Modal -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showPdfModal" class="pdf-overlay" @click.self="closePdfModal">
+          <div class="pdf-modal">
+            <div class="pdf-modal-header">
+              <h3>Aper&ccedil;u du bon de commande</h3>
+              <div class="pdf-modal-actions">
+                <button class="btn-outline small" @click="openPdfNewTab">
+                  Ouvrir dans un nouvel onglet
+                </button>
+                <button class="btn-icon-close" @click="closePdfModal">&#x2715;</button>
+              </div>
+            </div>
+            <div class="pdf-modal-body">
+              <iframe
+                v-if="pdfBlobUrl"
+                :src="pdfBlobUrl"
+                class="pdf-iframe"
+                title="Aper&ccedil;u PDF commande"
+              />
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -469,7 +691,7 @@ h1 {
   background: var(--bg-surface);
   border-radius: var(--radius-md);
   padding: 12px 20px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .franco-progress {
@@ -511,6 +733,26 @@ h1 {
   font-weight: 600;
 }
 
+/* Stock toggle */
+.btn-toggle-stock {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.btn-toggle-stock:active {
+  background: var(--bg-main);
+}
+
 /* Search */
 .search-input {
   width: 100%;
@@ -543,14 +785,18 @@ h1 {
   padding-left: 4px;
 }
 
+.product-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
 .product-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--bg-surface);
-  border-radius: var(--radius-md);
   padding: 12px 16px;
-  margin-bottom: 6px;
 }
 
 .product-info {
@@ -700,5 +946,113 @@ h1 {
   font-size: 17px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--color-primary);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: 14px 28px;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-outline:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-outline.small {
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+/* PDF Modal */
+.pdf-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.pdf-modal {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 900px;
+  height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pdf-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.pdf-modal-header h3 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.pdf-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-icon-close {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: var(--bg-main);
+  border-radius: 50%;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.pdf-modal-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.pdf-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* Modal transition */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+.modal-enter-active .pdf-modal,
+.modal-leave-active .pdf-modal {
+  transition: transform 0.25s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from .pdf-modal,
+.modal-leave-to .pdf-modal {
+  transform: scale(0.95);
 }
 </style>
