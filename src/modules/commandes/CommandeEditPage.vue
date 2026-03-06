@@ -28,8 +28,8 @@ interface LigneEdit {
   mercuriale_id: string
   quantite: number
   conditionnement_idx: number
-  prix_unitaire: number
-  tva_taux: number
+  prix_unitaire_ht: number
+  tva: number
 }
 const lignes = ref<Map<string, LigneEdit>>(new Map())
 
@@ -43,7 +43,7 @@ const totalHT = computed(() => {
   let sum = 0
   for (const l of lignes.value.values()) {
     if (l.quantite > 0) {
-      sum += l.quantite * l.prix_unitaire
+      sum += l.quantite * l.prix_unitaire_ht
     }
   }
   return sum
@@ -53,7 +53,7 @@ const totalTTC = computed(() => {
   let sum = 0
   for (const l of lignes.value.values()) {
     if (l.quantite > 0) {
-      sum += l.quantite * l.prix_unitaire * (1 + l.tva_taux / 100)
+      sum += l.quantite * l.prix_unitaire_ht * (1 + l.tva / 100)
     }
   }
   return sum
@@ -115,12 +115,14 @@ function setQuantite(produit: Mercuriale, qty: number) {
     lignes.value.delete(produit.id)
     return
   }
+  const conds = produit.conditionnements as Conditionnement[]
+  const defaultIdx = conds.findIndex(c => c.utilise_commande) ?? 0
   lignes.value.set(produit.id, {
     mercuriale_id: produit.id,
     quantite: qty,
-    conditionnement_idx: produit.conditionnement_commande_idx,
-    prix_unitaire: produit.prix_unitaire,
-    tva_taux: produit.tva_taux,
+    conditionnement_idx: Math.max(0, defaultIdx),
+    prix_unitaire_ht: produit.prix_unitaire_ht,
+    tva: produit.tva,
   })
 }
 
@@ -136,7 +138,7 @@ function decrement(produit: Mercuriale) {
 function getCondLabel(produit: Mercuriale): string {
   const conds = produit.conditionnements as Conditionnement[]
   if (!conds || conds.length === 0) return produit.unite_stock
-  const cond = conds[produit.conditionnement_commande_idx] ?? conds[0]
+  const cond = conds.find(c => c.utilise_commande) ?? conds[0]
   return cond?.nom ?? produit.unite_stock
 }
 
@@ -147,14 +149,14 @@ async function handleEnvoyer() {
   const lignesArray: Partial<CommandeLigne>[] = []
   for (const l of lignes.value.values()) {
     if (l.quantite > 0) {
-      const montantHt = l.quantite * l.prix_unitaire
+      const montantHt = l.quantite * l.prix_unitaire_ht
       lignesArray.push({
         mercuriale_id: l.mercuriale_id,
         quantite: l.quantite,
         conditionnement_idx: l.conditionnement_idx,
-        prix_unitaire: l.prix_unitaire,
+        prix_unitaire_ht: l.prix_unitaire_ht,
         montant_ht: montantHt,
-        montant_ttc: montantHt * (1 + l.tva_taux / 100),
+        montant_ttc: montantHt * (1 + l.tva / 100),
       })
     }
   }
@@ -172,14 +174,14 @@ async function handleSaveDraft() {
   const lignesArray: Partial<CommandeLigne>[] = []
   for (const l of lignes.value.values()) {
     if (l.quantite > 0) {
-      const montantHt = l.quantite * l.prix_unitaire
+      const montantHt = l.quantite * l.prix_unitaire_ht
       lignesArray.push({
         mercuriale_id: l.mercuriale_id,
         quantite: l.quantite,
         conditionnement_idx: l.conditionnement_idx,
-        prix_unitaire: l.prix_unitaire,
+        prix_unitaire_ht: l.prix_unitaire_ht,
         montant_ht: montantHt,
-        montant_ttc: montantHt * (1 + l.tva_taux / 100),
+        montant_ttc: montantHt * (1 + l.tva / 100),
       })
     }
   }
@@ -212,8 +214,8 @@ onMounted(async () => {
           mercuriale_id: l.mercuriale_id,
           quantite: l.quantite,
           conditionnement_idx: l.conditionnement_idx,
-          prix_unitaire: l.prix_unitaire,
-          tva_taux: mercurialeStore.getById(l.mercuriale_id)?.tva_taux || 5.5,
+          prix_unitaire_ht: l.prix_unitaire_ht,
+          tva: mercurialeStore.getById(l.mercuriale_id)?.tva || 5.5,
         })
       }
     }
@@ -314,7 +316,7 @@ watch(selectedFournisseurId, async (newId) => {
           <div v-for="p in group.produits" :key="p.id" class="product-row">
             <div class="product-info">
               <span class="product-name">{{ p.designation }}</span>
-              <span class="product-price">{{ p.prix_unitaire.toFixed(2) }} €/{{ p.unite_stock }}</span>
+              <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} €/{{ p.unite_stock }}</span>
               <span class="product-cond">{{ getCondLabel(p) }}</span>
             </div>
             <div class="qty-controls" :class="{ 'has-qty': getQuantite(p.id) > 0 }">
