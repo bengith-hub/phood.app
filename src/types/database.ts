@@ -41,8 +41,9 @@ export interface Conditionnement {
 export interface Mercuriale {
   id: string
   fournisseur_id: string
-  nom: string
-  sku: string | null
+  ingredient_restaurant_id: string | null
+  designation: string
+  ref_fournisseur: string | null
   categorie: string | null
   conditionnements: Conditionnement[]
   conditionnement_commande_idx: number // index du conditionnement par défaut pour commander

@@ -20,7 +20,7 @@ class PhoodDB extends Dexie {
     super('PhoodDB')
     this.version(1).stores({
       fournisseurs: 'id, nom, actif',
-      mercuriale: 'id, fournisseur_id, nom, categorie, actif',
+      mercuriale: 'id, fournisseur_id, designation, categorie, actif',
       ingredients: 'id, nom, categorie, fournisseur_prefere_id, actif',
       recettes: 'id, nom, type, categorie, actif',
       recetteIngredients: 'id, recette_id, ingredient_id, sous_recette_id',
