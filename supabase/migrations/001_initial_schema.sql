@@ -7,7 +7,21 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
+-- TABLES
+-- ============================================================
+
+-- 1. Profiles (linked to auth.users)
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  nom TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'operator' CHECK (role IN ('admin', 'manager', 'operator')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- HELPER FUNCTION: get_my_role()
+-- Must be created AFTER profiles table exists
 -- Used by all RLS policies to determine the current user's role
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_my_role() RETURNS text AS $$
@@ -29,19 +43,6 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ============================================================
--- TABLES
--- ============================================================
-
--- 1. Profiles (linked to auth.users)
-CREATE TABLE profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  nom TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'operator' CHECK (role IN ('admin', 'manager', 'operator')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 
 -- Trigger: auto-create profile
 CREATE TRIGGER on_auth_user_created

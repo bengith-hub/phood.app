@@ -144,15 +144,15 @@ onMounted(async () => {
               <span v-if="p.ref_fournisseur" class="product-sku">{{ p.ref_fournisseur }}</span>
             </div>
             <div class="product-details">
-              <span class="product-price">{{ formatPrix(p.prix_unitaire, p.unite_stock) }}</span>
-              <span v-if="p.tva_taux" class="product-tva">TVA {{ p.tva_taux }}%</span>
+              <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock) }}</span>
+              <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
             </div>
             <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
               <span
                 v-for="(c, i) in (p.conditionnements as Conditionnement[])"
                 :key="i"
                 class="cond-badge"
-                :class="{ primary: i === p.conditionnement_commande_idx }"
+                :class="{ primary: (p.conditionnements as Conditionnement[])[i]?.utilise_commande }"
               >
                 {{ formatConditionnement(c) }}
               </span>
