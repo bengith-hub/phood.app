@@ -366,7 +366,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let i = 1; i <= 7; i++) {
       const d = new Date(targetDate)
       d.setDate(d.getDate() - i)
-      const dStr = d.toISOString().split('T')[0]
+      const dStr = d.toISOString().split('T')[0]!
       const m = meteoParDate.value.get(dStr)
       if (m) recentDays.push(m)
     }
