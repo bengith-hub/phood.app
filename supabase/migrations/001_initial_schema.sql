@@ -133,6 +133,7 @@ CREATE TABLE mercuriale (
   categorie TEXT,
   unite_commande TEXT NOT NULL DEFAULT 'kg',
   conditionnements JSONB NOT NULL DEFAULT '[]', -- [{nom, quantite, unite, utilise_commande}]
+  conditionnement_commande_idx INTEGER NOT NULL DEFAULT 0, -- index in conditionnements[] used for ordering
   prix_unitaire_ht NUMERIC NOT NULL DEFAULT 0,
   prix_futur JSONB, -- {prix, date_effet}
   type_prix TEXT DEFAULT 'standard' CHECK (type_prix IN ('standard', 'trimestriel', 'annuel')),
