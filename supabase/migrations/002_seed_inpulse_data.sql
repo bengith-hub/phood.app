@@ -3285,8 +3285,6 @@ VALUES ('0c1c73d0-308c-11ee-af48-fb839ee61b42', '0be66fb0-308c-11ee-af48-fb839ee
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('0c1c9ae0-308c-11ee-af48-fb839ee61b42', '0be66fb0-308c-11ee-af48-fb839ee61b42', '84f02310-d5c0-11ec-9916-a1c1f658f229', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('0c271bd0-3084-11ee-af48-fb839ee61b42', '0c00cf20-3084-11ee-af48-fb839ee61b42', 'e8ade230-e556-11eb-b4a4-c79ec670c12e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('0cb10c20-c97c-11ec-860d-478ebb9d77b5', '0cb021c0-c97c-11ec-860d-478ebb9d77b5', 'e9464450-be20-11ec-a7fa-3529186828e2', 3, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('0cb10c21-c97c-11ec-860d-478ebb9d77b5', '0cb021c0-c97c-11ec-860d-478ebb9d77b5', '6e078db0-be2c-11ec-92b5-d17e9a4e477d', 40, 'kg');
@@ -3534,8 +3532,6 @@ INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unit
 VALUES ('23abf9b0-3089-11ee-af48-fb839ee61b42', '2376dff0-3089-11ee-af48-fb839ee61b42', 'a18a8b40-9c4d-11ea-9423-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('23ac20c0-3089-11ee-af48-fb839ee61b42', '2376dff0-3089-11ee-af48-fb839ee61b42', 'a18a8c08-9c4d-11ea-9424-0a5bf521835e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('23bb7b50-308f-11ee-af48-fb839ee61b42', '2393f620-308f-11ee-af48-fb839ee61b42', '2325f390-e556-11eb-8237-736a902b6e66', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('2449dd70-e3d2-11eb-b993-552ff2e9d866', '24496840-e3d2-11eb-b993-552ff2e9d866', '602f4f30-a8f1-11eb-a272-274b1324dbc5', 62.5, 'kg');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
@@ -4034,10 +4030,6 @@ INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('d7a39732-e88d-11ef-9187-5bc2ac66eb1e', '5b05ba10-cf50-11ef-9028-f1198bb1e3d6', '80899d1e-9c4d-11ea-92a4-0a5bf521835e', 780, 'kg');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('5b430c30-307d-11ee-af48-fb839ee61b42', '5b1b38e0-307d-11ee-af48-fb839ee61b42', '59e342c0-87d2-11eb-b96f-7177973d12e2', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('5c244370-3088-11ee-af48-fb839ee61b42', '5bf82a60-3088-11ee-af48-fb839ee61b42', 'fbfbda60-edf1-11eb-85bd-17591fa81dee', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('5c244371-3088-11ee-af48-fb839ee61b42', '5bf82a60-3088-11ee-af48-fb839ee61b42', '67c563b0-edf2-11eb-8cf4-3f10540222ef', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('5cbe34c8-1a04-11eb-b256-0a5bf521835e', '5cbda90e-1a04-11eb-b255-0a5bf521835e', '8089a462-9c4d-11ea-92ac-0a5bf521835e', 10, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
@@ -4064,10 +4056,6 @@ INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unit
 VALUES ('5ec8c239-e88e-11ef-9ae0-e94d7470c07a', '5ec7fee0-e88e-11ef-9ae0-e94d7470c07a', '6b794010-46eb-11ec-bc07-efd394bb365a', 40, 'kg');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('5ec8c23b-e88e-11ef-9ae0-e94d7470c07a', '5ec7fee0-e88e-11ef-9ae0-e94d7470c07a', '8089c4d8-9c4d-11ea-92d0-0a5bf521835e', 70, 'kg');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('600f0140-307f-11ee-af48-fb839ee61b42', '5fca0900-307f-11ee-af48-fb839ee61b42', 'b5da94a0-a99e-11eb-b9f3-c1b3aca3d9aa', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('600f0141-307f-11ee-af48-fb839ee61b42', '5fca0900-307f-11ee-af48-fb839ee61b42', '3517d2a0-a99f-11eb-b9f3-c1b3aca3d9aa', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('5fd226f0-bedd-11eb-b72d-730bbd0b1638', '5fd18ab0-bedd-11eb-b72d-730bbd0b1638', '80893c3e-9c4d-11ea-9281-0a5bf521835e', 12, 'kg');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
@@ -4114,10 +4102,6 @@ INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('d6d7a1b2-21d2-11f0-8e38-472558b3b72f', '61b0d79e-1a02-11eb-8e96-0a5bf521835e', '96ef61c0-916f-11eb-9d41-2dd57a3d8f5e', 2, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('d6d7c8c0-21d2-11f0-8e38-472558b3b72f', '61b0d79e-1a02-11eb-8e96-0a5bf521835e', '808931ee-9c4d-11ea-9275-0a5bf521835e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('62422c90-308d-11ee-af48-fb839ee61b42', '62079490-308d-11ee-af48-fb839ee61b42', 'c511d0ae-19ee-11eb-9d4c-0a5bf521835e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('624253a0-308d-11ee-af48-fb839ee61b42', '62079490-308d-11ee-af48-fb839ee61b42', '35f2f5d8-19f3-11eb-b1a0-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('622510b0-38d1-11ed-88aa-d327dbab6e49', '62236300-38d1-11ed-88aa-d327dbab6e49', '6957aad0-f4f5-11eb-a95c-45ac352893ba', 55, 'L');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
@@ -4467,8 +4451,6 @@ VALUES ('77b78081-e486-11ef-aa41-01eb4d41c1d0', '8800beb0-cc0f-11ee-8044-7df45c5
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('77b78083-e486-11ef-aa41-01eb4d41c1d0', '8800beb0-cc0f-11ee-8044-7df45c52b284', 'a18a9a72-9c4d-11ea-9434-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('882fb020-308e-11ee-af48-fb839ee61b42', '88082af0-308e-11ee-af48-fb839ee61b42', '6f524470-e557-11eb-b4a4-c79ec670c12e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('88e381b0-308c-11ee-af48-fb839ee61b42', '88af7960-308c-11ee-af48-fb839ee61b42', '02b03e40-35b9-11ed-b203-11e5174470d0', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('88e3a8c0-308c-11ee-af48-fb839ee61b42', '88af7960-308c-11ee-af48-fb839ee61b42', '6c33fb20-4821-11ed-a241-9d0cf2de716e', 1, 'unite');
@@ -4638,10 +4620,6 @@ INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unit
 VALUES ('97051a00-308d-11ee-af48-fb839ee61b42', '96448920-308d-11ee-af48-fb839ee61b42', 'c8a6e570-c153-11ec-9265-d57037e66861', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('97054110-308d-11ee-af48-fb839ee61b42', '96448920-308d-11ee-af48-fb839ee61b42', '81befd10-d520-11ec-9a5d-f575e98074a0', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('974138a0-308d-11ee-af48-fb839ee61b42', '970c45f0-308d-11ee-af48-fb839ee61b42', '6d471e10-fb9c-11ec-87d3-cf5d212ef325', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('974138a1-308d-11ee-af48-fb839ee61b42', '970c45f0-308d-11ee-af48-fb839ee61b42', '4d10f670-fb9c-11ec-a176-d902a1918d35', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('975d8d80-307d-11ee-af48-fb839ee61b42', '9737dd10-307d-11ee-af48-fb839ee61b42', 'a18acd30-9c4d-11ea-946d-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
@@ -6102,10 +6080,6 @@ INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unit
 VALUES ('b41eb800-3090-11ee-af48-fb839ee61b42', 'b3dd1b20-3090-11ee-af48-fb839ee61b42', 'a18a5d78-9c4d-11ea-93f0-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('b41d0310-757f-11ed-a0a7-1b2de41c84da', 'b41c3fc0-757f-11ed-a0a7-1b2de41c84da', 'd3adbff0-fb8e-11ec-86ff-13fce83436c9', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('b576ab10-3089-11ee-af48-fb839ee61b42', 'b53f6e70-3089-11ee-af48-fb839ee61b42', 'f633df20-fb9b-11ec-86ff-13fce83436c9', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('b576d220-3089-11ee-af48-fb839ee61b42', 'b53f6e70-3089-11ee-af48-fb839ee61b42', '306ef210-fb9c-11ec-86ff-13fce83436c9', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('b59e0520-349c-11f0-9650-152532a65f04', 'b59ccca0-349c-11f0-9650-152532a65f04', '808943f0-9c4d-11ea-928a-0a5bf521835e', 200, 'kg');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
@@ -6593,17 +6567,11 @@ VALUES ('ee4042d0-d50e-11ec-b5cd-3fba70e914e7', 'ee38efd0-d50e-11ec-b5cd-3fba70e
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('ee4042d2-d50e-11ec-b5cd-3fba70e914e7', 'ee38efd0-d50e-11ec-b5cd-3fba70e914e7', '3a5a9a90-f5ee-11eb-8f32-750a66e837fd', 30, 'L');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('eecd20d0-307d-11ee-af48-fb839ee61b42', 'ee9e96c0-307d-11ee-af48-fb839ee61b42', '5bcfc900-e3b2-11eb-8237-736a902b6e66', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('efd0b8b0-307e-11ee-af48-fb839ee61b42', 'ef9b02b0-307e-11ee-af48-fb839ee61b42', 'ea05dcb0-dfff-11ec-807b-81b583ff1692', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('efd106d0-307e-11ee-af48-fb839ee61b42', 'ef9b02b0-307e-11ee-af48-fb839ee61b42', 'a18a4874-9c4d-11ea-93d7-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
 VALUES ('efd106d1-307e-11ee-af48-fb839ee61b42', 'ef9b02b0-307e-11ee-af48-fb839ee61b42', 'a18a491e-9c4d-11ea-93d8-0a5bf521835e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('f0c52d00-308d-11ee-af48-fb839ee61b42', 'f090fda0-308d-11ee-af48-fb839ee61b42', 'b528c1c0-19ee-11eb-a516-0a5bf521835e', 1, 'unite');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('f0c55410-308d-11ee-af48-fb839ee61b42', 'f090fda0-308d-11ee-af48-fb839ee61b42', '489432b0-19f3-11eb-9cdc-0a5bf521835e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('f097b050-7580-11ed-a0a7-1b2de41c84da', 'f09677d0-7580-11ed-a0a7-1b2de41c84da', 'e927cbf0-fb8e-11ec-82ff-e103d8d6432f', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
@@ -6796,8 +6764,6 @@ INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unit
 VALUES ('838dff20-c566-11ec-80c5-cfbaa9dcc3bd', 'ff41d980-c19b-11ec-b810-d1ffe210d8b1', '4018f880-c19c-11ec-b810-d1ffe210d8b1', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('ff4275c1-c19b-11ec-b810-d1ffe210d8b1', 'ff41d980-c19b-11ec-b810-d1ffe210d8b1', '8089d37e-9c4d-11ea-92e1-0a5bf521835e', 15, 'kg');
-INSERT INTO recette_ingredients (id, recette_id, sous_recette_id, quantite, unite)
-VALUES ('ffa773b0-3082-11ee-af48-fb839ee61b42', 'ff814e10-3082-11ee-af48-fb839ee61b42', '36dbc4e0-e557-11eb-b4a4-c79ec670c12e', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
 VALUES ('ff83a4e0-757e-11ed-9ceb-4384b0d4acc1', 'ff829370-757e-11ed-9ceb-4384b0d4acc1', '67bc3410-72b0-11eb-a732-3588446adb69', 1, 'unite');
 INSERT INTO recette_ingredients (id, recette_id, ingredient_id, quantite, unite)
