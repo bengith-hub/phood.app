@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useAuth } from '@/composables/useAuth'
 import type { Fournisseur } from '@/types/database'
 
+const router = useRouter()
 const store = useFournisseursStore()
 const { isAdmin } = useAuth()
 
@@ -137,6 +139,12 @@ onMounted(() => store.fetchAll())
             <span>{{ formatJours(f.jours_livraison) }}</span>
           </div>
         </div>
+        <button
+          class="btn-produits"
+          @click.stop="router.push(`/mercuriale/${f.id}`)"
+        >
+          Voir les produits →
+        </button>
       </div>
     </div>
 
@@ -527,6 +535,23 @@ onMounted(() => store.fetchAll())
 .modal-actions .spacer {
   flex: 1;
 }
+.btn-produits {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px 16px;
+  background: rgba(232, 93, 44, 0.08);
+  color: var(--color-primary);
+  border: 1px solid rgba(232, 93, 44, 0.2);
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+.btn-produits:active {
+  background: rgba(232, 93, 44, 0.16);
+}
+
 .btn-danger {
   background: #ef4444;
   color: white;

@@ -11,9 +11,13 @@ const store = useIngredientsStore()
 const saving = ref(false)
 const uploadingPhoto = ref(false)
 const photoInputRef = ref<HTMLInputElement | null>(null)
+const mercurialePhotoUrl = ref<string | null>(null)
+const mercurialeSku = ref<string | null>(null)
+const mercurialeDesignation = ref<string | null>(null)
 
 const ingredientId = computed(() => route.params.id as string)
 const isNew = computed(() => !ingredientId.value || ingredientId.value === 'new')
+const displayPhotoUrl = computed(() => form.value.photo_url || mercurialePhotoUrl.value)
 
 // Form data
 const form = ref<Partial<IngredientRestaurant>>({
@@ -111,6 +115,10 @@ onMounted(async () => {
   if (!isNew.value) {
     const existing = store.getById(ingredientId.value)
     if (existing) {
+      // Capture enriched mercuriale data before spreading to form
+      mercurialePhotoUrl.value = (existing as Record<string, unknown>).mercuriale_photo_url as string | null ?? null
+      mercurialeSku.value = (existing as Record<string, unknown>).mercuriale_sku as string | null ?? null
+      mercurialeDesignation.value = (existing as Record<string, unknown>).mercuriale_designation as string | null ?? null
       form.value = { ...existing, allergenes: [...existing.allergenes] }
     }
   }
@@ -141,13 +149,22 @@ onMounted(async () => {
         :disabled="isNew"
         @click="triggerPhotoUpload"
       >
-        <img v-if="form.photo_url" :src="form.photo_url" :alt="form.nom || ''" />
+        <img v-if="displayPhotoUrl" :src="displayPhotoUrl" :alt="form.nom || ''" />
         <div v-else-if="uploadingPhoto" class="photo-spinner">...</div>
         <div v-else class="photo-placeholder">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
           <span>Ajouter photo</span>
         </div>
       </button>
+    </div>
+
+    <!-- Supplier info (from mercuriale) -->
+    <div v-if="mercurialeSku || mercurialeDesignation" class="supplier-info">
+      <span class="supplier-label">Fournisseur préféré</span>
+      <div class="supplier-detail">
+        <span v-if="mercurialeDesignation" class="supplier-designation">{{ mercurialeDesignation }}</span>
+        <span v-if="mercurialeSku" class="supplier-sku">SKU : {{ mercurialeSku }}</span>
+      </div>
     </div>
 
     <!-- Form -->
@@ -305,6 +322,41 @@ h1 {
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+
+/* Supplier info */
+.supplier-info {
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.supplier-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.supplier-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+}
+.supplier-designation {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.supplier-sku {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: rgba(232, 93, 44, 0.08);
+  padding: 2px 10px;
+  border-radius: 12px;
 }
 
 /* Form */

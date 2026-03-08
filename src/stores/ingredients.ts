@@ -5,8 +5,15 @@ import { db } from '@/lib/dexie'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import type { IngredientRestaurant } from '@/types/database'
 
+/** Ingredient enriched with preferred supplier data (from mercuriale join) */
+export interface IngredientEnriched extends IngredientRestaurant {
+  mercuriale_photo_url?: string | null
+  mercuriale_sku?: string | null
+  mercuriale_designation?: string | null
+}
+
 export const useIngredientsStore = defineStore('ingredients', () => {
-  const ingredients = ref<IngredientRestaurant[]>([])
+  const ingredients = ref<IngredientEnriched[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -27,12 +34,23 @@ export const useIngredientsStore = defineStore('ingredients', () => {
       if (navigator.onLine) {
         const { data, error: err } = await supabase
           .from('ingredients_restaurant')
-          .select('*')
+          .select('*, mercuriale_pref:fournisseur_prefere_id(ref_fournisseur, photo_url, designation)')
           .order('nom')
         if (err) throw err
-        ingredients.value = data as IngredientRestaurant[]
+        // Flatten mercuriale join data onto each ingredient
+        const enriched: IngredientEnriched[] = (data ?? []).map((row: Record<string, unknown>) => {
+          const merc = row.mercuriale_pref as { ref_fournisseur?: string; photo_url?: string; designation?: string } | null
+          const { mercuriale_pref: _, ...rest } = row
+          return {
+            ...rest,
+            mercuriale_photo_url: merc?.photo_url ?? null,
+            mercuriale_sku: merc?.ref_fournisseur ?? null,
+            mercuriale_designation: merc?.designation ?? null,
+          } as IngredientEnriched
+        })
+        ingredients.value = enriched
         await db.ingredients.clear()
-        await db.ingredients.bulkPut(data as IngredientRestaurant[])
+        await db.ingredients.bulkPut(enriched as IngredientRestaurant[])
       } else {
         ingredients.value = await db.ingredients.orderBy('nom').toArray()
       }

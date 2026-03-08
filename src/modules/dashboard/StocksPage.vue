@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useStocksStore } from '@/stores/stocks'
 
+const router = useRouter()
 const ingredientsStore = useIngredientsStore()
 const stocksStore = useStocksStore()
 
@@ -102,7 +104,12 @@ onMounted(async () => {
 
     <div v-else class="stock-list">
       <div v-if="stockItems.length === 0" class="empty">Aucun résultat</div>
-      <div v-for="item in stockItems" :key="item.id" :class="['stock-card', { low: item.isLow }]">
+      <div
+        v-for="item in stockItems"
+        :key="item.id"
+        :class="['stock-card clickable', { low: item.isLow }]"
+        @click="router.push(`/recettes/ingredient/${item.id}`)"
+      >
         <div class="stock-main">
           <div class="stock-info">
             <span class="stock-name">{{ item.nom }}</span>
@@ -180,6 +187,11 @@ h1 { font-size: 28px; margin-bottom: 16px; }
   border-radius: var(--radius-md);
   padding: 14px 16px;
   border-left: 4px solid transparent;
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+.stock-card:active {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 .stock-card.low { border-left-color: #ef4444; }
 

@@ -147,7 +147,7 @@ onMounted(async () => {
       >
         <div class="ing-row">
           <div class="ing-photo">
-            <img v-if="ing.photo_url" :src="ing.photo_url" :alt="ing.nom" />
+            <img v-if="ing.photo_url || ing.mercuriale_photo_url" :src="(ing.photo_url || ing.mercuriale_photo_url)!" :alt="ing.nom" />
             <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
           </div>
           <div class="ing-content">
@@ -156,6 +156,7 @@ onMounted(async () => {
               <span v-if="ing.categorie" class="item-cat">{{ ing.categorie }}</span>
             </div>
             <div class="item-meta">
+              <span v-if="ing.mercuriale_sku" class="item-sku">{{ ing.mercuriale_sku }}</span>
               <span class="item-unit">{{ ing.unite_stock }}</span>
               <span v-if="ing.cout_unitaire > 0" class="item-cost">{{ ing.cout_unitaire.toFixed(2) }} €/{{ ing.unite_stock }}</span>
               <span v-if="!ing.actif" class="badge-inactif">Inactif</span>
@@ -288,6 +289,7 @@ h1 { font-size: 28px; }
 .item-cat { font-size: 13px; color: var(--text-tertiary); }
 .item-meta { display: flex; gap: 12px; font-size: 14px; }
 .item-cost { color: var(--color-primary); font-weight: 600; }
+.item-sku { color: var(--color-primary); font-weight: 600; font-size: 13px; }
 .item-unit { color: var(--text-tertiary); }
 .badge-zelty {
   background: #6366f1; color: white; padding: 2px 6px; border-radius: 6px;
