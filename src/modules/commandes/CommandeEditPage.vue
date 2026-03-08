@@ -117,9 +117,9 @@ const nbArticles = computed(() => {
 
 // Auto-save for draft data
 const autoSaveData = computed(() => ({
-  fournisseur_id: selectedFournisseurId.value,
-  date_livraison_prevue: dateLivraison.value,
-  notes: notes.value,
+  fournisseur_id: selectedFournisseurId.value || null,
+  date_livraison_prevue: dateLivraison.value || null,
+  notes: notes.value || null,
   montant_total_ht: totalHT.value,
   montant_total_ttc: totalTTC.value,
 }))
@@ -257,6 +257,15 @@ function getCondLabel(produit: Mercuriale): string {
   if (!conds || conds.length === 0) return produit.unite_stock
   const cond = conds.find(c => c.utilise_commande) ?? conds[0]
   return cond?.nom ?? produit.unite_stock
+}
+
+function getPrixUnitaireLabel(produit: Mercuriale): string | null {
+  const conds = produit.conditionnements as Conditionnement[]
+  if (!conds || conds.length === 0) return null
+  const cond = conds.find(c => c.utilise_commande) ?? conds[0]
+  if (!cond || cond.quantite <= 1) return null
+  const prixUnit = produit.prix_unitaire_ht / cond.quantite
+  return `${prixUnit.toFixed(2)} €/${produit.unite_stock}`
 }
 
 // ─── PDF preview ───
@@ -680,8 +689,8 @@ watch(selectedFournisseurId, async (newId) => {
               </div>
               <div class="product-info">
                 <span class="product-name">{{ p.designation }}</span>
-                <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} &#x20AC;</span>
-                <span class="product-cond">{{ getCondLabel(p) }}</span>
+                <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} &#x20AC; / {{ getCondLabel(p) }}</span>
+                <span v-if="getPrixUnitaireLabel(p)" class="product-prix-unit">{{ getPrixUnitaireLabel(p) }}</span>
               </div>
               <div class="qty-controls" :class="{ 'has-qty': getQuantite(p.id) > 0 }">
                 <button
@@ -1042,10 +1051,9 @@ h1 {
   font-weight: 600;
 }
 
-.product-cond {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-left: 8px;
+.product-prix-unit {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 /* Quantity controls */

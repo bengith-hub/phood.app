@@ -61,8 +61,27 @@ function formatConditionnement(cond: Conditionnement) {
   return `${cond.nom} (${cond.quantite} ${cond.unite})`
 }
 
-function formatPrix(prix: number, unite: string) {
-  return `${prix.toFixed(2)} \u20AC/${unite}`
+function getOrderCond(p: Mercuriale): Conditionnement | null {
+  const conds = p.conditionnements as Conditionnement[]
+  if (!conds || conds.length === 0) return null
+  return conds.find(c => c.utilise_commande) || null
+}
+
+function formatPrixUnitaire(p: Mercuriale): string {
+  const cond = getOrderCond(p)
+  if (cond && cond.quantite > 1) {
+    const prixUnit = p.prix_unitaire_ht / cond.quantite
+    return `${prixUnit.toFixed(2)} €/${p.unite_stock}`
+  }
+  return `${p.prix_unitaire_ht.toFixed(2)} €/${p.unite_stock}`
+}
+
+function formatPrixCond(p: Mercuriale): string | null {
+  const cond = getOrderCond(p)
+  if (cond && cond.quantite > 1) {
+    return `${p.prix_unitaire_ht.toFixed(2)} € / ${cond.nom}`
+  }
+  return null
 }
 
 // Photo upload
@@ -260,7 +279,8 @@ onMounted(async () => {
               <span v-if="p.ref_fournisseur" class="product-sku">{{ p.ref_fournisseur }}</span>
             </div>
             <div class="product-details">
-              <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock) }}</span>
+              <span class="product-price">{{ formatPrixUnitaire(p) }}</span>
+              <span v-if="formatPrixCond(p)" class="product-price-cond">{{ formatPrixCond(p) }}</span>
               <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
             </div>
             <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
@@ -568,6 +588,7 @@ h1 {
 }
 .product-details { display: flex; gap: 12px; margin-bottom: 6px; }
 .product-price { font-size: 18px; font-weight: 700; color: var(--color-primary); }
+.product-price-cond { font-size: 13px; color: var(--text-secondary); align-self: center; }
 .product-tva { font-size: 13px; color: var(--text-tertiary); align-self: center; }
 .product-cond { display: flex; gap: 6px; flex-wrap: wrap; }
 .cond-badge { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--bg-main); color: var(--text-secondary); }
