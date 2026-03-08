@@ -8,7 +8,9 @@ import { useStocksStore } from '@/stores/stocks'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useAuth } from '@/composables/useAuth'
 import { useAutoSave } from '@/composables/useAutoSave'
+import { useLocking } from '@/composables/useLocking'
 import { generateCommandePdf } from '@/lib/pdf-commande'
+import { supabase } from '@/lib/supabase'
 import StockCoverageRow from './StockCoverageRow.vue'
 import type { StockCoverageInfo } from './StockCoverageRow.vue'
 import type { Commande, CommandeLigne, Mercuriale, Conditionnement } from '@/types/database'
@@ -20,7 +22,8 @@ const fournisseursStore = useFournisseursStore()
 const mercurialeStore = useMercurialeStore()
 const stocksStore = useStocksStore()
 const ingredientsStore = useIngredientsStore()
-const { user, isManagerOrAbove } = useAuth()
+const { user, isManagerOrAbove, profile } = useAuth()
+const { lockedBy, isLocked, isMyLock, acquireLock } = useLocking('commande')
 
 const commandeId = ref<string | null>(route.params.id as string || null)
 const isNew = !commandeId.value
@@ -315,30 +318,144 @@ function openPdfNewTab() {
 
 // ─── Actions ───
 
+const sending = ref(false)
+const sendError = ref<string | null>(null)
+
 async function handleEnvoyer() {
-  if (!commandeId.value || !francoAtteint.value) return
+  if (!commandeId.value || !francoAtteint.value || !fournisseur.value) return
 
-  // Save lines first
-  const lignesArray: Partial<CommandeLigne>[] = []
-  for (const l of lignes.value.values()) {
-    if (l.quantite > 0) {
-      const montantHt = l.quantite * l.prix_unitaire_ht
-      lignesArray.push({
-        mercuriale_id: l.mercuriale_id,
-        quantite: l.quantite,
-        conditionnement_idx: l.conditionnement_idx,
-        prix_unitaire_ht: l.prix_unitaire_ht,
-        montant_ht: montantHt,
-        montant_ttc: montantHt * (1 + l.tva / 100),
-      })
+  sending.value = true
+  sendError.value = null
+
+  try {
+    // Save lines first
+    const lignesArray: Partial<CommandeLigne>[] = []
+    const lignesForPdf: CommandeLigne[] = []
+    for (const l of lignes.value.values()) {
+      if (l.quantite > 0) {
+        const montantHt = l.quantite * l.prix_unitaire_ht
+        const ligne: Partial<CommandeLigne> = {
+          mercuriale_id: l.mercuriale_id,
+          quantite: l.quantite,
+          conditionnement_idx: l.conditionnement_idx,
+          prix_unitaire_ht: l.prix_unitaire_ht,
+          montant_ht: montantHt,
+          montant_ttc: montantHt * (1 + l.tva / 100),
+        }
+        lignesArray.push(ligne)
+        lignesForPdf.push({
+          id: '',
+          commande_id: commandeId.value,
+          mercuriale_id: l.mercuriale_id,
+          quantite: l.quantite,
+          conditionnement_idx: l.conditionnement_idx,
+          prix_unitaire_ht: l.prix_unitaire_ht,
+          montant_ht: montantHt,
+          montant_ttc: montantHt * (1 + l.tva / 100),
+          created_at: '',
+        })
+      }
     }
-  }
-  await commandesStore.saveLignes(commandeId.value, lignesArray)
+    await commandesStore.saveLignes(commandeId.value, lignesArray)
 
-  // TODO: Generate PDF and send email
-  // For now just update status
-  await commandesStore.updateStatut(commandeId.value, 'envoyee')
-  router.push('/commandes')
+    // Build commande data for PDF
+    const commandeData: Commande = commande.value || {
+      id: commandeId.value,
+      numero: commandeId.value,
+      fournisseur_id: selectedFournisseurId.value,
+      statut: 'brouillon',
+      date_commande: new Date().toISOString().slice(0, 10),
+      date_livraison_prevue: dateLivraison.value || null,
+      montant_total_ht: totalHT.value,
+      montant_total_ttc: totalTTC.value,
+      notes: notes.value || null,
+      pdf_url: null,
+      created_by: user.value?.id || '',
+      locked_by: null,
+      locked_at: null,
+      created_at: '',
+      updated_at: '',
+    }
+
+    // Generate PDF
+    const pdf = generateCommandePdf({
+      commande: commandeData,
+      lignes: lignesForPdf,
+      fournisseur: fournisseur.value,
+      getMercuriale: (id: string) => mercurialeStore.getById(id),
+    })
+
+    // Convert PDF to base64 for email attachment
+    const pdfBase64 = pdf.output('datauristring').split(',')[1]!
+
+    // Send email to supplier
+    const emailTo = fournisseur.value.email_commande
+    if (emailTo) {
+      const livraisonStr = dateLivraison.value
+        ? new Date(dateLivraison.value).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+        : 'non précisée'
+
+      const response = await fetch('/.netlify/functions/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: emailTo,
+          subject: `Commande ${commandeData.numero} — Phood Restaurant`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px;">
+              <h2 style="color: #E85D2C;">Phood Restaurant — Bègles</h2>
+              <p>Bonjour,</p>
+              <p>Veuillez trouver ci-joint notre bon de commande <strong>${commandeData.numero}</strong>.</p>
+              <table style="border-collapse: collapse; margin: 16px 0;">
+                <tr><td style="padding: 4px 12px 4px 0; color: #666;">Livraison souhaitée :</td><td><strong>${livraisonStr}</strong></td></tr>
+                <tr><td style="padding: 4px 12px 4px 0; color: #666;">Montant HT :</td><td><strong>${totalHT.value.toFixed(2)} €</strong></td></tr>
+                <tr><td style="padding: 4px 12px 4px 0; color: #666;">Articles :</td><td><strong>${nbArticles.value}</strong></td></tr>
+              </table>
+              ${notes.value ? `<p><em>Notes : ${notes.value}</em></p>` : ''}
+              <p>Cordialement,<br/>L'équipe Phood Restaurant</p>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+              <p style="font-size: 12px; color: #999;">Ce message a été envoyé automatiquement par PhoodApp.</p>
+            </div>
+          `,
+          attachments: [{
+            filename: `${commandeData.numero}.pdf`,
+            content: pdfBase64,
+            contentType: 'application/pdf',
+          }],
+        }),
+      })
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({ error: 'Erreur envoi email' }))
+        throw new Error(errBody.error || `Email error ${response.status}`)
+      }
+    }
+
+    // Upload PDF to Supabase Storage
+    try {
+      const pdfBlob = pdf.output('blob')
+      const pdfPath = `commandes/${commandeData.numero}.pdf`
+      await supabase.storage.from('pdfs').upload(pdfPath, pdfBlob, {
+        contentType: 'application/pdf',
+        upsert: true,
+      })
+      // Update commande with PDF URL
+      const { data: urlData } = supabase.storage.from('pdfs').getPublicUrl(pdfPath)
+      await commandesStore.updateCommande(commandeId.value, { pdf_url: urlData.publicUrl })
+    } catch {
+      // PDF upload is not critical — continue
+      console.warn('PDF upload to storage failed, continuing...')
+    }
+
+    // Update status to sent
+    await commandesStore.updateStatut(commandeId.value, 'envoyee')
+    router.push('/commandes')
+  } catch (e: unknown) {
+    sendError.value = e instanceof Error ? e.message : 'Erreur lors de l\'envoi'
+    console.error('handleEnvoyer error:', e)
+  } finally {
+    sending.value = false
+  }
 }
 
 async function handleSaveDraft() {
@@ -393,6 +510,11 @@ onMounted(async () => {
           tva: mercurialeStore.getById(l.mercuriale_id)?.tva || 5.5,
         })
       }
+
+      // Acquire realtime lock for concurrent editing prevention
+      if (user.value && isDraft.value) {
+        await acquireLock(commandeId.value, user.value.id, profile.value?.nom || user.value.email || '')
+      }
     }
   }
 })
@@ -415,6 +537,12 @@ watch(selectedFournisseurId, async (newId) => {
 
 <template>
   <div class="commande-edit">
+    <!-- Lock warning banner -->
+    <div v-if="isLocked && !isMyLock" class="lock-banner">
+      {{ lockedBy?.user_name || 'Un autre utilisateur' }} est en train de modifier cette commande.
+      <br />Vos modifications ne seront pas sauvegardées.
+    </div>
+
     <!-- Header -->
     <div class="page-header">
       <div>
@@ -552,13 +680,14 @@ watch(selectedFournisseurId, async (newId) => {
         </button>
         <button
           class="btn-primary"
-          :disabled="!francoAtteint || nbArticles === 0"
+          :disabled="!francoAtteint || nbArticles === 0 || sending"
           @click="handleEnvoyer"
           v-if="isManagerOrAbove"
         >
-          Envoyer la commande
+          {{ sending ? 'Envoi en cours...' : 'Envoyer la commande' }}
         </button>
       </div>
+      <div v-if="sendError" class="send-error">{{ sendError }}</div>
     </div>
 
     <!-- PDF Preview Modal -->
@@ -591,6 +720,18 @@ watch(selectedFournisseurId, async (newId) => {
 </template>
 
 <style scoped>
+.lock-banner {
+  background: #FEF3CD;
+  border: 1px solid #F59E0B;
+  color: #92400E;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -966,6 +1107,16 @@ h1 {
 
 .btn-outline.small {
   padding: 8px 16px;
+  font-size: 14px;
+}
+
+.send-error {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-md);
+  color: #991b1b;
   font-size: 14px;
 }
 

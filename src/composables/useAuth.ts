@@ -39,6 +39,18 @@ export function useAuth() {
     return data
   }
 
+  async function resetPassword(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+    if (error) throw error
+  }
+
+  async function updatePassword(newPassword: string) {
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) throw error
+  }
+
   async function signOut() {
     await supabase.auth.signOut()
     user.value = null
@@ -75,6 +87,8 @@ export function useAuth() {
     isManagerOrAbove,
     signIn,
     signInWithGoogle,
+    resetPassword,
+    updatePassword,
     signOut,
     initAuth,
   }

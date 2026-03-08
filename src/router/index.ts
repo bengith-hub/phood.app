@@ -11,6 +11,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: () => import('@/modules/auth/ResetPasswordPage.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: () => import('@/layouts/AppLayout.vue'),
       children: [
@@ -128,6 +134,13 @@ const router = createRouter({
           path: 'reporting',
           name: 'reporting',
           component: () => import('@/modules/reporting/ReportingPage.vue'),
+          meta: { requiresAdmin: true },
+        },
+        // Paramètres
+        {
+          path: 'parametres',
+          name: 'parametres',
+          component: () => import('@/modules/parametres/ParametresPage.vue'),
           meta: { requiresAdmin: true },
         },
       ],
