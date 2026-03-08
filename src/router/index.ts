@@ -81,6 +81,11 @@ const router = createRouter({
           meta: { requiresAdmin: true },
         },
         {
+          path: 'recettes/ingredient/:id',
+          name: 'ingredient-detail',
+          component: () => import('@/modules/recettes/IngredientDetailPage.vue'),
+        },
+        {
           path: 'recettes/:id',
           name: 'recette-detail',
           component: () => import('@/modules/recettes/RecetteDetailPage.vue'),

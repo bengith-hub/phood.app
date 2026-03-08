@@ -10,6 +10,8 @@ const ingredientsStore = useIngredientsStore()
 
 const search = ref('')
 const tab = ref<'recettes' | 'ingredients' | 'sous_recettes'>('recettes')
+const catFilter = ref('')
+const showInactifs = ref(false)
 
 const filteredRecettes = computed(() => {
   const q = search.value.toLowerCase()
@@ -26,9 +28,20 @@ const filteredRecettes = computed(() => {
 
 const filteredIngredients = computed(() => {
   if (tab.value !== 'ingredients') return []
+  let list = showInactifs.value ? ingredientsStore.ingredients : ingredientsStore.actifs
+  if (catFilter.value) {
+    list = list.filter(i => i.categorie === catFilter.value)
+  }
   const q = search.value.toLowerCase()
-  if (!q) return ingredientsStore.actifs
-  return ingredientsStore.search(q)
+  if (q) {
+    list = list.filter(i =>
+      i.nom.toLowerCase().includes(q) ||
+      i.categorie?.toLowerCase().includes(q) ||
+      i.allergenes.some(a => a.toLowerCase().includes(q)) ||
+      i.contient?.toLowerCase().includes(q)
+    )
+  }
+  return list
 })
 
 const ALLERGEN_LABELS: Record<string, string> = {
@@ -89,6 +102,19 @@ onMounted(async () => {
       class="search-input"
     />
 
+    <!-- Ingredient filters -->
+    <div v-if="tab === 'ingredients'" class="ing-filters">
+      <select v-model="catFilter" class="filter-select">
+        <option value="">Toutes catégories</option>
+        <option v-for="c in ingredientsStore.categories" :key="c" :value="c">{{ c }}</option>
+      </select>
+      <label class="toggle-label">
+        <input type="checkbox" v-model="showInactifs" class="toggle-check" />
+        Inclure inactifs
+      </label>
+      <span class="result-count">{{ filteredIngredients.length }} résultat{{ filteredIngredients.length > 1 ? 's' : '' }}</span>
+    </div>
+
     <div v-if="recettesStore.loading || ingredientsStore.loading" class="loading">Chargement...</div>
 
     <div v-else-if="tab !== 'ingredients'" class="item-list">
@@ -112,19 +138,34 @@ onMounted(async () => {
 
     <div v-else class="item-list">
       <div v-if="filteredIngredients.length === 0" class="empty">Aucun résultat</div>
-      <div v-for="ing in filteredIngredients" :key="ing.id" class="item-card">
-        <div class="item-main">
-          <span class="item-name">{{ ing.nom }}</span>
-          <span v-if="ing.categorie" class="item-cat">{{ ing.categorie }}</span>
-        </div>
-        <div class="item-meta">
-          <span class="item-unit">{{ ing.unite_stock }}</span>
-          <span v-if="ing.cout_unitaire > 0" class="item-cost">{{ ing.cout_unitaire.toFixed(2) }} €/{{ ing.unite_stock }}</span>
-        </div>
-        <div v-if="ing.allergenes.length > 0" class="item-allergens">
-          <span v-for="a in ing.allergenes" :key="a" class="allergen-badge">
-            {{ ALLERGEN_LABELS[a] || a }}
-          </span>
+      <div
+        v-for="ing in filteredIngredients"
+        :key="ing.id"
+        class="item-card clickable"
+        :class="{ inactive: !ing.actif }"
+        @click="router.push(`/recettes/ingredient/${ing.id}`)"
+      >
+        <div class="ing-row">
+          <div class="ing-photo">
+            <img v-if="ing.photo_url" :src="ing.photo_url" :alt="ing.nom" />
+            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          </div>
+          <div class="ing-content">
+            <div class="item-main">
+              <span class="item-name">{{ ing.nom }}</span>
+              <span v-if="ing.categorie" class="item-cat">{{ ing.categorie }}</span>
+            </div>
+            <div class="item-meta">
+              <span class="item-unit">{{ ing.unite_stock }}</span>
+              <span v-if="ing.cout_unitaire > 0" class="item-cost">{{ ing.cout_unitaire.toFixed(2) }} €/{{ ing.unite_stock }}</span>
+              <span v-if="!ing.actif" class="badge-inactif">Inactif</span>
+            </div>
+            <div v-if="ing.allergenes.length > 0" class="item-allergens">
+              <span v-for="a in ing.allergenes" :key="a" class="allergen-badge">
+                {{ ALLERGEN_LABELS[a] || a }}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -256,5 +297,84 @@ h1 { font-size: 28px; }
 .allergen-badge {
   background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 6px;
   font-size: 12px; font-weight: 600;
+}
+
+/* Ingredient filters */
+.ing-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.filter-select {
+  height: 48px;
+  padding: 0 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  font-size: 16px;
+  min-width: 180px;
+}
+.filter-select:focus { outline: none; border-color: var(--color-primary); }
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.toggle-check {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+.result-count {
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* Ingredient row with photo */
+.ing-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.ing-photo {
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border);
+  background: var(--bg-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--text-tertiary);
+}
+.ing-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ing-content {
+  flex: 1;
+  min-width: 0;
+}
+.item-card.inactive {
+  opacity: 0.55;
+}
+.badge-inactif {
+  background: var(--bg-main);
+  color: var(--text-tertiary);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
 }
 </style>

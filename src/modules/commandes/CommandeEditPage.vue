@@ -563,7 +563,7 @@ watch(selectedFournisseurId, async (newId) => {
       </div>
       <div class="header-actions">
         <span class="save-status" :class="saveStatus">
-          {{ saveStatus === 'saved' ? 'Sauvegard\u00E9' : saveStatus === 'saving' ? 'Sauvegarde...' : saveStatus === 'offline' ? 'Hors-ligne' : 'Erreur' }}
+          {{ saveStatus === 'saved' ? 'Sauvegardé' : saveStatus === 'saving' ? 'Sauvegarde...' : saveStatus === 'offline' ? 'Hors-ligne' : 'Erreur' }}
         </span>
       </div>
     </div>
@@ -675,7 +675,7 @@ watch(selectedFournisseurId, async (newId) => {
       <!-- Notes -->
       <div class="notes-section">
         <label>Notes</label>
-        <textarea v-model="notes" rows="2" placeholder="Instructions sp\u00E9ciales..." :disabled="!isDraft" />
+        <textarea v-model="notes" rows="2" placeholder="Instructions spéciales..." :disabled="!isDraft" />
       </div>
 
       <!-- Actions -->

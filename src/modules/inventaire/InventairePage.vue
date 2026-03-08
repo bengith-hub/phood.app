@@ -464,8 +464,8 @@ onMounted(async () => {
       <div v-if="inventaireStore.loading" class="loading">Chargement...</div>
 
       <div v-else-if="filteredInventaires.length === 0" class="empty">
-        <p>Aucun inventaire{{ search ? ' trouv\u00e9' : '' }}.</p>
-        <p v-if="!search">Cr\u00e9ez votre premier inventaire.</p>
+        <p>Aucun inventaire{{ search ? ' trouvé' : '' }}.</p>
+        <p v-if="!search">Créez votre premier inventaire.</p>
       </div>
 
       <div v-else class="inv-list">
@@ -481,7 +481,7 @@ onMounted(async () => {
               class="badge-statut"
               :class="inv.statut === 'valide' ? 'badge-valide' : 'badge-encours'"
             >
-              {{ inv.statut === 'valide' ? 'Valid\u00e9' : 'En cours' }}
+              {{ inv.statut === 'valide' ? 'Validé' : 'En cours' }}
             </span>
           </div>
           <div class="inv-card-bottom">
@@ -518,7 +518,7 @@ onMounted(async () => {
           >
             <span class="type-icon">&#9744;</span>
             <span class="type-label">Complet</span>
-            <span class="type-desc">Tous les ingr\u00e9dients actifs</span>
+            <span class="type-desc">Tous les ingrédients actifs</span>
           </button>
           <button
             :class="['type-btn', { active: newType === 'partiel' }]"
@@ -526,7 +526,7 @@ onMounted(async () => {
           >
             <span class="type-icon">&#9998;</span>
             <span class="type-label">Partiel</span>
-            <span class="type-desc">Zones ou ingr\u00e9dients sp\u00e9cifiques</span>
+            <span class="type-desc">Zones ou ingrédients spécifiques</span>
           </button>
         </div>
       </div>
@@ -536,7 +536,7 @@ onMounted(async () => {
         <div class="setup-section">
           <h2>Zones de stockage</h2>
           <p class="setup-hint" v-if="inventaireStore.zones.length === 0">
-            Aucune zone de stockage configur\u00e9e.
+            Aucune zone de stockage configurée.
           </p>
           <div class="zone-grid" v-else>
             <button
@@ -553,11 +553,11 @@ onMounted(async () => {
         </div>
 
         <div class="setup-section">
-          <h2>Ingr\u00e9dients sp\u00e9cifiques</h2>
+          <h2>Ingrédients spécifiques</h2>
           <input
             v-model="ingredientSearch"
             type="search"
-            placeholder="Rechercher un ingr\u00e9dient..."
+            placeholder="Rechercher un ingrédient..."
             class="search-input"
           />
           <div class="ingredient-select-list">
@@ -583,7 +583,7 @@ onMounted(async () => {
           :disabled="newType === 'partiel' && selectedZoneIds.length === 0 && selectedIngredientIds.length === 0"
           @click="createInventaire"
         >
-          D\u00e9marrer le comptage
+          Démarrer le comptage
         </button>
       </div>
     </template>
@@ -599,7 +599,7 @@ onMounted(async () => {
         </div>
         <div class="header-actions">
           <span class="save-status" :class="{ saved: !saving, saving }">
-            {{ saving ? 'Sauvegarde...' : 'Sauvegard\u00e9' }}
+            {{ saving ? 'Sauvegarde...' : 'Sauvegardé' }}
           </span>
         </div>
       </div>
@@ -624,7 +624,7 @@ onMounted(async () => {
 
       <!-- Counting cards -->
       <div v-if="activeLignes.length === 0" class="empty">
-        Aucun ingr\u00e9dient dans cette zone.
+        Aucun ingrédient dans cette zone.
       </div>
 
       <div class="counting-list">
@@ -635,7 +635,7 @@ onMounted(async () => {
               <span class="counting-cat">{{ ligne.ingredient.categorie || '' }}</span>
             </div>
             <div class="counting-theo">
-              <span class="theo-label">Th\u00e9orique</span>
+              <span class="theo-label">Théorique</span>
               <span class="theo-value">{{ ligne.quantite_theorique.toFixed(2) }} {{ ligne.ingredient.unite_stock }}</span>
             </div>
           </div>
@@ -663,7 +663,7 @@ onMounted(async () => {
           <!-- Result -->
           <div class="counting-result">
             <div class="result-total">
-              <span class="result-label">Compt\u00e9 :</span>
+              <span class="result-label">Compté :</span>
               <span class="result-value">{{ ligne.quantite_comptee.toFixed(2) }} {{ ligne.ingredient.unite_stock }}</span>
             </div>
             <div :class="['result-ecart', ecartClass(ligne)]">
@@ -690,7 +690,7 @@ onMounted(async () => {
           Sauvegarder brouillon
         </button>
         <button class="btn-primary" @click="goToSummary">
-          Voir le r\u00e9sum\u00e9
+          Voir le résumé
         </button>
       </div>
     </template>
@@ -707,7 +707,7 @@ onMounted(async () => {
           <button class="btn-back" @click="backToList" v-else>
             &#8592; Retour
           </button>
-          <h1>R\u00e9sum\u00e9 {{ activeInventaire?.nom }}</h1>
+          <h1>Résumé {{ activeInventaire?.nom }}</h1>
         </div>
       </div>
 
@@ -715,11 +715,11 @@ onMounted(async () => {
       <div class="summary-stats">
         <div class="stat-card">
           <span class="stat-value">{{ summaryStats.total }}</span>
-          <span class="stat-label">Ingr\u00e9dients</span>
+          <span class="stat-label">Ingrédients</span>
         </div>
         <div class="stat-card stat-ecart">
           <span class="stat-value">{{ summaryStats.withEcart }}</span>
-          <span class="stat-label">\u00c9carts</span>
+          <span class="stat-label">Écarts</span>
         </div>
         <div class="stat-card stat-vert">
           <span class="stat-value">{{ summaryStats.vert }}</span>
@@ -737,18 +737,18 @@ onMounted(async () => {
 
       <!-- By zone -->
       <div class="summary-zones">
-        <h2>D\u00e9tail par zone</h2>
+        <h2>Détail par zone</h2>
         <div v-for="sz in summaryByZone" :key="sz.zoneName" class="summary-zone-card">
           <div class="sz-header">
             <span class="sz-name">{{ sz.zoneName }}</span>
-            <span class="sz-count">{{ sz.totalLignes }} ingr\u00e9dient{{ sz.totalLignes > 1 ? 's' : '' }}</span>
+            <span class="sz-count">{{ sz.totalLignes }} ingrédient{{ sz.totalLignes > 1 ? 's' : '' }}</span>
           </div>
           <div class="sz-detail">
             <span :class="['sz-ecarts', sz.nbEcarts > 0 ? 'has-ecarts' : '']">
-              {{ sz.nbEcarts }} \u00e9cart{{ sz.nbEcarts > 1 ? 's' : '' }}
+              {{ sz.nbEcarts }} écart{{ sz.nbEcarts > 1 ? 's' : '' }}
             </span>
             <span class="sz-total-ecart" v-if="sz.nbEcarts > 0">
-              \u0394 {{ sz.totalEcart }}
+              Δ {{ sz.totalEcart }}
             </span>
           </div>
         </div>
@@ -756,7 +756,7 @@ onMounted(async () => {
 
       <!-- Ecart details -->
       <div class="summary-ecarts">
-        <h2>\u00c9carts significatifs (&gt; 15%)</h2>
+        <h2>Écarts significatifs (&gt; 15%)</h2>
         <div class="ecart-list">
           <template v-for="ligne in [...lignesComptage.values()]" :key="ligne.ingredient_id">
             <div
@@ -770,8 +770,8 @@ onMounted(async () => {
                 </span>
               </div>
               <div class="ecart-detail-values">
-                <span>Th\u00e9o: {{ ligne.quantite_theorique.toFixed(2) }}</span>
-                <span>Compt\u00e9: {{ ligne.quantite_comptee.toFixed(2) }}</span>
+                <span>Théo: {{ ligne.quantite_theorique.toFixed(2) }}</span>
+                <span>Compté: {{ ligne.quantite_comptee.toFixed(2) }}</span>
                 <span class="ecart-detail-diff ecart-rouge">
                   {{ ligne.ecart >= 0 ? '+' : '' }}{{ ligne.ecart.toFixed(2) }} {{ ligne.ingredient.unite_stock }}
                   ({{ ecartPct(ligne) }})
@@ -784,7 +784,7 @@ onMounted(async () => {
             v-if="summaryStats.rouge === 0"
             class="empty"
           >
-            Aucun \u00e9cart sup\u00e9rieur \u00e0 15%.
+            Aucun écart supérieur à 15%.
           </div>
         </div>
       </div>
@@ -795,11 +795,11 @@ onMounted(async () => {
           Modifier le comptage
         </button>
         <button class="btn-validate" @click="validerInventaire" :disabled="validating">
-          {{ validating ? 'Validation...' : 'Valider et mettre \u00e0 jour les stocks' }}
+          {{ validating ? 'Validation...' : 'Valider et mettre à jour les stocks' }}
         </button>
       </div>
       <div class="actions-bar validated-notice" v-else>
-        <span class="validated-badge">Inventaire valid\u00e9 le {{ formatDate(activeInventaire.created_at) }}</span>
+        <span class="validated-badge">Inventaire validé le {{ formatDate(activeInventaire.created_at) }}</span>
       </div>
     </template>
 

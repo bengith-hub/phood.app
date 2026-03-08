@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { db } from '@/lib/dexie'
+import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import type { IngredientRestaurant } from '@/types/database'
 
 export const useIngredientsStore = defineStore('ingredients', () => {
@@ -10,6 +11,14 @@ export const useIngredientsStore = defineStore('ingredients', () => {
   const error = ref<string | null>(null)
 
   const actifs = computed(() => ingredients.value.filter(i => i.actif))
+
+  const categories = computed(() => {
+    const cats = new Set<string>()
+    for (const i of ingredients.value) {
+      if (i.categorie) cats.add(i.categorie)
+    }
+    return [...cats].sort((a, b) => a.localeCompare(b))
+  })
 
   async function fetchAll() {
     loading.value = true
@@ -49,5 +58,53 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     )
   }
 
-  return { ingredients, actifs, loading, error, fetchAll, getById, search }
+  async function save(item: Partial<IngredientRestaurant> & { id?: string }) {
+    if (item.id) {
+      const { error: err } = await supabase
+        .from('ingredients_restaurant')
+        .update(item)
+        .eq('id', item.id)
+      if (err) throw err
+    } else {
+      const { error: err } = await supabase
+        .from('ingredients_restaurant')
+        .insert(item)
+      if (err) throw err
+    }
+    await fetchAll()
+  }
+
+  async function uploadPhoto(ingredientId: string, file: File): Promise<string> {
+    const compressed = await compressImage(file, 1024, 0.75)
+    const base64 = await blobToBase64(compressed)
+    const path = `ingredients/${ingredientId}_${Date.now()}.jpg`
+
+    const res = await fetch('/.netlify/functions/upload-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: base64,
+        bucket: 'ingredients-photos',
+        path,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error || 'Erreur upload photo')
+    }
+    const { url: photoUrl } = await res.json()
+    await save({ id: ingredientId, photo_url: photoUrl } as Partial<IngredientRestaurant> & { id: string })
+    return photoUrl
+  }
+
+  async function remove(id: string) {
+    const { error: err } = await supabase
+      .from('ingredients_restaurant')
+      .delete()
+      .eq('id', id)
+    if (err) throw err
+    await fetchAll()
+  }
+
+  return { ingredients, actifs, categories, loading, error, fetchAll, getById, search, save, uploadPhoto, remove }
 })
