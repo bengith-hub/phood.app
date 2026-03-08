@@ -72,9 +72,14 @@ onMounted(async () => {
 
     <div class="cards">
       <!-- Livraisons du jour -->
-      <div class="card" @click="router.push('/reception')">
+      <div class="card card-clickable" @click="router.push('/reception')">
         <div class="card-header">
-          <h2>Livraisons du jour</h2>
+          <div class="card-title">
+            <span class="card-icon card-icon-primary">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+            </span>
+            <h2>Livraisons du jour</h2>
+          </div>
           <span v-if="livraisonsJour.length > 0" class="badge badge-primary">{{ livraisonsJour.length }}</span>
         </div>
         <div v-if="livraisonsJour.length === 0" class="empty">Aucune livraison prévue</div>
@@ -85,9 +90,14 @@ onMounted(async () => {
       </div>
 
       <!-- Commandes brouillon -->
-      <div class="card" @click="router.push('/commandes')">
+      <div class="card card-clickable" @click="router.push('/commandes')">
         <div class="card-header">
-          <h2>Commandes en cours</h2>
+          <div class="card-title">
+            <span class="card-icon card-icon-warning">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01m-.01 4h.01"/></svg>
+            </span>
+            <h2>Commandes en cours</h2>
+          </div>
           <span v-if="commandesBrouillon.length > 0" class="badge badge-warning">{{ commandesBrouillon.length }}</span>
         </div>
         <div v-if="commandesBrouillon.length === 0 && commandesEnvoyees.length === 0" class="empty">
@@ -106,7 +116,12 @@ onMounted(async () => {
       <!-- Stocks bas -->
       <div class="card">
         <div class="card-header">
-          <h2>Stocks bas</h2>
+          <div class="card-title">
+            <span class="card-icon card-icon-danger">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+            </span>
+            <h2>Stocks bas</h2>
+          </div>
           <span v-if="stocksBas.length > 0" class="badge badge-danger">{{ stocksBas.length }}</span>
         </div>
         <div v-if="stocksBas.length === 0" class="empty">Tous les stocks sont OK</div>
@@ -124,7 +139,12 @@ onMounted(async () => {
       <!-- Notifications -->
       <div class="card">
         <div class="card-header">
-          <h2>Alertes</h2>
+          <div class="card-title">
+            <span class="card-icon card-icon-info">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+            </span>
+            <h2>Alertes</h2>
+          </div>
           <span v-if="notificationsStore.unreadCount > 0" class="badge badge-danger">
             {{ notificationsStore.unreadCount }}
           </span>
@@ -153,7 +173,12 @@ onMounted(async () => {
       <!-- Avoirs en attente -->
       <div v-if="avoirsEnCours.length > 0" class="card">
         <div class="card-header">
-          <h2>Avoirs en attente</h2>
+          <div class="card-title">
+            <span class="card-icon card-icon-warning">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"/></svg>
+            </span>
+            <h2>Avoirs en attente</h2>
+          </div>
           <span class="badge badge-warning">{{ avoirsEnCours.length }}</span>
         </div>
         <div v-for="c in avoirsEnCours" :key="c.id" class="card-item">
@@ -167,8 +192,9 @@ onMounted(async () => {
 
 <style scoped>
 .dashboard h1 {
-  font-size: 28px;
+  font-size: 26px;
   margin-bottom: 24px;
+  color: var(--text-primary);
 }
 
 .cards {
@@ -183,6 +209,16 @@ onMounted(async () => {
   padding: 20px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   cursor: default;
+  border: 1px solid var(--border);
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.card-clickable {
+  cursor: pointer;
+}
+.card-clickable:active {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(232, 93, 44, 0.12);
 }
 
 .card-header {
@@ -192,8 +228,28 @@ onMounted(async () => {
   margin-bottom: 14px;
 }
 
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.card-icon-primary { background: rgba(232, 93, 44, 0.1); color: var(--color-primary); }
+.card-icon-warning { background: rgba(245, 158, 11, 0.1); color: var(--color-warning); }
+.card-icon-danger { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.card-icon-info { background: rgba(59, 130, 246, 0.1); color: var(--color-info); }
+
 .card-header h2 {
-  font-size: 18px;
+  font-size: 17px;
   color: var(--text-primary);
   margin: 0;
 }
