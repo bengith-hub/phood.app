@@ -244,10 +244,10 @@ async function handleResetPassword() {
   color: var(--color-primary);
   font-size: 15px;
   cursor: pointer;
-  padding: 8px 0;
+  padding: 12px 0;
   text-align: center;
   width: 100%;
-  min-height: 40px;
+  min-height: 48px;
 }
 
 .forgot-section {

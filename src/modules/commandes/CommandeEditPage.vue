@@ -318,6 +318,18 @@ function openPdfNewTab() {
 
 // ─── Actions ───
 
+async function handleDelete() {
+  if (!commandeId.value) return
+  const numero = commande.value?.numero || 'cette commande'
+  if (!confirm(`Supprimer « ${numero} » ?\nCette action est irréversible.`)) return
+  try {
+    await commandesStore.remove(commandeId.value)
+    router.push('/commandes')
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur de suppression')
+  }
+}
+
 const sending = ref(false)
 const sendError = ref<string | null>(null)
 
@@ -668,6 +680,13 @@ watch(selectedFournisseurId, async (newId) => {
 
       <!-- Actions -->
       <div class="actions-bar" v-if="isDraft">
+        <button
+          v-if="commandeId"
+          class="btn-danger-outline"
+          @click="handleDelete"
+        >
+          Supprimer
+        </button>
         <button class="btn-secondary" @click="handleSaveDraft">
           Sauvegarder brouillon
         </button>
@@ -1051,7 +1070,6 @@ h1 {
 /* Actions */
 .actions-bar {
   display: flex;
-  justify-content: flex-end;
   gap: 12px;
   margin-top: 24px;
   padding-top: 20px;
@@ -1060,6 +1078,18 @@ h1 {
   bottom: 0;
   background: var(--bg-main);
   padding-bottom: 16px;
+  flex-wrap: wrap;
+}
+.btn-danger-outline {
+  background: transparent;
+  color: #ef4444;
+  border: 2px solid #ef4444;
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-right: auto;
 }
 
 .btn-primary {

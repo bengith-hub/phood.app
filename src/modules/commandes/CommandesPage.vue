@@ -182,12 +182,12 @@ onMounted(async () => {
 
 .filter-btn {
   flex-shrink: 0;
-  height: 40px;
-  padding: 0 14px;
+  height: 48px;
+  padding: 0 16px;
   border: 2px solid var(--border);
-  border-radius: 20px;
+  border-radius: 24px;
   background: var(--bg-surface);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
