@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { db } from '@/lib/dexie'
 import type { Mercuriale } from '@/types/database'
+import { compressImage, blobToBase64 } from '@/lib/image-compress'
 
 export const useMercurialeStore = defineStore('mercuriale', () => {
   const items = ref<Mercuriale[]>([])
@@ -85,5 +86,37 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     )
   }
 
-  return { items, actifs, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search }
+  async function uploadPhoto(mercurialeId: string, file: File): Promise<string> {
+    const compressed = await compressImage(file, 1024, 0.75)
+    const base64 = await blobToBase64(compressed)
+    const path = `mercuriale/${mercurialeId}_${Date.now()}.jpg`
+
+    const res = await fetch('/.netlify/functions/upload-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: base64,
+        bucket: 'ingredients-photos',
+        path,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error || 'Erreur upload photo')
+    }
+    const { url: photoUrl } = await res.json()
+    await save({ id: mercurialeId, photo_url: photoUrl } as Partial<Mercuriale> & { id: string })
+    return photoUrl
+  }
+
+  async function deleteItem(id: string) {
+    const { error: err } = await supabase
+      .from('mercuriale')
+      .delete()
+      .eq('id', id)
+    if (err) throw err
+    await fetchAll()
+  }
+
+  return { items, actifs, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, deleteItem }
 })

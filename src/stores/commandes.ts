@@ -129,9 +129,17 @@ export const useCommandesStore = defineStore('commandes', () => {
     return commandes.value.find(c => c.id === id)
   }
 
+  async function remove(id: string) {
+    // Delete lines first, then the order
+    await supabase.from('commande_lignes').delete().eq('commande_id', id)
+    const { error: err } = await supabase.from('commandes').delete().eq('id', id)
+    if (err) throw err
+    await fetchAll()
+  }
+
   return {
     commandes, loading, error, brouillons, envoyees,
     fetchAll, createBrouillon, updateStatut, updateCommande,
-    fetchLignes, saveLignes, getById, generateNumero,
+    fetchLignes, saveLignes, getById, generateNumero, remove,
   }
 })

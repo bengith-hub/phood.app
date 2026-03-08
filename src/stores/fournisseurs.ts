@@ -59,5 +59,14 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     return fournisseurs.value.find(f => f.id === id)
   }
 
-  return { fournisseurs, actifs, loading, error, fetchAll, save, getById }
+  async function remove(id: string) {
+    const { error: err } = await supabase
+      .from('fournisseurs')
+      .delete()
+      .eq('id', id)
+    if (err) throw err
+    await fetchAll()
+  }
+
+  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove }
 })

@@ -200,11 +200,11 @@ h1 { font-size: 28px; }
 }
 .tabs button {
   flex: 1;
-  height: 44px;
+  height: 48px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   color: var(--text-secondary);

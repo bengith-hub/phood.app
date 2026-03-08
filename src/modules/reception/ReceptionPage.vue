@@ -153,6 +153,12 @@ const hasAnomalies = computed(() =>
 async function handleValidate() {
   if (!selectedCommande.value || !user.value) return
 
+  const nbAnomalies = receptionLignes.value.filter(l => l.anomalie_type).length
+  const msg = nbAnomalies > 0
+    ? `Valider la réception avec ${nbAnomalies} anomalie(s) ?\nLes stocks seront mis à jour.`
+    : 'Valider la réception ?\nLes stocks seront mis à jour.'
+  if (!confirm(msg)) return
+
   validating.value = true
   try {
     // Upload photo if exists

@@ -196,6 +196,6 @@ h1 {
   font-size: 15px;
   cursor: pointer;
   text-align: center;
-  min-height: 40px;
+  min-height: 48px;
 }
 </style>

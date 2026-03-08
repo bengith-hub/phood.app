@@ -63,6 +63,18 @@ function formatFranco(montant: number) {
   return montant > 0 ? `${montant.toFixed(0)} €` : 'Aucun'
 }
 
+async function handleDelete() {
+  if (!editingFournisseur.value?.id) return
+  const nom = editingFournisseur.value.nom || 'ce fournisseur'
+  if (!confirm(`Supprimer « ${nom} » ?\nCette action est irréversible.`)) return
+  try {
+    await store.remove(editingFournisseur.value.id)
+    closeEditor()
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur de suppression')
+  }
+}
+
 onMounted(() => store.fetchAll())
 </script>
 
@@ -226,6 +238,15 @@ onMounted(() => store.fetchAll())
           </div>
 
           <div class="modal-actions">
+            <button
+              v-if="editingFournisseur.id"
+              type="button"
+              class="btn-danger"
+              @click="handleDelete"
+            >
+              Supprimer
+            </button>
+            <span class="spacer" />
             <button type="button" class="btn-secondary" @click="closeEditor">Annuler</button>
             <button type="submit" class="btn-primary">Enregistrer</button>
           </div>
@@ -497,10 +518,23 @@ onMounted(() => store.fetchAll())
 
 .modal-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 12px;
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--border);
+}
+.modal-actions .spacer {
+  flex: 1;
+}
+.btn-danger {
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
 }
 </style>

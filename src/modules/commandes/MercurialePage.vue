@@ -12,6 +12,9 @@ const fournisseursStore = useFournisseursStore()
 const search = ref('')
 const selectedFournisseurId = ref<string | null>(null)
 const expandedCategories = ref<Set<string>>(new Set())
+const uploadingPhotoId = ref<string | null>(null)
+const photoInputRef = ref<HTMLInputElement | null>(null)
+const pendingPhotoProductId = ref<string | null>(null)
 
 // Initialize from route param
 watch(() => route.params.fournisseurId, (id) => {
@@ -73,6 +76,29 @@ function selectFournisseur(id: string) {
   )
 }
 
+function triggerPhotoUpload(productId: string) {
+  pendingPhotoProductId.value = productId
+  photoInputRef.value?.click()
+}
+
+async function handlePhotoSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file || !pendingPhotoProductId.value) return
+
+  const productId = pendingPhotoProductId.value
+  uploadingPhotoId.value = productId
+  try {
+    await mercurialeStore.uploadPhoto(productId, file)
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur upload photo')
+  } finally {
+    uploadingPhotoId.value = null
+    pendingPhotoProductId.value = null
+    input.value = '' // reset input
+  }
+}
+
 onMounted(async () => {
   await Promise.all([
     fournisseursStore.fetchAll(),
@@ -90,6 +116,16 @@ onMounted(async () => {
 <template>
   <div class="mercuriale-page">
     <h1>Mercuriale</h1>
+
+    <!-- Hidden file input for photo upload -->
+    <input
+      ref="photoInputRef"
+      type="file"
+      accept="image/*"
+      capture="environment"
+      class="visually-hidden"
+      @change="handlePhotoSelected"
+    />
 
     <!-- Fournisseur selector -->
     <div class="fournisseur-tabs">
@@ -139,23 +175,39 @@ onMounted(async () => {
 
         <div v-if="isCategoryExpanded(group.categorie)" class="category-products">
           <div v-for="p in group.produits" :key="p.id" class="product-card">
-            <div class="product-header">
-              <span class="product-name">{{ p.designation }}</span>
-              <span v-if="p.ref_fournisseur" class="product-sku">{{ p.ref_fournisseur }}</span>
-            </div>
-            <div class="product-details">
-              <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock) }}</span>
-              <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
-            </div>
-            <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
-              <span
-                v-for="(c, i) in (p.conditionnements as Conditionnement[])"
-                :key="i"
-                class="cond-badge"
-                :class="{ primary: (p.conditionnements as Conditionnement[])[i]?.utilise_commande }"
+            <div class="product-row">
+              <!-- Photo thumbnail -->
+              <button
+                class="product-photo"
+                :class="{ uploading: uploadingPhotoId === p.id }"
+                @click.stop="triggerPhotoUpload(p.id)"
               >
-                {{ formatConditionnement(c) }}
-              </span>
+                <img v-if="p.photo_url" :src="p.photo_url" :alt="p.designation" />
+                <span v-else-if="uploadingPhotoId === p.id" class="photo-spinner">...</span>
+                <svg v-else width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              </button>
+
+              <!-- Product info -->
+              <div class="product-info">
+                <div class="product-header">
+                  <span class="product-name">{{ p.designation }}</span>
+                  <span v-if="p.ref_fournisseur" class="product-sku">{{ p.ref_fournisseur }}</span>
+                </div>
+                <div class="product-details">
+                  <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock) }}</span>
+                  <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
+                </div>
+                <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
+                  <span
+                    v-for="(c, i) in (p.conditionnements as Conditionnement[])"
+                    :key="i"
+                    class="cond-badge"
+                    :class="{ primary: (p.conditionnements as Conditionnement[])[i]?.utilise_commande }"
+                  >
+                    {{ formatConditionnement(c) }}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -290,6 +342,56 @@ h1 {
   border-radius: var(--radius-md);
   padding: 16px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.product-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.product-photo {
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  border-radius: var(--radius-sm);
+  border: 2px dashed var(--border);
+  background: var(--bg-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  padding: 0;
+  transition: border-color 0.15s;
+}
+.product-photo:active {
+  border-color: var(--color-primary);
+}
+.product-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.product-photo.uploading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.photo-spinner {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.product-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .product-header {
