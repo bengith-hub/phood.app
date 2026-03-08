@@ -28,7 +28,7 @@ const form = ref<Partial<IngredientRestaurant>>({
   actif: true,
 })
 
-const UNITES = ['kg', 'L', 'unite', 'piece', 'botte']
+const UNITES = ['g', 'kg', 'mL', 'cl', 'L', 'unite', 'piece', 'botte']
 
 const ALL_ALLERGENES: { key: Allergene; label: string }[] = [
   { key: 'gluten', label: 'Gluten' },
