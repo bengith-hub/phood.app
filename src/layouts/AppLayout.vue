@@ -271,45 +271,41 @@ async function handleSignOut() {
 /* Bottom nav */
 .bottom-nav {
   display: flex;
-  justify-content: space-around;
+  gap: 6px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
-  padding: 8px 0 env(safe-area-inset-bottom, 8px);
+  padding: 8px 8px env(safe-area-inset-bottom, 8px);
   flex-shrink: 0;
 }
 
 .nav-item {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 6px 16px 8px;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 4px 12px;
   border: none;
-  background: transparent;
+  background: var(--bg-main);
   color: var(--text-tertiary);
-  border-radius: 0;
-  min-width: 72px;
+  border-radius: 14px;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: all 0.15s ease;
   text-decoration: none;
   font-family: inherit;
   position: relative;
+  min-height: 64px;
+}
+
+.nav-item:active {
+  transform: scale(0.95);
 }
 
 .nav-item.active {
-  color: var(--color-primary);
-}
-
-.nav-item.active::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 32px;
-  height: 3px;
-  border-radius: 0 0 3px 3px;
   background: var(--color-primary);
+  color: white;
+  box-shadow: 0 2px 8px rgba(232, 93, 44, 0.3);
 }
 
 .nav-icon {
@@ -319,9 +315,13 @@ async function handleSignOut() {
   height: 28px;
 }
 
+.nav-item.active .nav-icon svg {
+  stroke: white;
+}
+
 .nav-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   letter-spacing: 0.01em;
 }
 
