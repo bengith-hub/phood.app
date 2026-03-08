@@ -41,6 +41,7 @@ export interface Fournisseur {
   delai_commande_livraison: Record<string, number> | null // {"1": 3, "3": 5}
   creneau_livraison: { debut: string; fin: string } | null
   franco_minimum: number
+  duree_couverture_defaut: number | null // jours de couverture par défaut pour les commandes
   conditions_paiement: string | null
   mode_envoi: string // default 'email'
   adresse: string | null

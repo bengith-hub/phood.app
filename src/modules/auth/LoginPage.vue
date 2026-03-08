@@ -63,9 +63,10 @@ async function handleResetPassword() {
           <label for="email">Email</label>
           <input
             id="email"
+            name="email"
             v-model="email"
             type="email"
-            autocomplete="email"
+            autocomplete="username"
             required
             placeholder="votre@email.fr"
           />
@@ -74,6 +75,7 @@ async function handleResetPassword() {
           <label for="password">Mot de passe</label>
           <input
             id="password"
+            name="password"
             v-model="password"
             type="password"
             autocomplete="current-password"
@@ -98,8 +100,11 @@ async function handleResetPassword() {
         <p class="forgot-title">Réinitialiser le mot de passe</p>
         <div class="forgot-form">
           <input
+            id="reset-email"
+            name="email"
             v-model="resetEmail"
             type="email"
+            autocomplete="email"
             placeholder="votre@email.fr"
             @keyup.enter="handleResetPassword"
           />

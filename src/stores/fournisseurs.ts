@@ -68,5 +68,14 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     await fetchAll()
   }
 
-  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove }
+  async function deactivate(id: string) {
+    const { error: err } = await supabase
+      .from('fournisseurs')
+      .update({ actif: false })
+      .eq('id', id)
+    if (err) throw err
+    await fetchAll()
+  }
+
+  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove, deactivate }
 })

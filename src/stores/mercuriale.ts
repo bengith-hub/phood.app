@@ -12,6 +12,14 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
 
   const actifs = computed(() => items.value.filter(m => m.actif))
 
+  const allCategories = computed(() => {
+    const cats = new Set<string>()
+    for (const item of items.value) {
+      if (item.categorie) cats.add(item.categorie)
+    }
+    return Array.from(cats).sort((a, b) => a.localeCompare(b, 'fr'))
+  })
+
   function byFournisseur(fournisseurId: string) {
     return actifs.value.filter(m => m.fournisseur_id === fournisseurId)
   }
@@ -118,5 +126,5 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     await fetchAll()
   }
 
-  return { items, actifs, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, deleteItem }
+  return { items, actifs, allCategories, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, deleteItem }
 })

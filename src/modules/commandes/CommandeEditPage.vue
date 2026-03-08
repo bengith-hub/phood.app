@@ -35,7 +35,8 @@ const searchQuery = ref('')
 const showPdfModal = ref(false)
 const pdfBlobUrl = ref<string | null>(null)
 const showStockDetails = ref(false)
-const dureeUtilisation = ref<number>(5)
+const dateFinCouverture = ref('')
+const COUVERTURE_DEFAUT_JOURS = 5
 
 // Ligne items: mercuriale_id -> quantity
 interface LigneEdit {
@@ -77,6 +78,15 @@ const francoAtteint = computed(() => totalHT.value >= francoMinimum.value)
 const francoManquant = computed(() => Math.max(0, francoMinimum.value - totalHT.value))
 
 const isDraft = computed(() => !commande.value || commande.value.statut === 'brouillon')
+
+// Coverage duration: computed from date picker or supplier default
+const couvertureDefautJours = computed(() => fournisseur.value?.duree_couverture_defaut || COUVERTURE_DEFAUT_JOURS)
+
+const dureeEnJours = computed(() => {
+  if (!dateLivraison.value || !dateFinCouverture.value) return couvertureDefautJours.value
+  const diff = Math.ceil((new Date(dateFinCouverture.value).getTime() - new Date(dateLivraison.value).getTime()) / 86400000)
+  return Math.max(1, diff)
+})
 
 // Products from mercuriale for selected supplier
 const produits = computed(() => {
@@ -152,7 +162,7 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
   const previsionConso3j = consoJour * 3
 
   // Recommendation: enough to cover N days above tampon
-  const targetStock = stockTampon + consoJour * dureeUtilisation.value
+  const targetStock = stockTampon + consoJour * dureeEnJours.value
   const recommandationQty = Math.max(0, Math.ceil(targetStock - stockActuel))
 
   // Convert commanded qty from order units to stock units
@@ -172,7 +182,7 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
 
     // Check if coverage extends past estimated next delivery (assume 3-5 day cycle)
     const prochaineLivraison = new Date(livDate)
-    prochaineLivraison.setDate(prochaineLivraison.getDate() + dureeUtilisation.value)
+    prochaineLivraison.setDate(prochaineLivraison.getDate() + dureeEnJours.value)
     coverageOk = coverageDate.getTime() >= prochaineLivraison.getTime()
   }
 
@@ -524,6 +534,9 @@ onMounted(async () => {
         })
       }
 
+      // Initialize coverage date from delivery date + supplier default
+      initDateFinCouverture()
+
       // Acquire realtime lock for concurrent editing prevention
       if (user.value && isDraft.value) {
         await acquireLock(commandeId.value, user.value.id, profile.value?.nom || user.value.email || '')
@@ -533,6 +546,28 @@ onMounted(async () => {
 })
 
 // Auto-create brouillon when fournisseur selected for new order
+// Auto-set dateFinCouverture when dateLivraison changes
+function initDateFinCouverture() {
+  if (!dateLivraison.value) return
+  const d = new Date(dateLivraison.value)
+  const fin = dateFinCouverture.value ? new Date(dateFinCouverture.value) : null
+  if (!fin || fin <= d) {
+    d.setDate(d.getDate() + couvertureDefautJours.value)
+    dateFinCouverture.value = d.toISOString().slice(0, 10)
+  }
+}
+
+watch(dateLivraison, () => initDateFinCouverture())
+
+// When switching suppliers, recalc coverage from supplier default
+watch(() => fournisseur.value?.duree_couverture_defaut, () => {
+  if (dateLivraison.value) {
+    const d = new Date(dateLivraison.value)
+    d.setDate(d.getDate() + couvertureDefautJours.value)
+    dateFinCouverture.value = d.toISOString().slice(0, 10)
+  }
+})
+
 watch(selectedFournisseurId, async (newId) => {
   if (isNew && newId && user.value && !commandeId.value) {
     try {
@@ -594,16 +629,10 @@ watch(selectedFournisseurId, async (newId) => {
           <label>Livraison pr&eacute;vue :
             <input v-model="dateLivraison" type="date" class="date-input" />
           </label>
-          <label class="duree-label">Couverture :
-            <input
-              v-model.number="dureeUtilisation"
-              type="number"
-              inputmode="numeric"
-              min="1"
-              max="30"
-              class="duree-input"
-            /> jours
+          <label>Couvrir jusqu'au :
+            <input v-model="dateFinCouverture" type="date" class="date-input" :min="dateLivraison || undefined" />
           </label>
+          <span v-if="dureeEnJours > 0" class="duree-info">({{ dureeEnJours }} j.)</span>
         </div>
       </div>
 
@@ -859,27 +888,11 @@ h1 {
   font-size: 16px;
   margin-left: 8px;
 }
-.duree-label {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.duree-input {
-  width: 64px;
-  height: 44px;
-  border: 2px solid var(--border);
-  border-radius: var(--radius-sm);
-  text-align: center;
-  font-size: 18px;
-  font-weight: 700;
-  -moz-appearance: textfield;
-}
-.duree-input::-webkit-outer-spin-button,
-.duree-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
+.duree-info {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  align-self: center;
 }
 
 /* Franco bar */

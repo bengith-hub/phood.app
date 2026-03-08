@@ -73,7 +73,22 @@ async function handleDelete() {
     await store.remove(editingFournisseur.value.id)
     closeEditor()
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : 'Erreur de suppression')
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('violates foreign key') || msg.includes('23503')) {
+      const wantDeactivate = confirm(
+        `Impossible de supprimer « ${nom} » car il est lié à des produits ou commandes.\n\nVoulez-vous le désactiver à la place ?\nIl n'apparaîtra plus dans les listes actives mais ses données seront conservées.`
+      )
+      if (wantDeactivate) {
+        try {
+          await store.deactivate(editingFournisseur.value.id!)
+          closeEditor()
+        } catch (e2: unknown) {
+          alert(e2 instanceof Error ? e2.message : 'Erreur de désactivation')
+        }
+      }
+    } else {
+      alert(msg || 'Erreur de suppression')
+    }
   }
 }
 
@@ -182,6 +197,17 @@ onMounted(() => store.fetchAll())
                 inputmode="numeric"
                 min="0"
                 step="1"
+              />
+            </div>
+            <div class="field">
+              <label>Couverture par défaut (jours)</label>
+              <input
+                v-model.number="editingFournisseur.duree_couverture_defaut"
+                type="number"
+                inputmode="numeric"
+                min="1"
+                max="30"
+                placeholder="5"
               />
             </div>
             <div class="field">
