@@ -81,9 +81,11 @@ body {
   overflow: hidden;
 }
 
-/* Brand font for main headings */
-h1, h2 {
-  font-family: var(--font-brand);
+/* Brand font: only for the logo / big brand title — NOT for UI headings */
+/* UI headings use the system font for readability */
+h1, h2, h3 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 /* iPad-first: large touch targets */

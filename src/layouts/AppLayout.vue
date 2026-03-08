@@ -15,21 +15,38 @@ const notificationsStore = useNotificationsStore()
 const showNotifPanel = ref(false)
 const showPlusMenu = ref(false)
 
+// SVG icon paths (24x24 viewBox, stroke-based)
+const icons = {
+  dashboard: '<path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2"/>',
+  commandes: '<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01m-.01 4h.01"/>',
+  reception: '<path d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>',
+  recettes: '<path d="M12 6.5c0-2.5-2-3.5-4-3.5s-4 1-4 3.5c0 2 1.5 3 3 3.5M12 6.5c0-2.5 2-3.5 4-3.5s4 1 4 3.5c0 2-1.5 3-3 3.5M12 6.5V21m-5-5h10"/>',
+  plus: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+  fournisseurs: '<path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2m-16 0H3m4-8h2m4 0h2m-8 4h2m4 0h2m-8-8h2m4 0h2"/>',
+  stocks: '<path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>',
+  coutMatiere: '<path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"/>',
+  inventaire: '<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>',
+  allergenes: '<path d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>',
+  parametres: '<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.573-1.066z"/><circle cx="12" cy="12" r="3"/>',
+  bell: '<path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>',
+  logout: '<path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>',
+}
+
 const navItems = computed(() => [
-  { name: 'Dashboard', icon: '\uD83D\uDCCA', route: '/' },
-  { name: 'Commandes', icon: '\uD83D\uDCE6', route: '/commandes' },
-  { name: 'R\u00E9ception', icon: '\uD83D\uDCCB', route: '/reception' },
-  { name: 'Recettes', icon: '\uD83C\uDF5C', route: '/recettes' },
-  { name: 'Plus', icon: '\u22EF', route: '' },
+  { name: 'Dashboard', icon: icons.dashboard, route: '/' },
+  { name: 'Commandes', icon: icons.commandes, route: '/commandes' },
+  { name: 'Réception', icon: icons.reception, route: '/reception' },
+  { name: 'Recettes', icon: icons.recettes, route: '/recettes' },
+  { name: 'Plus', icon: icons.plus, route: '' },
 ])
 
 const plusMenuItems = computed(() => [
-  { name: 'Fournisseurs', icon: '\uD83C\uDFED', route: '/fournisseurs' },
-  { name: 'Stocks', icon: '\uD83D\uDCE6', route: '/stocks' },
-  { name: 'Co\u00FBt mati\u00E8re', icon: '\uD83D\uDCB0', route: '/recettes/cout-matiere' },
-  { name: 'Inventaire', icon: '\uD83D\uDCDD', route: '/inventaire' },
-  { name: 'Allerg\u00E8nes', icon: '\u26A0\uFE0F', route: '/recettes/allergenes' },
-  { name: 'Param\u00E8tres', icon: '\u2699\uFE0F', route: '/parametres' },
+  { name: 'Fournisseurs', icon: icons.fournisseurs, route: '/fournisseurs' },
+  { name: 'Stocks', icon: icons.stocks, route: '/stocks' },
+  { name: 'Coût matière', icon: icons.coutMatiere, route: '/recettes/cout-matiere' },
+  { name: 'Inventaire', icon: icons.inventaire, route: '/inventaire' },
+  { name: 'Allergènes', icon: icons.allergenes, route: '/recettes/allergenes' },
+  { name: 'Paramètres', icon: icons.parametres, route: '/parametres' },
 ])
 
 function isActive(path: string) {
@@ -84,7 +101,7 @@ async function handleSignOut() {
             title="Notifications"
             @click.stop="toggleNotifPanel"
           >
-            &#x1F514;
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="icons.bell" />
             <span v-if="notificationsStore.unreadCount > 0" class="notif-count">
               {{ notificationsStore.unreadCount > 99 ? '99+' : notificationsStore.unreadCount }}
             </span>
@@ -94,7 +111,9 @@ async function handleSignOut() {
             @close="showNotifPanel = false"
           />
         </div>
-        <button class="btn-icon" @click="handleSignOut" title="D\u00E9connexion">&#x23FB;</button>
+        <button class="btn-icon" @click="handleSignOut" title="Déconnexion">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="icons.logout" />
+        </button>
       </div>
     </header>
 
@@ -110,7 +129,9 @@ async function handleSignOut() {
           <div class="plus-menu" @click.stop>
             <div class="plus-menu-header">
               <span class="plus-menu-title">Plus</span>
-              <button class="plus-menu-close" @click="showPlusMenu = false">&#x2715;</button>
+              <button class="plus-menu-close" @click="showPlusMenu = false">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
             </div>
             <div class="plus-menu-grid">
               <button
@@ -120,7 +141,9 @@ async function handleSignOut() {
                 :class="{ active: route.path.startsWith(item.route) }"
                 @click="handlePlusItemClick(item)"
               >
-                <span class="plus-menu-icon">{{ item.icon }}</span>
+                <span class="plus-menu-icon">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" v-html="item.icon" />
+                </span>
                 <span class="plus-menu-label">{{ item.name }}</span>
               </button>
             </div>
@@ -138,7 +161,9 @@ async function handleSignOut() {
         :class="{ active: item.name === 'Plus' ? isPlusActive() || showPlusMenu : isActive(item.route) }"
         @click="handleNavClick(item)"
       >
-        <span class="nav-icon">{{ item.icon }}</span>
+        <span class="nav-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="item.icon" />
+        </span>
         <span class="nav-label">{{ item.name }}</span>
       </button>
     </nav>
@@ -255,30 +280,47 @@ async function handleSignOut() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 16px;
+  gap: 3px;
+  padding: 6px 16px 8px;
   border: none;
   background: transparent;
   color: var(--text-tertiary);
-  border-radius: 12px;
+  border-radius: 0;
   min-width: 72px;
   cursor: pointer;
   transition: color 0.15s;
   text-decoration: none;
   font-family: inherit;
+  position: relative;
 }
 
 .nav-item.active {
   color: var(--color-primary);
 }
 
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--color-primary);
+}
+
 .nav-icon {
-  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
 }
 
 .nav-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 /* Plus menu */
@@ -357,7 +399,18 @@ async function handleSignOut() {
 }
 
 .plus-menu-icon {
-  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--bg-surface);
+  color: var(--color-primary);
+}
+
+.plus-menu-item.active .plus-menu-icon {
+  background: rgba(232, 93, 44, 0.12);
 }
 
 .plus-menu-label {
