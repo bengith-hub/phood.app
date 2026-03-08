@@ -73,7 +73,7 @@ async function handleSignOut() {
     <!-- Top bar -->
     <header class="top-bar">
       <div class="top-bar-left">
-        <span class="brand">Phood</span>
+        <img src="/assets/logos/phood-logo-compact.png" alt="Phood" class="brand-logo" />
         <span v-if="!isOnline" class="offline-badge">Hors-ligne</span>
       </div>
       <div class="top-bar-right">
@@ -169,10 +169,10 @@ async function handleSignOut() {
   gap: 12px;
 }
 
-.brand {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--color-primary);
+.brand-logo {
+  height: 30px;
+  width: auto;
+  object-fit: contain;
 }
 
 .offline-badge {

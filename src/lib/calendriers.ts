@@ -1,0 +1,235 @@
+/**
+ * Calendriers automatiques — Jours fériés, vacances scolaires, soldes
+ * Spec: CLAUDE.md section "Calendriers auto"
+ *
+ * - Jours fériés: 11 fixes + mobiles (Pâques via Meeus/Jones/Butcher)
+ * - Vacances scolaires: API data.education.gouv.fr (Zone A = Bordeaux)
+ * - Soldes: calcul local (2ème mercredi janvier, dernier mercredi juin, 4 semaines)
+ */
+
+import { supabase } from './supabase'
+import type { Evenement } from '@/types/database'
+
+// --- Easter calculation: Meeus/Jones/Butcher algorithm ---
+
+function calculateEasterDate(year: number): Date {
+  const a = year % 19
+  const b = Math.floor(year / 100)
+  const c = year % 100
+  const d = Math.floor(b / 4)
+  const e = b % 4
+  const f = Math.floor((b + 8) / 25)
+  const g = Math.floor((b - f + 1) / 3)
+  const h = (19 * a + b - d - g + 15) % 30
+  const i = Math.floor(c / 4)
+  const k = c % 4
+  const l = (32 + 2 * e + 2 * i - h - k) % 7
+  const m = Math.floor((a + 11 * h + 22 * l) / 451)
+  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1 // 0-indexed
+  const day = ((h + l - 7 * m + 114) % 31) + 1
+  return new Date(year, month, day)
+}
+
+// --- Fixed French public holidays ---
+
+function getJoursFeries(year: number): { date: Date; nom: string }[] {
+  const easter = calculateEasterDate(year)
+
+  const lundiPaques = new Date(easter)
+  lundiPaques.setDate(lundiPaques.getDate() + 1)
+
+  const ascension = new Date(easter)
+  ascension.setDate(ascension.getDate() + 39)
+
+  const lundiPentecote = new Date(easter)
+  lundiPentecote.setDate(lundiPentecote.getDate() + 50)
+
+  return [
+    { date: new Date(year, 0, 1), nom: 'Jour de l\'an' },
+    { date: lundiPaques, nom: 'Lundi de Pâques' },
+    { date: new Date(year, 4, 1), nom: 'Fête du Travail' },
+    { date: new Date(year, 4, 8), nom: 'Victoire 1945' },
+    { date: ascension, nom: 'Ascension' },
+    { date: lundiPentecote, nom: 'Lundi de Pentecôte' },
+    { date: new Date(year, 6, 14), nom: 'Fête nationale' },
+    { date: new Date(year, 7, 15), nom: 'Assomption' },
+    { date: new Date(year, 10, 1), nom: 'Toussaint' },
+    { date: new Date(year, 10, 11), nom: 'Armistice' },
+    { date: new Date(year, 11, 25), nom: 'Noël' },
+  ]
+}
+
+// --- Soldes calculation ---
+
+function getNthWeekday(year: number, month: number, weekday: number, n: number): Date {
+  const first = new Date(year, month, 1)
+  let day = first.getDay()
+  let offset = (weekday - day + 7) % 7
+  offset += (n - 1) * 7
+  return new Date(year, month, 1 + offset)
+}
+
+function getLastWeekday(year: number, month: number, weekday: number): Date {
+  const last = new Date(year, month + 1, 0) // last day of month
+  let day = last.getDay()
+  const offset = (day - weekday + 7) % 7
+  return new Date(year, month, last.getDate() - offset)
+}
+
+function getSoldes(year: number): { debut: Date; fin: Date; nom: string }[] {
+  // Winter soldes: 2nd Wednesday of January, 4 weeks
+  const winterStart = getNthWeekday(year, 0, 3, 2) // 3 = Wednesday
+  const winterEnd = new Date(winterStart)
+  winterEnd.setDate(winterEnd.getDate() + 27) // 4 weeks
+
+  // Summer soldes: last Wednesday of June, 4 weeks
+  const summerStart = getLastWeekday(year, 5, 3) // 5 = June, 3 = Wednesday
+  const summerEnd = new Date(summerStart)
+  summerEnd.setDate(summerEnd.getDate() + 27)
+
+  return [
+    { debut: winterStart, fin: winterEnd, nom: 'Soldes d\'hiver' },
+    { debut: summerStart, fin: summerEnd, nom: 'Soldes d\'été' },
+  ]
+}
+
+// --- Vacances scolaires Zone A (Bordeaux) via API ---
+
+interface VacancesApiRecord {
+  fields: {
+    description: string
+    start_date: string
+    end_date: string
+    zones: string
+    location: string
+  }
+}
+
+async function fetchVacancesScolaires(year: number): Promise<{ debut: string; fin: string; nom: string }[]> {
+  // API data.education.gouv.fr — Zone A = Bordeaux
+  const startYear = `${year}-09-01`
+  const endYear = `${year + 1}-08-31`
+
+  try {
+    const url = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-calendrier-scolaire&rows=50&refine.zones=Zone+A&refine.location=Bordeaux&sort=start_date&q=start_date>=${startYear}+AND+start_date<=${endYear}`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`API error: ${response.status}`)
+    const data = await response.json() as { records: VacancesApiRecord[] }
+
+    return (data.records || []).map((r: VacancesApiRecord) => ({
+      debut: r.fields.start_date.split('T')[0]!,
+      fin: r.fields.end_date.split('T')[0]!,
+      nom: r.fields.description,
+    }))
+  } catch (err) {
+    console.warn('Failed to fetch vacances scolaires:', err)
+    return []
+  }
+}
+
+// --- Date helpers ---
+
+function toDateStr(d: Date): string {
+  return d.toISOString().split('T')[0]!
+}
+
+// --- Main: sync calendars to evenements table ---
+
+export async function syncCalendriers(year?: number): Promise<{
+  joursFeries: number
+  vacances: number
+  soldes: number
+}> {
+  const targetYear = year ?? new Date().getFullYear()
+  const years = [targetYear, targetYear + 1] // Current + next year
+  const stats = { joursFeries: 0, vacances: 0, soldes: 0 }
+
+  for (const y of years) {
+    // 1. Jours fériés
+    const feries = getJoursFeries(y)
+    for (const f of feries) {
+      const dateStr = toDateStr(f.date)
+      const { error } = await supabase
+        .from('evenements')
+        .upsert({
+          nom: f.nom,
+          type: 'ferie',
+          date_debut: dateStr,
+          date_fin: dateStr,
+          coefficient: 0.7, // Default: 30% less traffic on holidays for restaurant in mall
+          recurrent: true,
+        }, { onConflict: 'nom,date_debut' })
+      if (!error) stats.joursFeries++
+    }
+
+    // 2. Soldes
+    const soldes = getSoldes(y)
+    for (const s of soldes) {
+      const { error } = await supabase
+        .from('evenements')
+        .upsert({
+          nom: s.nom,
+          type: 'soldes',
+          date_debut: toDateStr(s.debut),
+          date_fin: toDateStr(s.fin),
+          coefficient: 1.15, // 15% more traffic during sales in mall
+          recurrent: true,
+        }, { onConflict: 'nom,date_debut' })
+      if (!error) stats.soldes++
+    }
+
+    // 3. Vacances scolaires
+    const vacances = await fetchVacancesScolaires(y)
+    for (const v of vacances) {
+      const { error } = await supabase
+        .from('evenements')
+        .upsert({
+          nom: v.nom,
+          type: 'vacances',
+          date_debut: v.debut,
+          date_fin: v.fin,
+          coefficient: 1.10, // 10% more traffic during school holidays
+          recurrent: false,
+        }, { onConflict: 'nom,date_debut' })
+      if (!error) stats.vacances++
+    }
+  }
+
+  return stats
+}
+
+/**
+ * Get all jours fériés for a given year (local calculation, no API call)
+ */
+export function getJoursFeriesForYear(year: number): { date: string; nom: string }[] {
+  return getJoursFeries(year).map(f => ({
+    date: toDateStr(f.date),
+    nom: f.nom,
+  }))
+}
+
+/**
+ * Check if a date is a jour férié
+ */
+export function isJourFerie(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T00:00:00')
+  const feries = getJoursFeries(d.getFullYear())
+  return feries.some(f => toDateStr(f.date) === dateStr)
+}
+
+/**
+ * Get the Evenement[] for jours fériés as typed objects (for previsions module)
+ */
+export function getJoursFeriesAsEvenements(year: number): Evenement[] {
+  return getJoursFeries(year).map(f => ({
+    id: `ferie-${toDateStr(f.date)}`,
+    nom: f.nom,
+    type: 'ferie' as const,
+    date_debut: toDateStr(f.date),
+    date_fin: toDateStr(f.date),
+    coefficient: 0.7,
+    recurrent: true,
+    notes: null,
+    created_at: '',
+  }))
+}

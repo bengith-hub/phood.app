@@ -1,8 +1,35 @@
-/* Phood App — iPad-first CSS Variables */
+/* Phood App — Brand Charter + iPad-first CSS Variables */
+
+/* Brand fonts: Media Sans (licensed) */
+@font-face {
+  font-family: 'Media Sans';
+  src: url('@/assets/fonts/mediasanscondensed-regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Media Sans';
+  src: url('@/assets/fonts/mediasanscondensed-black.otf') format('opentype');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Media Sans Extended';
+  src: url('@/assets/fonts/mediasansextended-bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  /* Colors */
+  /* Brand colors (Phood 2023 charter) */
   --color-primary: #E85D2C;
   --color-primary-light: #FF7A4D;
+  --color-primary-dark: #C74A1F;
   --color-success: #22C55E;
   --color-warning: #F59E0B;
   --color-danger: #EF4444;
@@ -27,7 +54,9 @@
   --radius-md: 12px;
   --radius-lg: 16px;
 
-  /* Fonts */
+  /* Fonts — Media Sans for brand elements, system sans for body */
+  --font-brand: 'Media Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-brand-extended: 'Media Sans Extended', 'Media Sans', sans-serif;
   --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -50,6 +79,11 @@ body {
   color: var(--text-primary);
   line-height: 1.5;
   overflow: hidden;
+}
+
+/* Brand font for main headings */
+h1, h2 {
+  font-family: var(--font-brand);
 }
 
 /* iPad-first: large touch targets */

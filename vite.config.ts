@@ -8,7 +8,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico'],
+      includeAssets: ['favicon.ico', 'assets/logos/*.png'],
       manifest: {
         name: 'PhoodApp',
         short_name: 'Phood',
@@ -25,7 +25,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,otf}'],
         runtimeCaching: [
           {
             // Cache Supabase API calls (network-first with 30s timeout)

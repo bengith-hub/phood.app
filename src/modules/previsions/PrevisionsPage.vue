@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { usePrevisionsStore, weatherCodeToEmoji } from '@/stores/previsions'
 import type { ForecastResult } from '@/stores/previsions'
+import { syncCalendriers } from '@/lib/calendriers'
 
 const store = usePrevisionsStore()
 
@@ -96,10 +97,31 @@ function isToday(dateStr: string): boolean {
   return dateStr === new Date().toISOString().split('T')[0]
 }
 
+const calendarSyncStatus = ref<string | null>(null)
+
+async function syncCalendars() {
+  calendarSyncStatus.value = 'Synchronisation calendriers...'
+  try {
+    const stats = await syncCalendriers()
+    calendarSyncStatus.value = `Calendriers synchro : ${stats.joursFeries} feries, ${stats.vacances} vacances, ${stats.soldes} soldes`
+    // Reload events after sync
+    await store.fetchEvenements()
+    forecasts.value = store.calculateWeekForecast()
+    setTimeout(() => { calendarSyncStatus.value = null }, 5000)
+  } catch {
+    calendarSyncStatus.value = 'Erreur sync calendriers'
+    setTimeout(() => { calendarSyncStatus.value = null }, 5000)
+  }
+}
+
 // --- Lifecycle ---
 onMounted(async () => {
   await store.fetchAll()
   forecasts.value = store.calculateWeekForecast()
+  // Auto-sync calendars if no events exist
+  if (store.evenements.length === 0) {
+    syncCalendars()
+  }
 })
 
 // Recalculate when data changes
@@ -118,23 +140,29 @@ watch(
     <!-- Header -->
     <div class="page-header">
       <h1>Previsions</h1>
-      <div class="view-toggle">
-        <button
-          class="toggle-btn"
-          :class="{ active: viewMode === 'semaine' }"
-          @click="viewMode = 'semaine'"
-        >
-          Semaine
-        </button>
-        <button
-          class="toggle-btn"
-          :class="{ active: viewMode === 'jour' }"
-          @click="viewMode = 'jour'"
-        >
-          Jour
-        </button>
+      <div class="header-right">
+        <button class="btn-sync" @click="syncCalendars" title="Sync calendriers">&#x1F4C5; Sync</button>
+        <div class="view-toggle">
+          <button
+            class="toggle-btn"
+            :class="{ active: viewMode === 'semaine' }"
+            @click="viewMode = 'semaine'"
+          >
+            Semaine
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: viewMode === 'jour' }"
+            @click="viewMode = 'jour'"
+          >
+            Jour
+          </button>
+        </div>
       </div>
     </div>
+
+    <!-- Calendar sync status -->
+    <div v-if="calendarSyncStatus" class="sync-status">{{ calendarSyncStatus }}</div>
 
     <!-- Loading -->
     <div v-if="store.loading" class="loading-state">
@@ -508,6 +536,39 @@ watch(
 .page-header h1 {
   font-size: 28px;
   color: var(--text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-sync {
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 48px;
+}
+
+.btn-sync:active {
+  background: var(--bg-hover);
+}
+
+.sync-status {
+  padding: 8px 16px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-md);
+  color: #1e40af;
+  font-size: 13px;
+  margin-bottom: 16px;
+  text-align: center;
 }
 
 /* --- View toggle --- */

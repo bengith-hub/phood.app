@@ -4,12 +4,16 @@ import { useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
 
 const router = useRouter()
-const { signIn, signInWithGoogle } = useAuth()
+const { signIn, signInWithGoogle, resetPassword } = useAuth()
 
 const email = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+const showForgot = ref(false)
+const resetEmail = ref('')
+const resetLoading = ref(false)
+const resetMsg = ref('')
 
 async function handleSubmit() {
   error.value = ''
@@ -32,12 +36,26 @@ async function handleGoogle() {
     error.value = e instanceof Error ? e.message : 'Erreur Google'
   }
 }
+
+async function handleResetPassword() {
+  if (!resetEmail.value) return
+  resetLoading.value = true
+  resetMsg.value = ''
+  try {
+    await resetPassword(resetEmail.value)
+    resetMsg.value = 'Un email de réinitialisation a été envoyé.'
+  } catch (e: unknown) {
+    resetMsg.value = e instanceof Error ? e.message : 'Erreur lors de l\'envoi'
+  } finally {
+    resetLoading.value = false
+  }
+}
 </script>
 
 <template>
   <div class="login-page">
     <div class="login-card">
-      <h1 class="login-brand">Phood</h1>
+      <img src="/assets/logos/phood-logo.png" alt="Phood" class="login-logo" />
       <p class="login-subtitle">Gestion Restaurant</p>
 
       <form @submit.prevent="handleSubmit" class="login-form">
@@ -69,7 +87,35 @@ async function handleGoogle() {
         <button type="submit" class="btn-primary" :disabled="loading">
           {{ loading ? 'Connexion...' : 'Se connecter' }}
         </button>
+
+        <button type="button" class="btn-forgot" @click="showForgot = true">
+          Mot de passe oublié ?
+        </button>
       </form>
+
+      <!-- Forgot password inline form -->
+      <div v-if="showForgot" class="forgot-section">
+        <p class="forgot-title">Réinitialiser le mot de passe</p>
+        <div class="forgot-form">
+          <input
+            v-model="resetEmail"
+            type="email"
+            placeholder="votre@email.fr"
+            @keyup.enter="handleResetPassword"
+          />
+          <button
+            class="btn-primary btn-reset"
+            :disabled="resetLoading || !resetEmail"
+            @click="handleResetPassword"
+          >
+            {{ resetLoading ? 'Envoi...' : 'Envoyer' }}
+          </button>
+        </div>
+        <p v-if="resetMsg" class="reset-msg" :class="{ success: resetMsg.includes('envoyé') }">
+          {{ resetMsg }}
+        </p>
+        <button class="btn-forgot" @click="showForgot = false">Retour à la connexion</button>
+      </div>
 
       <div class="separator">
         <span>ou</span>
@@ -101,12 +147,12 @@ async function handleGoogle() {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
 }
 
-.login-brand {
-  text-align: center;
-  font-size: 36px;
-  font-weight: 800;
-  color: var(--color-primary);
-  margin: 0;
+.login-logo {
+  display: block;
+  margin: 0 auto;
+  height: 48px;
+  width: auto;
+  object-fit: contain;
 }
 
 .login-subtitle {
@@ -190,6 +236,69 @@ async function handleGoogle() {
 .separator span {
   color: var(--text-tertiary);
   font-size: 14px;
+}
+
+.btn-forgot {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 8px 0;
+  text-align: center;
+  width: 100%;
+  min-height: 40px;
+}
+
+.forgot-section {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg-main);
+  border-radius: 12px;
+}
+
+.forgot-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.forgot-form {
+  display: flex;
+  gap: 8px;
+}
+
+.forgot-form input {
+  flex: 1;
+  height: 48px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 0 14px;
+  font-size: 16px;
+  background: var(--bg-surface);
+}
+
+.forgot-form input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.btn-reset {
+  height: 48px;
+  padding: 0 20px;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.reset-msg {
+  font-size: 14px;
+  margin-top: 10px;
+  color: var(--color-danger);
+}
+
+.reset-msg.success {
+  color: var(--color-success);
 }
 
 .btn-google {
