@@ -35,6 +35,7 @@ const searchQuery = ref('')
 const showPdfModal = ref(false)
 const pdfBlobUrl = ref<string | null>(null)
 const showStockDetails = ref(false)
+const dureeUtilisation = ref<number>(5)
 
 // Ligne items: mercuriale_id -> quantity
 interface LigneEdit {
@@ -150,8 +151,8 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
   const consoJour = getConsoMoyenneJour(ingredientId)
   const previsionConso3j = consoJour * 3
 
-  // Recommendation: enough to cover 5 days above tampon
-  const targetStock = stockTampon + consoJour * 5
+  // Recommendation: enough to cover N days above tampon
+  const targetStock = stockTampon + consoJour * dureeUtilisation.value
   const recommandationQty = Math.max(0, Math.ceil(targetStock - stockActuel))
 
   // Convert commanded qty from order units to stock units
@@ -171,7 +172,7 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
 
     // Check if coverage extends past estimated next delivery (assume 3-5 day cycle)
     const prochaineLivraison = new Date(livDate)
-    prochaineLivraison.setDate(prochaineLivraison.getDate() + 4) // approximate
+    prochaineLivraison.setDate(prochaineLivraison.getDate() + dureeUtilisation.value)
     coverageOk = coverageDate.getTime() >= prochaineLivraison.getTime()
   }
 
@@ -593,6 +594,16 @@ watch(selectedFournisseurId, async (newId) => {
           <label>Livraison pr&eacute;vue :
             <input v-model="dateLivraison" type="date" class="date-input" />
           </label>
+          <label class="duree-label">Couverture :
+            <input
+              v-model.number="dureeUtilisation"
+              type="number"
+              inputmode="numeric"
+              min="1"
+              max="30"
+              class="duree-input"
+            /> jours
+          </label>
         </div>
       </div>
 
@@ -635,9 +646,12 @@ watch(selectedFournisseurId, async (newId) => {
           <h3 class="cat-title">{{ group.categorie }}</h3>
           <div v-for="p in group.produits" :key="p.id" class="product-card">
             <div class="product-row">
+              <div v-if="p.photo_url" class="product-thumb">
+                <img :src="p.photo_url" :alt="p.designation" />
+              </div>
               <div class="product-info">
                 <span class="product-name">{{ p.designation }}</span>
-                <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} &#x20AC;/{{ p.unite_stock }}</span>
+                <span class="product-price">{{ p.prix_unitaire_ht.toFixed(2) }} &#x20AC;</span>
                 <span class="product-cond">{{ getCondLabel(p) }}</span>
               </div>
               <div class="qty-controls" :class="{ 'has-qty': getQuantite(p.id) > 0 }">
@@ -845,6 +859,28 @@ h1 {
   font-size: 16px;
   margin-left: 8px;
 }
+.duree-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.duree-input {
+  width: 64px;
+  height: 44px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  -moz-appearance: textfield;
+}
+.duree-input::-webkit-outer-spin-button,
+.duree-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
 
 /* Franco bar */
 .franco-bar {
@@ -959,6 +995,20 @@ h1 {
   padding: 12px 16px;
 }
 
+.product-thumb {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-right: 10px;
+}
+.product-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .product-info {
   flex: 1;
   min-width: 0;

@@ -17,7 +17,11 @@ export function useAutoSave<T extends Record<string, unknown>>(
   let timer: ReturnType<typeof setInterval> | null = null
 
   async function save() {
-    if (!options.id.value || !data.value) return
+    if (!options.id.value || !data.value) {
+      // No ID yet (new order before supplier selection) — not an error
+      if (status.value === 'saving') status.value = 'saved'
+      return
+    }
 
     status.value = 'saving'
 
