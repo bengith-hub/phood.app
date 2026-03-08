@@ -42,9 +42,12 @@ export function useAutoSave<T extends Record<string, unknown>>(
     // Then sync to Supabase if online
     if (navigator.onLine) {
       try {
+        // Use update (not upsert) — the row must already exist
+        // upsert fails when NOT NULL columns (statut, created_by, etc.) are missing
         const { error } = await supabase
           .from(options.table)
-          .upsert({ ...data.value, id: options.id.value })
+          .update({ ...data.value })
+          .eq('id', options.id.value)
         if (error) throw error
         status.value = 'saved'
       } catch {

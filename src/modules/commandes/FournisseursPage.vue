@@ -73,8 +73,11 @@ async function handleDelete() {
     await store.remove(editingFournisseur.value.id)
     closeEditor()
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : ''
-    if (msg.includes('violates foreign key') || msg.includes('23503')) {
+    // PostgrestError is a POJO (not instanceof Error) — access .message and .code directly
+    const err = e as Record<string, unknown>
+    const msg = (err?.message as string) || String(e)
+    const code = (err?.code as string) || ''
+    if (msg.includes('violates foreign key') || msg.includes('foreign_key') || code === '23503' || msg.includes('23503')) {
       const wantDeactivate = confirm(
         `Impossible de supprimer « ${nom} » car il est lié à des produits ou commandes.\n\nVoulez-vous le désactiver à la place ?\nIl n'apparaîtra plus dans les listes actives mais ses données seront conservées.`
       )
