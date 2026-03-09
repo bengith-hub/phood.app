@@ -50,6 +50,7 @@ const zeltyPhotoStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
 const zeltyPhotoMsg = ref('')
 const zeltyPhotoForce = ref(false)
 const ventesCount = ref(0)
+const lastVenteDate = ref<string | null>(null)
 
 const lastSuccessSync = computed(() => {
   return cronLogs.value.find(l => l.job_name === 'sync-zelty-ca' && l.status === 'success') || null
@@ -192,6 +193,10 @@ async function loadVentesCount() {
   try {
     const count = await restCall<number>('HEAD', 'ventes_historique?select=*', undefined, { prefer: 'count=exact' })
     ventesCount.value = count || 0
+  } catch { /* ignore */ }
+  try {
+    const data = await restCall<{ date: string }[]>('GET', 'ventes_historique?select=date&order=date.desc&limit=1')
+    lastVenteDate.value = data?.[0]?.date || null
   } catch { /* ignore */ }
 }
 
@@ -626,13 +631,17 @@ function formatDuration(ms: number | null) {
             <span class="status-label">Données ventes</span>
             <span class="status-value">{{ ventesCount }} jours</span>
           </div>
-          <div class="status-card" v-if="lastSuccessSync">
-            <span class="status-label">Dernière sync</span>
-            <span class="status-value status-ok">{{ formatDate(lastSuccessSync.started_at) }}</span>
+          <div class="status-card" v-if="lastVenteDate">
+            <span class="status-label">Dernières données</span>
+            <span class="status-value status-ok">{{ new Date(lastVenteDate + 'T00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) }}</span>
           </div>
           <div class="status-card" v-else>
-            <span class="status-label">Dernière sync</span>
+            <span class="status-label">Dernières données</span>
             <span class="status-value status-none">Aucune</span>
+          </div>
+          <div class="status-card" v-if="lastSuccessSync">
+            <span class="status-label">Sync auto</span>
+            <span class="status-value status-ok">{{ formatDate(lastSuccessSync.started_at) }}</span>
           </div>
         </div>
 

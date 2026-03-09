@@ -10,3 +10,7 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Scheduled Functions — Daily sync jobs
+[functions."sync-zelty-ca-daily"]
+  schedule = "0 6 * * *"
