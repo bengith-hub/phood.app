@@ -1,8 +1,77 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
 import { db } from '@/lib/dexie'
 import type { Fournisseur } from '@/types/database'
+
+/**
+ * Fournisseurs store — uses direct REST calls to Supabase.
+ *
+ * The Supabase JS client's auth token refresh mechanism can hang
+ * indefinitely, blocking ALL operations (reads and writes).
+ * This store bypasses it entirely with fetch() + JWT from localStorage.
+ */
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+
+/** Read the user's JWT from Supabase's localStorage cache */
+function getAccessToken(): string {
+  try {
+    const ref = SUPABASE_URL.replace('https://', '').split('.')[0]
+    const stored = localStorage.getItem(`sb-${ref}-auth-token`)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      return parsed.access_token || parsed.currentSession?.access_token || SUPABASE_ANON_KEY
+    }
+  } catch { /* ignore */ }
+  return SUPABASE_ANON_KEY
+}
+
+/** Direct REST call with 10s timeout */
+async function restCall<T = unknown>(
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10000)
+
+  try {
+    const headers: Record<string, string> = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${getAccessToken()}`,
+    }
+    if (body) {
+      headers['Content-Type'] = 'application/json'
+      headers['Prefer'] = 'return=representation'
+    }
+
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    })
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Erreur ${resp.status}: ${text.slice(0, 300)}`)
+    }
+
+    const contentType = resp.headers.get('content-type') || ''
+    if (contentType.includes('json')) {
+      return await resp.json() as T
+    }
+    return [] as unknown as T
+  } catch (e: unknown) {
+    if ((e as Error).name === 'AbortError') {
+      throw new Error('Timeout : le serveur ne répond pas. Essayez de rafraîchir la page.')
+    }
+    throw e
+  } finally {
+    clearTimeout(timeout)
+  }
+}
 
 export const useFournisseursStore = defineStore('fournisseurs', () => {
   const fournisseurs = ref<Fournisseur[]>([])
@@ -15,19 +84,13 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     loading.value = true
     error.value = null
     try {
-      // Try Supabase first
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('fournisseurs')
-          .select('*')
-          .order('nom')
-        if (err) throw err
-        fournisseurs.value = data as Fournisseur[]
+        const data = await restCall<Fournisseur[]>('GET', 'fournisseurs?select=*&order=nom')
+        fournisseurs.value = data
         // Cache in IndexedDB
         await db.fournisseurs.clear()
-        await db.fournisseurs.bulkPut(data as Fournisseur[])
+        await db.fournisseurs.bulkPut(data)
       } else {
-        // Fallback to IndexedDB
         fournisseurs.value = await db.fournisseurs.orderBy('nom').toArray()
       }
     } catch (e: unknown) {
@@ -39,83 +102,17 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     }
   }
 
-  /**
-   * Direct REST call to Supabase, bypassing the JS client's auth layer.
-   * The Supabase JS client's token refresh mechanism can hang indefinitely,
-   * blocking all write operations. This function uses fetch() directly
-   * with the JWT token read from localStorage.
-   */
-  async function supabaseRest(
-    method: 'POST' | 'PATCH' | 'DELETE',
-    table: string,
-    body: Record<string, unknown>,
-    filter?: string,
-  ): Promise<Record<string, unknown>[]> {
-    const url = import.meta.env.VITE_SUPABASE_URL as string
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
-
-    // Read JWT from Supabase's localStorage (bypasses the hanging refresh)
-    const ref = url.replace('https://', '').split('.')[0]
-    const storageKey = `sb-${ref}-auth-token`
-    const stored = localStorage.getItem(storageKey)
-    let accessToken = anonKey // fallback to anon key
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored)
-        // Supabase v2 stores { access_token, refresh_token, ... } or { currentSession: ... }
-        accessToken = parsed.access_token || parsed.currentSession?.access_token || anonKey
-      } catch { /* use anon key */ }
-    }
-
-    const endpoint = filter
-      ? `${url}/rest/v1/${table}?${filter}`
-      : `${url}/rest/v1/${table}`
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
-
-    try {
-      const resp = await fetch(endpoint, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': anonKey,
-          'Authorization': `Bearer ${accessToken}`,
-          'Prefer': 'return=representation',
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
-
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '')
-        throw new Error(`Erreur ${resp.status}: ${text.slice(0, 200)}`)
-      }
-
-      const data = await resp.json()
-      return Array.isArray(data) ? data : []
-    } catch (e: unknown) {
-      if ((e as Error).name === 'AbortError') {
-        throw new Error('Timeout (15s) : le serveur ne répond pas. Essayez de vous reconnecter.')
-      }
-      throw e
-    } finally {
-      clearTimeout(timeout)
-    }
-  }
-
   async function save(fournisseur: Partial<Fournisseur> & { id?: string }) {
     if (fournisseur.id) {
-      // Remove id from update payload — it should only be in the .eq() filter
-      const { id, ...updatePayload } = fournisseur
-      const data = await supabaseRest('PATCH', 'fournisseurs', updatePayload, `id=eq.${id}`)
-      if (data.length === 0) {
-        throw new Error('Sauvegarde refusée — session expirée ou droits insuffisants. Essayez de vous reconnecter.')
+      const { id, ...payload } = fournisseur
+      const data = await restCall<{ id: string }[]>('PATCH', `fournisseurs?id=eq.${id}`, payload as Record<string, unknown>)
+      if (!data || data.length === 0) {
+        throw new Error('Sauvegarde refusée — session expirée ou droits insuffisants. Reconnectez-vous.')
       }
     } else {
-      const data = await supabaseRest('POST', 'fournisseurs', fournisseur as Record<string, unknown>)
-      if (data.length === 0) {
-        throw new Error('Création refusée — session expirée ou droits insuffisants. Essayez de vous reconnecter.')
+      const data = await restCall<{ id: string }[]>('POST', 'fournisseurs', fournisseur as Record<string, unknown>)
+      if (!data || data.length === 0) {
+        throw new Error('Création refusée — session expirée ou droits insuffisants. Reconnectez-vous.')
       }
     }
     await fetchAll()
@@ -126,54 +123,32 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
   }
 
   async function remove(id: string) {
-    const { error: err } = await supabase
-      .from('fournisseurs')
-      .delete()
-      .eq('id', id)
-    if (err) throw err
+    await restCall('DELETE', `fournisseurs?id=eq.${id}`)
     await fetchAll()
   }
 
   async function deactivate(id: string) {
-    const { error: err } = await supabase
-      .from('fournisseurs')
-      .update({ actif: false })
-      .eq('id', id)
-    if (err) throw err
+    await restCall('PATCH', `fournisseurs?id=eq.${id}`, { actif: false })
     await fetchAll()
   }
 
   /** Delete fournisseur + all associated mercuriale products (cascade) */
   async function removeWithProducts(id: string) {
-    // 1. Nullify ingredients_restaurant.fournisseur_prefere_id pointing to this supplier's products
-    const { data: produits } = await supabase
-      .from('mercuriale')
-      .select('id')
-      .eq('fournisseur_id', id)
-    const produitIds = (produits || []).map(p => p.id)
+    // 1. Get product IDs for this supplier
+    const produits = await restCall<{ id: string }[]>('GET', `mercuriale?fournisseur_id=eq.${id}&select=id`)
+    const produitIds = produits.map(p => p.id)
 
     if (produitIds.length > 0) {
-      // Clear fournisseur_prefere_id references to these products
-      await supabase
-        .from('ingredients_restaurant')
-        .update({ fournisseur_prefere_id: null })
-        .in('fournisseur_prefere_id', produitIds)
+      // Clear ingredient references to these products
+      const idsFilter = produitIds.map(pid => `"${pid}"`).join(',')
+      await restCall('PATCH', `ingredients_restaurant?fournisseur_prefere_id=in.(${idsFilter})`, { fournisseur_prefere_id: null })
 
       // Delete all mercuriale products for this supplier
-      const { error: delProdErr } = await supabase
-        .from('mercuriale')
-        .delete()
-        .eq('fournisseur_id', id)
-      if (delProdErr) throw delProdErr
+      await restCall('DELETE', `mercuriale?fournisseur_id=eq.${id}`)
     }
 
-    // 2. Delete the fournisseur itself
-    const { error: err } = await supabase
-      .from('fournisseurs')
-      .delete()
-      .eq('id', id)
-    if (err) throw err
-
+    // 2. Delete the fournisseur
+    await restCall('DELETE', `fournisseurs?id=eq.${id}`)
     await fetchAll()
   }
 
