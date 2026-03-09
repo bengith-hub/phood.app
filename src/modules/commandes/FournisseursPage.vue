@@ -111,8 +111,27 @@ function setDelai(deliveryDay: number, days: number) {
 
 /** Calculate order day from delivery day - delay */
 function getJourCommande(deliveryDay: number, delai: number): number {
-  // deliveryDay - delai, wrapping around week
   return ((deliveryDay - (delai % 7)) + 7) % 7
+}
+
+/**
+ * "A pour B" notation: delay 1 = A pour B, delay 2 = A pour C, etc.
+ * Standard restaurant vocabulary for order-to-delivery lead time.
+ */
+function getDelaiLabel(delai: number): string {
+  const letter = String.fromCharCode(65 + delai) // 1→B, 2→C, 3→D...
+  return `A pour ${letter}`
+}
+
+/**
+ * Check if the order day falls in the previous week (S-1).
+ * Example: ordering Friday for delivery Monday = previous week's Friday.
+ */
+function isPreviousWeek(deliveryDay: number, orderDay: number): boolean {
+  // Convert to Mon=0..Sun=6 ordering for logical week comparison
+  const livOrd = (deliveryDay + 6) % 7
+  const cmdOrd = (orderDay + 6) % 7
+  return cmdOrd >= livOrd
 }
 
 /** Get sorted delivery days for the editing fournisseur */
@@ -129,7 +148,8 @@ function formatSchedule(f: Fournisseur): string {
   return sorted.map(d => {
     const delai = delais[String(d)] ?? 1
     const orderDay = getJourCommande(d, delai)
-    return `Cmd ${JOURS_COURTS[orderDay]} → Liv ${JOURS_COURTS[d]}`
+    const s1 = isPreviousWeek(d, orderDay) ? '(S-1)' : ''
+    return `Cmd ${JOURS_COURTS[orderDay]}${s1} → Liv ${JOURS_COURTS[d]}`
   }).join(' | ')
 }
 
@@ -331,6 +351,7 @@ onMounted(() => store.fetchAll())
                 <div v-for="day in sortedLivraisonDays()" :key="day" class="schedule-row">
                   <span class="schedule-cmd">
                     Cmd <strong>{{ JOURS[getJourCommande(day, getDelai(day))] }}</strong>
+                    <span v-if="isPreviousWeek(day, getJourCommande(day, getDelai(day)))" class="badge-s1">S-1</span>
                   </span>
                   <span class="schedule-arrow">→</span>
                   <span class="schedule-liv">
@@ -338,7 +359,7 @@ onMounted(() => store.fetchAll())
                   </span>
                   <div class="schedule-delay">
                     <button type="button" class="delay-btn" @click="setDelai(day, getDelai(day) - 1)" :disabled="getDelai(day) <= 1">−</button>
-                    <span class="delay-value">J-{{ getDelai(day) }}</span>
+                    <span class="delay-value">{{ getDelaiLabel(getDelai(day)) }}</span>
                     <button type="button" class="delay-btn" @click="setDelai(day, getDelai(day) + 1)">+</button>
                   </div>
                 </div>
@@ -754,11 +775,24 @@ onMounted(() => store.fetchAll())
 }
 
 .delay-value {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
-  min-width: 36px;
+  min-width: 72px;
   text-align: center;
+  white-space: nowrap;
+}
+
+.badge-s1 {
+  display: inline-block;
+  background: #f59e0b;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 .schedule-detail {
