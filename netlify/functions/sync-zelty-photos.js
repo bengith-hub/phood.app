@@ -1,16 +1,26 @@
 /**
- * Netlify Function: Sync Zelty product photos to recettes
+ * Netlify Function: Sync Zelty dish photos to recettes
  *
  * POST /.netlify/functions/sync-zelty-photos
- * Body: { dry_run?: boolean }
+ * Body: { dry_run?: boolean, force_overwrite?: boolean }
  *
- * Fetches all products from Zelty API, matches them to recettes via
- * zelty_product_id, and updates photo_url for recettes that don't have one.
+ * Fetches all dishes from Zelty API (GET /catalog/dishes),
+ * matches them to recettes via zelty_product_id,
+ * and updates photo_url for recettes that don't have one.
+ *
+ * Zelty Dish schema (confirmed from API docs):
+ *   - id: integer
+ *   - name: string
+ *   - image: string (URL of original image)
+ *   - thumb: string (URL of thumbnail)
+ *   - sku: string
+ *   - price: integer (cents, TTC)
  *
  * Returns { synced, skipped, unmatched, products_with_photos, errors }
  */
 
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
+const PAGE_SIZE = 500; // Zelty default max is 2500, we use 500 for safety
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -46,14 +56,13 @@ exports.handler = async function (event) {
       details: [],
     };
 
-    // 1. Fetch products from Zelty
-    // The Zelty API supports /products endpoint with pagination
-    let allProducts = [];
-    let page = 1;
+    // 1. Fetch all dishes from Zelty (GET /catalog/dishes with limit/offset)
+    let allDishes = [];
+    let offset = 0;
     let hasMore = true;
 
     while (hasMore) {
-      const url = `${ZELTY_BASE_URL}/products?page=${page}&size=100`;
+      const url = `${ZELTY_BASE_URL}/catalog/dishes?limit=${PAGE_SIZE}&offset=${offset}&show_all=true`;
       const resp = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${ZELTY_API_KEY}`,
@@ -62,66 +71,42 @@ exports.handler = async function (event) {
       });
 
       if (!resp.ok) {
-        // Try alternative endpoint name
-        if (page === 1) {
-          // Try /dishes if /products doesn't work
-          const altResp = await fetch(`${ZELTY_BASE_URL}/dishes?page=1&size=100`, {
-            headers: {
-              'Authorization': `Bearer ${ZELTY_API_KEY}`,
-              'Accept': 'application/json',
-            },
-          });
-          if (altResp.ok) {
-            const altData = await altResp.json();
-            allProducts = altData.dishes || altData.data || [];
-            hasMore = false;
-            break;
-          }
-        }
-        throw new Error(`Zelty API error: ${resp.status} ${resp.statusText}`);
+        const errText = await resp.text();
+        throw new Error(`Zelty API error ${resp.status}: ${errText}`);
       }
 
       const data = await resp.json();
-      const products = data.products || data.dishes || data.data || [];
-      allProducts.push(...products);
+      const dishes = data.dishes || [];
+      allDishes.push(...dishes);
 
-      if (products.length < 100) {
+      if (dishes.length < PAGE_SIZE) {
         hasMore = false;
       } else {
-        page++;
+        offset += PAGE_SIZE;
       }
     }
 
-    results.zelty_products_total = allProducts.length;
+    results.zelty_products_total = allDishes.length;
 
-    // Extract products that have photos
-    // Zelty may use: image, photo, photo_url, image_url, thumbnail, picture
+    // 2. Extract dishes that have photos
+    // Zelty confirmed fields: image (string URL), thumb (string URL)
     const zeltyPhotos = new Map();
-    for (const product of allProducts) {
-      const photoUrl =
-        product.image?.url ||
-        product.image ||
-        product.photo?.url ||
-        product.photo ||
-        product.photo_url ||
-        product.image_url ||
-        product.picture?.url ||
-        product.picture ||
-        product.thumbnail ||
-        null;
-
-      const productId = String(product.id);
+    for (const dish of allDishes) {
+      // Prefer full image, fallback to thumb
+      const photoUrl = dish.image || dish.thumb || null;
+      const productId = String(dish.id);
 
       if (photoUrl && typeof photoUrl === 'string' && photoUrl.startsWith('http')) {
         zeltyPhotos.set(productId, {
           url: photoUrl,
-          name: product.name || product.nom || '',
+          thumb: dish.thumb || photoUrl,
+          name: dish.name || '',
         });
         results.zelty_products_with_photos++;
       }
     }
 
-    // 2. Fetch recettes with zelty_product_id from Supabase
+    // 3. Fetch recettes with zelty_product_id from Supabase
     const recettesResp = await fetch(
       `${SUPABASE_URL}/rest/v1/recettes?zelty_product_id=not.is.null&select=id,nom,zelty_product_id,photo_url`,
       {
@@ -139,7 +124,7 @@ exports.handler = async function (event) {
 
     const recettes = await recettesResp.json();
 
-    // 3. Match and sync
+    // 4. Match and sync
     for (const recette of recettes) {
       const zeltyId = String(recette.zelty_product_id);
       const zeltyPhoto = zeltyPhotos.get(zeltyId);
