@@ -7,7 +7,7 @@ import type { Fournisseur } from '@/types/database'
 
 const router = useRouter()
 const store = useFournisseursStore()
-const { isAdmin } = useAuth()
+const { isAdmin, signOut } = useAuth()
 
 const search = ref('')
 const showEditor = ref(false)
@@ -233,6 +233,13 @@ async function handleSave() {
   } finally {
     saving.value = false
   }
+}
+
+async function forceReconnect() {
+  try {
+    await signOut()
+  } catch { /* ignore */ }
+  router.push('/login')
 }
 
 function formatFranco(montant: number) {
@@ -610,7 +617,12 @@ onMounted(() => store.fetchAll())
               {{ saving ? 'Sauvegarde...' : 'Enregistrer' }}
             </button>
           </div>
-          <div v-if="saveError" class="save-error">⚠️ {{ saveError }}</div>
+          <div v-if="saveError" class="save-error">
+            ⚠️ {{ saveError }}
+            <button v-if="saveError.includes('reconnecter') || saveError.includes('session')" type="button" class="btn-reconnect" @click="forceReconnect">
+              Se reconnecter
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -928,6 +940,22 @@ onMounted(() => store.fetchAll())
   position: sticky;
   bottom: 0;
   border-top: 1px solid rgba(239, 68, 68, 0.2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.btn-reconnect {
+  height: 36px;
+  padding: 0 16px;
+  background: var(--color-danger);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
 }
 .btn-produits {
   margin-top: 12px;
