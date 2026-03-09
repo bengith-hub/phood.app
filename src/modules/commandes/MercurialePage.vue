@@ -977,7 +977,9 @@ h1 {
   border-radius: var(--radius-md);
   padding: 0 14px;
   font-size: 16px;
+  color: var(--text-primary);
   background: var(--bg-surface);
+  caret-color: var(--text-primary);
 }
 .field input:focus, .field select:focus, .field textarea:focus {
   outline: none;

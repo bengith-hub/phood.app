@@ -96,6 +96,8 @@ button, [role="button"], a.nav-item {
 
 input, select, textarea {
   font-size: 18px;
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
 }
 
 /* Numeric keyboard hint for quantity fields */
