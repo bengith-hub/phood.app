@@ -25,7 +25,7 @@ exports.handler = async (event) => {
       };
     }
 
-    const searchQuery = `${query.trim()} produit fond blanc`;
+    const searchQuery = `${query.trim()} packshot fond blanc détouré`;
 
     // Step 1: Get the vqd token from DuckDuckGo
     const tokenUrl = `https://duckduckgo.com/?q=${encodeURIComponent(searchQuery)}&iax=images&ia=images`;
@@ -96,7 +96,7 @@ exports.handler = async (event) => {
     // Try Bing fallback on any error
     try {
       const { query } = JSON.parse(event.body || '{}');
-      const searchQuery = `${query.trim()} produit fond blanc`;
+      const searchQuery = `${query.trim()} packshot fond blanc détouré`;
       return await searchBingFallback(searchQuery);
     } catch {
       return {

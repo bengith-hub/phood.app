@@ -140,11 +140,11 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
   }
 
   /** Download an image from URL (server-side) and upload to Supabase storage */
-  async function uploadPhotoFromUrl(mercurialeId: string, imageUrl: string): Promise<string> {
+  async function uploadPhotoFromUrl(mercurialeId: string, imageUrl: string, fallbackUrl?: string): Promise<string> {
     const path = `mercuriale/${mercurialeId}_${Date.now()}.jpg`
 
     // Download + upload server-side to avoid CORS issues
-    const res = await fetch('/.netlify/functions/upload-photo', {
+    let res = await fetch('/.netlify/functions/upload-photo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -153,6 +153,18 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
         path,
       }),
     })
+    // If full-size URL fails (403, etc.), try thumbnail as fallback
+    if (!res.ok && fallbackUrl && fallbackUrl !== imageUrl) {
+      res = await fetch('/.netlify/functions/upload-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_url: fallbackUrl,
+          bucket: 'ingredients-photos',
+          path,
+        }),
+      })
+    }
     if (!res.ok) {
       let msg = 'Erreur upload photo'
       try { const err = await res.json(); msg = err.error || msg } catch { /* ignore */ }

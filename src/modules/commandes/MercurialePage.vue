@@ -172,6 +172,9 @@ function openEditor(product: Mercuriale) {
 
 function closeEditor() {
   showEditor.value = false
+  showPhotoSearch.value = false
+  photoSearchQuery.value = ''
+  photoSearchResults.value = []
   editingProduct.value = null
 }
 
@@ -268,11 +271,11 @@ async function doPhotoSearch() {
   }
 }
 
-async function selectPhoto(imageUrl: string) {
+async function selectPhoto(imageUrl: string, thumbnailUrl?: string) {
   if (!editingProduct.value?.id) return
   photoUploading.value = true
   try {
-    const newUrl = await mercurialeStore.uploadPhotoFromUrl(editingProduct.value.id, imageUrl)
+    const newUrl = await mercurialeStore.uploadPhotoFromUrl(editingProduct.value.id, imageUrl, thumbnailUrl)
     editingProduct.value.photo_url = newUrl
     showPhotoSearch.value = false
     photoSearchResults.value = []
@@ -571,7 +574,7 @@ onMounted(async () => {
                     type="button"
                     class="photo-result"
                     :disabled="photoUploading"
-                    @click="selectPhoto(img.url)"
+                    @click="selectPhoto(img.url, img.thumbnail)"
                   >
                     <img :src="img.thumbnail" :alt="img.title" loading="lazy" />
                   </button>
