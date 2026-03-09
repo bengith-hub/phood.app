@@ -12,7 +12,7 @@
  */
 
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
-const CONCURRENCY = 10; // Fetch 10 dates in parallel
+const CONCURRENCY = 2; // Fetch 2 dates in parallel (Zelty rate limits at 429 if too many)
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -55,8 +55,8 @@ exports.handler = async function (event) {
       dates.push(d.toISOString().slice(0, 10));
     }
 
-    // Fetch a single date from Zelty
-    async function fetchDate(dateStr) {
+    // Fetch a single date from Zelty (with 1 retry on 429)
+    async function fetchDate(dateStr, retry = 0) {
       try {
         const resp = await fetch(`${ZELTY_BASE_URL}/closures?date=${dateStr}`, {
           headers: {
@@ -67,6 +67,11 @@ exports.handler = async function (event) {
 
         if (!resp.ok) {
           if (resp.status === 404) return { date: dateStr, rows: [], skipped: true };
+          // Retry once on rate limit (429) after a 2-second pause
+          if (resp.status === 429 && retry < 2) {
+            await new Promise(r => setTimeout(r, 2000));
+            return fetchDate(dateStr, retry + 1);
+          }
           const errBody = await resp.text().catch(() => '');
           return { date: dateStr, rows: [], error: true, errorDetail: `HTTP ${resp.status}: ${errBody.slice(0, 200)}` };
         }
@@ -95,7 +100,7 @@ exports.handler = async function (event) {
       }
     }
 
-    // Process dates in parallel batches of CONCURRENCY
+    // Process dates in parallel batches of CONCURRENCY with delay between batches
     const allRows = [];
     for (let i = 0; i < dates.length; i += CONCURRENCY) {
       const batch = dates.slice(i, i + CONCURRENCY);
@@ -108,6 +113,11 @@ exports.handler = async function (event) {
         }
         else if (r.skipped) results.skipped++;
         if (r.rows.length > 0) allRows.push(...r.rows);
+      }
+
+      // Small delay between batches to respect Zelty rate limits
+      if (i + CONCURRENCY < dates.length) {
+        await new Promise(r => setTimeout(r, 300));
       }
     }
 
