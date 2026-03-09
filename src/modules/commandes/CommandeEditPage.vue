@@ -276,7 +276,7 @@ function getCondLabel(produit: Mercuriale): string {
 
 // ─── PDF preview ───
 
-function handlePdfPreview() {
+async function handlePdfPreview() {
   if (!commandeId.value || !fournisseur.value) return
 
   const lignesArray: CommandeLigne[] = []
@@ -315,7 +315,7 @@ function handlePdfPreview() {
     updated_at: '',
   }
 
-  const pdf = generateCommandePdf({
+  const pdf = await generateCommandePdf({
     commande: commandeData,
     lignes: lignesArray,
     fournisseur: fournisseur.value,
@@ -416,7 +416,7 @@ async function handleEnvoyer() {
     }
 
     // Generate PDF
-    const pdf = generateCommandePdf({
+    const pdf = await generateCommandePdf({
       commande: commandeData,
       lignes: lignesForPdf,
       fournisseur: fournisseur.value,
