@@ -18,7 +18,7 @@ exports.handler = async function (event) {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const PENNYLANE_TOKEN = process.env.PENNYLANE_TOKEN;
+  const PENNYLANE_TOKEN = process.env.PENNYLANE_API_TOKEN;
   const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
   const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 

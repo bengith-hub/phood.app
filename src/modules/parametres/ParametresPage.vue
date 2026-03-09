@@ -15,6 +15,14 @@ const saving = ref(false)
 const saveMsg = ref('')
 const activeTab = ref<'general' | 'zones' | 'users' | 'calendriers' | 'zelty' | 'pennylane'>('general')
 
+// Invite user
+const showInviteForm = ref(false)
+const inviteEmail = ref('')
+const inviteNom = ref('')
+const inviteRole = ref<'admin' | 'manager' | 'operator'>('operator')
+const inviteStatus = ref<'idle' | 'sending' | 'success' | 'error'>('idle')
+const inviteMsg = ref('')
+
 // Calendar sync
 const calSyncStatus = ref('')
 
@@ -116,6 +124,41 @@ async function updateRole(profileId: string, newRole: string) {
   await loadProfiles()
 }
 
+async function inviteUser() {
+  if (!inviteEmail.value.trim() || !inviteNom.value.trim()) {
+    inviteMsg.value = 'Email et nom sont obligatoires'
+    inviteStatus.value = 'error'
+    return
+  }
+  inviteStatus.value = 'sending'
+  inviteMsg.value = ''
+  try {
+    const resp = await fetch('/.netlify/functions/invite-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: inviteEmail.value.trim(),
+        nom: inviteNom.value.trim(),
+        role: inviteRole.value,
+      }),
+    })
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+      throw new Error(errData.error || `Erreur ${resp.status}`)
+    }
+    inviteStatus.value = 'success'
+    inviteMsg.value = `Invitation envoyée à ${inviteEmail.value}`
+    inviteEmail.value = ''
+    inviteNom.value = ''
+    inviteRole.value = 'operator'
+    showInviteForm.value = false
+    await loadProfiles()
+  } catch (e: unknown) {
+    inviteStatus.value = 'error'
+    inviteMsg.value = (e as Error).message || 'Erreur'
+  }
+}
+
 async function syncCalendars() {
   calSyncStatus.value = 'Synchronisation...'
   try {
@@ -144,35 +187,62 @@ async function loadVentesCount() {
   ventesCount.value = count || 0
 }
 
+/** Split date range into monthly chunks and process sequentially to avoid timeout */
 async function startBackfill() {
   zeltyBackfillStatus.value = 'running'
-  zeltyBackfillMsg.value = 'Import en cours...'
+
+  const dateFrom = zeltyBackfillFrom.value || (() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 18)
+    return d.toISOString().slice(0, 10)
+  })()
+  const dateTo = zeltyBackfillTo.value || (() => {
+    const d = new Date(); d.setDate(d.getDate() - 1)
+    return d.toISOString().slice(0, 10)
+  })()
+
+  // Build monthly chunks
+  const chunks: { from: string; to: string }[] = []
+  let cursor = new Date(dateFrom)
+  const end = new Date(dateTo)
+  while (cursor <= end) {
+    const chunkEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0) // last day of month
+    const to = chunkEnd > end ? dateTo : chunkEnd.toISOString().slice(0, 10)
+    chunks.push({ from: cursor.toISOString().slice(0, 10), to })
+    cursor = new Date(chunkEnd)
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  let totalImported = 0
+  let totalErrors = 0
 
   try {
-    const body: Record<string, string> = {}
-    if (zeltyBackfillFrom.value) body.date_from = zeltyBackfillFrom.value
-    if (zeltyBackfillTo.value) body.date_to = zeltyBackfillTo.value
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!
+      zeltyBackfillMsg.value = `Import mois ${i + 1}/${chunks.length} (${chunk.from} → ${chunk.to})...`
 
-    const resp = await fetch('/.netlify/functions/backfill-zelty-ca', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+      const resp = await fetch('/.netlify/functions/backfill-zelty-ca', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date_from: chunk.from, date_to: chunk.to }),
+      })
 
-    if (!resp.ok) {
-      const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
-      throw new Error(errData.error || `Erreur ${resp.status}`)
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+        throw new Error(`Mois ${chunk.from}: ${errData.error || `Erreur ${resp.status}`}`)
+      }
+
+      const result = await resp.json()
+      totalImported += result.imported || 0
+      totalErrors += result.errors || 0
     }
 
-    const result = await resp.json()
     zeltyBackfillStatus.value = 'success'
-    zeltyBackfillMsg.value = `Import terminé : ${result.imported} jours importés, ${result.skipped} ignorés, ${result.errors} erreurs (${result.date_from} → ${result.date_to})`
+    zeltyBackfillMsg.value = `Import terminé : ${totalImported} jours importés, ${totalErrors} erreurs (${dateFrom} → ${dateTo})`
 
-    // Reload data
     await Promise.all([loadCronLogs(), loadVentesCount()])
   } catch (e: unknown) {
     zeltyBackfillStatus.value = 'error'
-    zeltyBackfillMsg.value = `Erreur : ${(e as Error).message || String(e)}`
+    zeltyBackfillMsg.value = `${totalImported} importés avant erreur. ${(e as Error).message || String(e)}`
   }
 }
 
@@ -387,6 +457,42 @@ function formatDuration(ms: number | null) {
 
       <!-- Users -->
       <div v-if="activeTab === 'users'" class="tab-content">
+        <div class="users-header">
+          <button class="btn-primary" @click="showInviteForm = !showInviteForm">
+            {{ showInviteForm ? 'Annuler' : '+ Inviter un utilisateur' }}
+          </button>
+        </div>
+
+        <!-- Invite form -->
+        <div v-if="showInviteForm" class="invite-form">
+          <div class="invite-fields">
+            <div class="field">
+              <label>Nom *</label>
+              <input v-model="inviteNom" type="text" placeholder="Prénom Nom" />
+            </div>
+            <div class="field">
+              <label>Email *</label>
+              <input v-model="inviteEmail" type="text" inputmode="email" placeholder="nom@exemple.com" />
+            </div>
+            <div class="field">
+              <label>Rôle</label>
+              <select v-model="inviteRole">
+                <option value="admin">Admin</option>
+                <option value="manager">Manager</option>
+                <option value="operator">Opérateur</option>
+              </select>
+            </div>
+          </div>
+          <button
+            class="btn-sync"
+            :disabled="inviteStatus === 'sending'"
+            @click="inviteUser"
+          >
+            {{ inviteStatus === 'sending' ? 'Envoi...' : 'Envoyer l\'invitation' }}
+          </button>
+          <p v-if="inviteMsg" class="invite-msg" :class="inviteStatus">{{ inviteMsg }}</p>
+        </div>
+
         <div class="users-list">
           <div v-for="p in profiles" :key="p.id" class="user-row">
             <div class="user-info">
@@ -777,6 +883,56 @@ function formatDuration(ms: number | null) {
 }
 
 /* Users */
+.users-header {
+  margin-bottom: 16px;
+}
+
+.invite-form {
+  background: var(--bg-main);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 2px solid var(--color-primary);
+}
+
+.invite-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 768px) {
+  .invite-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.invite-fields .field label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+}
+
+.invite-fields .field input,
+.invite-fields .field select {
+  width: 100%;
+  height: 48px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  font-size: 16px;
+}
+
+.invite-msg {
+  margin-top: 8px;
+  font-size: 14px;
+}
+.invite-msg.success { color: var(--color-success); }
+.invite-msg.error { color: var(--color-danger); }
+
 .users-list {
   display: flex;
   flex-direction: column;
