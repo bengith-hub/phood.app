@@ -293,7 +293,7 @@ const plEnrichMsg = ref('')
 const plMatches = ref<PLMatch[]>([])
 const plUnmatchedPL = ref<{ name: string }[]>([])
 const plUnmatchedF = ref<{ nom: string }[]>([])
-const plAutoApply = ref(false)
+const plApplying = ref(false)
 
 async function startPLEnrich() {
   plEnrichStatus.value = 'running'
@@ -303,10 +303,11 @@ async function startPLEnrich() {
   plUnmatchedF.value = []
 
   try {
+    // Always preview first (dry_run), never auto-apply from the function
     const resp = await fetch('/.netlify/functions/enrich-suppliers-pennylane', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auto_apply: plAutoApply.value }),
+      body: JSON.stringify({ auto_apply: false }),
     })
 
     if (!resp.ok) {
@@ -321,11 +322,42 @@ async function startPLEnrich() {
     plEnrichStatus.value = 'success'
 
     const enrichable = plMatches.value.filter(m => Object.keys(m.enrichment).length > 0).length
-    const applied = r.applied || 0
-    plEnrichMsg.value = `${r.pennylane_suppliers_total} fournisseurs PennyLane, ${plMatches.value.length} correspondances trouvées, ${enrichable} enrichissables${applied > 0 ? `, ${applied} appliqués` : ''}`
+    plEnrichMsg.value = `${r.pennylane_suppliers_total} fournisseurs PennyLane, ${plMatches.value.length} correspondances trouvées, ${enrichable} enrichissables. Vérifiez et retirez les faux matchs avant d'appliquer.`
   } catch (e: unknown) {
     plEnrichStatus.value = 'error'
     plEnrichMsg.value = `Erreur : ${(e as Error).message || String(e)}`
+  }
+}
+
+function rejectMatch(m: PLMatch) {
+  plMatches.value = plMatches.value.filter(x => x.fournisseur_id !== m.fournisseur_id)
+}
+
+async function applyEnrichments() {
+  const toApply = plMatches.value.filter(m => Object.keys(m.enrichment).length > 0 && m.status !== 'applied')
+  if (toApply.length === 0) return
+  plApplying.value = true
+
+  try {
+    const resp = await fetch('/.netlify/functions/enrich-suppliers-pennylane', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_apply: true }),
+    })
+
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+      throw new Error(errData.error || `Erreur ${resp.status}`)
+    }
+
+    const r = await resp.json()
+    plMatches.value = r.matches || []
+    const applied = r.applied || 0
+    plEnrichMsg.value = `${applied} enrichissements appliqués avec succès.`
+  } catch (e: unknown) {
+    plEnrichMsg.value = `Erreur : ${(e as Error).message || String(e)}`
+  } finally {
+    plApplying.value = false
   }
 }
 
@@ -537,16 +569,12 @@ function formatDuration(ms: number | null) {
             et les croise avec vos fournisseurs par correspondance de nom.
           </p>
           <div class="backfill-form">
-            <label class="checkbox-inline">
-              <input type="checkbox" v-model="plAutoApply" />
-              Appliquer automatiquement les enrichissements (champs vides uniquement)
-            </label>
             <button
               class="btn-sync"
               :disabled="plEnrichStatus === 'running'"
               @click="startPLEnrich"
             >
-              {{ plEnrichStatus === 'running' ? 'Enrichissement en cours...' : 'Lancer l\'enrichissement' }}
+              {{ plEnrichStatus === 'running' ? 'Recherche en cours...' : 'Rechercher les correspondances' }}
             </button>
           </div>
           <p v-if="plEnrichMsg" class="backfill-msg" :class="plEnrichStatus">
@@ -557,6 +585,7 @@ function formatDuration(ms: number | null) {
         <!-- Match results -->
         <div v-if="plMatches.length > 0" class="zelty-section">
           <h3 class="section-title">Correspondances trouvées</h3>
+          <p class="section-desc">Vérifiez les correspondances ci-dessous. Cliquez ✕ pour retirer les faux matchs, puis appliquez.</p>
           <div class="pl-matches">
             <div v-for="m in plMatches" :key="m.fournisseur_id" class="pl-match-card" :class="{ applied: m.status === 'applied' }">
               <div class="pl-match-header">
@@ -564,6 +593,7 @@ function formatDuration(ms: number | null) {
                 <span class="pl-match-arrow">↔</span>
                 <span class="pl-match-pl">{{ m.pennylane_name }}</span>
                 <span class="pl-match-type">{{ m.match_type }}</span>
+                <button v-if="m.status !== 'applied'" class="btn-reject-match" @click="rejectMatch(m)" title="Retirer ce match">✕</button>
               </div>
               <div v-if="Object.keys(m.enrichment).length > 0" class="pl-enrichments">
                 <div v-for="(val, key) in m.enrichment" :key="key" class="pl-enrichment-row">
@@ -576,6 +606,14 @@ function formatDuration(ms: number | null) {
               <span v-if="m.status === 'error'" class="pl-badge-error">Erreur</span>
             </div>
           </div>
+          <button
+            v-if="plMatches.some(m => Object.keys(m.enrichment).length > 0 && m.status !== 'applied')"
+            class="btn-sync btn-apply-enrichments"
+            :disabled="plApplying"
+            @click="applyEnrichments"
+          >
+            {{ plApplying ? 'Application en cours...' : `Appliquer les enrichissements (${plMatches.filter(m => Object.keys(m.enrichment).length > 0 && m.status !== 'applied').length})` }}
+          </button>
         </div>
 
         <!-- Unmatched -->
@@ -1295,5 +1333,38 @@ function formatDuration(ms: number | null) {
 .pl-unmatched-local {
   background: rgba(232, 93, 44, 0.08);
   color: var(--color-primary);
+}
+
+.btn-reject-match {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.btn-reject-match:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.btn-apply-enrichments {
+  margin-top: 16px;
+  background: var(--color-success) !important;
+}
+
+.btn-apply-enrichments:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

@@ -148,7 +148,7 @@ exports.handler = async function (event) {
         const plNorm = normalize(pl.name);
         const score = nameSimilarity(fNorm, plNorm);
 
-        if (score > bestScore && score >= 0.35) {
+        if (score > bestScore && score >= 0.5) {
           bestScore = score;
           bestMatch = pl;
         }
@@ -276,58 +276,41 @@ function addMatch(results, fournisseur, plSupplier, matchType) {
 }
 
 /**
- * Name similarity score combining Jaccard + containment bonus.
- * "Transgourmet" vs "TRANSGOURMET OPERATIONS" → high score (containment)
- * "TT Foods" vs "T & T FOODS" → handled via substring matching
+ * Name similarity score.
+ * Exact word matching + containment bonus for short-in-long names.
+ * Substring matches require min 5 chars to avoid false positives
+ * like "pho" matching "phoodwear" or "autre" matching "autres".
  */
 function nameSimilarity(a, b) {
   if (a === b) return 1;
   if (!a || !b) return 0;
 
-  // Direct substring: one name fully contains the other
-  if (a.includes(b) || b.includes(a)) return 0.9;
+  // Both names must have at least 4 chars to be meaningful
+  if (a.length < 4 || b.length < 4) return 0;
 
-  const wordsA = new Set(a.split(/\s+/).filter(w => w.length > 1));
-  const wordsB = new Set(b.split(/\s+/).filter(w => w.length > 1));
+  // Direct substring: one name fully contains the other (min 5 chars for the shorter one)
+  const shorter = a.length <= b.length ? a : b;
+  if (shorter.length >= 5 && (a.includes(b) || b.includes(a))) return 0.9;
 
-  if (wordsA.size === 0 || wordsB.size === 0) {
-    // Fallback: compare without word-length filter (handles "T T" etc.)
-    const allA = a.split(/\s+/).filter(Boolean);
-    const allB = b.split(/\s+/).filter(Boolean);
-    if (allA.length === 0 || allB.length === 0) return 0;
-    const setA = new Set(allA);
-    let hits = 0;
-    for (const w of allB) { if (setA.has(w)) hits++; }
-    return hits / Math.max(setA.size, allB.length);
-  }
+  const wordsA = new Set(a.split(/\s+/).filter(w => w.length > 2));
+  const wordsB = new Set(b.split(/\s+/).filter(w => w.length > 2));
 
-  // Containment: all words of the shorter set found in the longer one
-  const [smaller, larger] = wordsA.size <= wordsB.size ? [wordsA, wordsB] : [wordsB, wordsA];
-  let contained = 0;
-  for (const w of smaller) {
-    if (larger.has(w)) contained++;
-    else {
-      for (const wl of larger) {
-        if (wl.includes(w) || w.includes(wl)) { contained += 0.8; break; }
-      }
-    }
-  }
-  // If all words of the short name are in the long name → strong match
-  if (contained >= smaller.size * 0.9) {
-    return 0.7 + 0.2 * (contained / smaller.size);
-  }
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
 
-  // Standard Jaccard
-  let intersection = 0;
+  // Count exact word matches
+  let exactMatches = 0;
   for (const w of wordsA) {
-    if (wordsB.has(w)) intersection++;
-    else {
-      for (const wb of wordsB) {
-        if (wb.includes(w) || w.includes(wb)) { intersection += 0.7; break; }
-      }
-    }
+    if (wordsB.has(w)) exactMatches++;
   }
 
-  const union = wordsA.size + wordsB.size - intersection;
-  return union > 0 ? intersection / union : 0;
+  // Containment: all words of the shorter set found in the longer one (exact only)
+  const [smaller, larger] = wordsA.size <= wordsB.size ? [wordsA, wordsB] : [wordsB, wordsA];
+  if (exactMatches >= smaller.size && smaller.size > 0) {
+    // All words of the short name are exact matches → strong match
+    return 0.8 + 0.15 * (exactMatches / larger.size);
+  }
+
+  // Standard Jaccard on exact word matches only
+  const union = wordsA.size + wordsB.size - exactMatches;
+  return union > 0 ? exactMatches / union : 0;
 }
