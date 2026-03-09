@@ -123,7 +123,15 @@ function formatConditionnement(cond: Conditionnement) {
   return `${cond.nom} (${cond.quantite} ${cond.unite})`
 }
 
-function formatPrix(prix: number, unite: string) {
+function formatPrix(prix: number, unite: string, conditionnements?: Conditionnement[]) {
+  // prix_unitaire_ht = prix par conditionnement de commande
+  // Afficher le type de conditionnement (colis, carton, sachet...) au lieu de l'unité de stock
+  const cmd = conditionnements?.find(c => c.utilise_commande)
+  if (cmd && cmd.quantite > 1 && cmd.nom) {
+    // Extraire le type: "Colis de 500pcs" → "colis", "carton de 5kg" → "carton"
+    const label = cmd.nom.split(/[\s_]/)[0].toLowerCase()
+    return `${prix.toFixed(2)} €/${label}`
+  }
   return `${prix.toFixed(2)} €/${unite}`
 }
 
@@ -387,7 +395,7 @@ onMounted(async () => {
               <span v-if="p.ref_fournisseur" class="product-sku">{{ p.ref_fournisseur }}</span>
             </div>
             <div class="product-details">
-              <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock) }}</span>
+              <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock, p.conditionnements as Conditionnement[]) }}</span>
               <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
             </div>
             <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
