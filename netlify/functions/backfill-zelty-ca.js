@@ -45,7 +45,7 @@ exports.handler = async function (event) {
       dateFrom = d.toISOString().slice(0, 10);
     }
 
-    const results = { imported: 0, skipped: 0, errors: 0, date_from: dateFrom, date_to: dateTo };
+    const results = { imported: 0, skipped: 0, errors: 0, date_from: dateFrom, date_to: dateTo, first_error: null };
 
     // Build list of dates to fetch
     const dates = [];
@@ -67,7 +67,8 @@ exports.handler = async function (event) {
 
         if (!resp.ok) {
           if (resp.status === 404) return { date: dateStr, rows: [], skipped: true };
-          return { date: dateStr, rows: [], error: true };
+          const errBody = await resp.text().catch(() => '');
+          return { date: dateStr, rows: [], error: true, errorDetail: `HTTP ${resp.status}: ${errBody.slice(0, 200)}` };
         }
 
         const data = await resp.json();
@@ -101,7 +102,10 @@ exports.handler = async function (event) {
       const batchResults = await Promise.all(batch.map(d => fetchDate(d)));
 
       for (const r of batchResults) {
-        if (r.error) results.errors++;
+        if (r.error) {
+          results.errors++;
+          if (!results.first_error && r.errorDetail) results.first_error = r.errorDetail;
+        }
         else if (r.skipped) results.skipped++;
         if (r.rows.length > 0) allRows.push(...r.rows);
       }

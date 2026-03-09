@@ -11,7 +11,7 @@
  * Returns { matches, unmatched, applied, errors }
  */
 
-const PENNYLANE_BASE_URL = 'https://app.pennylane.com/api/external/v1';
+const PENNYLANE_BASE_URL = 'https://app.pennylane.com/api/external/v2';
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -45,13 +45,16 @@ exports.handler = async function (event) {
       dry_run: dryRun,
     };
 
-    // 1. Fetch all suppliers from PennyLane (paginated)
+    // 1. Fetch all suppliers from PennyLane (cursor-based pagination, v2 API)
     let allPLSuppliers = [];
-    let page = 1;
-    let totalPages = 1;
+    let cursor = null;
+    let hasMore = true;
 
-    while (page <= totalPages) {
-      const url = `${PENNYLANE_BASE_URL}/suppliers?page=${page}`;
+    while (hasMore) {
+      const params = new URLSearchParams({ limit: '100' });
+      if (cursor) params.set('cursor', cursor);
+
+      const url = `${PENNYLANE_BASE_URL}/suppliers?${params}`;
       const resp = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${PENNYLANE_TOKEN}`,
@@ -65,13 +68,14 @@ exports.handler = async function (event) {
       }
 
       const data = await resp.json();
-      const suppliers = data.suppliers || [];
+      const suppliers = data.items || data.suppliers || [];
       allPLSuppliers.push(...suppliers);
-      totalPages = data.total_pages || 1;
-      page++;
+
+      hasMore = data.has_more === true;
+      cursor = data.next_cursor || null;
 
       // Rate limiting
-      if (page <= totalPages) {
+      if (hasMore) {
         await new Promise(r => setTimeout(r, 250));
       }
     }
@@ -123,11 +127,10 @@ exports.handler = async function (event) {
       // First: check if already linked by pennylane_supplier_id
       if (f.pennylane_supplier_id) {
         const plMatch = allPLSuppliers.find(
-          pl => String(pl.source_id) === String(f.pennylane_supplier_id) ||
-                String(pl.v2_id) === String(f.pennylane_supplier_id)
+          pl => String(pl.id || pl.source_id) === String(f.pennylane_supplier_id)
         );
         if (plMatch) {
-          matchedPLIds.add(plMatch.source_id || plMatch.v2_id);
+          matchedPLIds.add(pl_id(plMatch));
           matchedFournisseurIds.add(f.id);
           addMatch(results, f, plMatch, 'id_match');
           continue;
@@ -139,7 +142,7 @@ exports.handler = async function (event) {
       let bestScore = 0;
 
       for (const pl of allPLSuppliers) {
-        if (matchedPLIds.has(pl.source_id || pl.v2_id)) continue;
+        if (matchedPLIds.has(pl_id(pl))) continue;
 
         const plNorm = normalize(pl.name);
         const score = nameSimilarity(fNorm, plNorm);
@@ -151,7 +154,7 @@ exports.handler = async function (event) {
       }
 
       if (bestMatch) {
-        matchedPLIds.add(bestMatch.source_id || bestMatch.v2_id);
+        matchedPLIds.add(pl_id(bestMatch));
         matchedFournisseurIds.add(f.id);
         addMatch(results, f, bestMatch, `name_match (${Math.round(bestScore * 100)}%)`);
       }
@@ -159,8 +162,8 @@ exports.handler = async function (event) {
 
     // Unmatched
     results.unmatched_pennylane = allPLSuppliers
-      .filter(pl => !matchedPLIds.has(pl.source_id || pl.v2_id))
-      .map(pl => ({ name: pl.name, source_id: pl.source_id, v2_id: pl.v2_id }));
+      .filter(pl => !matchedPLIds.has(pl_id(pl)))
+      .map(pl => ({ name: pl.name, id: pl_id(pl) }));
 
     results.unmatched_fournisseurs = fournisseurs
       .filter(f => !matchedFournisseurIds.has(f.id))
@@ -212,12 +215,17 @@ exports.handler = async function (event) {
   }
 };
 
+/** Get the best ID from a PennyLane supplier (v2 uses id, v1 used source_id) */
+function pl_id(pl) {
+  return String(pl.id || pl.source_id || pl.v2_id || '');
+}
+
 /** Build an enrichment record from PennyLane data */
 function addMatch(results, fournisseur, plSupplier, matchType) {
   const enrichment = {};
 
   // pennylane_supplier_id — always set if not already linked
-  const plId = String(plSupplier.source_id || plSupplier.v2_id || '');
+  const plId = pl_id(plSupplier);
   if (plId && fournisseur.pennylane_supplier_id !== plId) {
     enrichment.pennylane_supplier_id = plId;
   }

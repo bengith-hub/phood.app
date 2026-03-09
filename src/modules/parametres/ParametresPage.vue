@@ -214,6 +214,7 @@ async function startBackfill() {
 
   let totalImported = 0
   let totalErrors = 0
+  let firstError = ''
 
   try {
     for (let i = 0; i < chunks.length; i++) {
@@ -234,10 +235,13 @@ async function startBackfill() {
       const result = await resp.json()
       totalImported += result.imported || 0
       totalErrors += result.errors || 0
+      if (result.first_error && !firstError) firstError = result.first_error
     }
 
-    zeltyBackfillStatus.value = 'success'
-    zeltyBackfillMsg.value = `Import terminé : ${totalImported} jours importés, ${totalErrors} erreurs (${dateFrom} → ${dateTo})`
+    zeltyBackfillStatus.value = totalErrors > 0 && totalImported === 0 ? 'error' : 'success'
+    let msg = `Import terminé : ${totalImported} jours importés, ${totalErrors} erreurs (${dateFrom} → ${dateTo})`
+    if (firstError) msg += `\nDétail erreur Zelty : ${firstError}`
+    zeltyBackfillMsg.value = msg
 
     await Promise.all([loadCronLogs(), loadVentesCount()])
   } catch (e: unknown) {
