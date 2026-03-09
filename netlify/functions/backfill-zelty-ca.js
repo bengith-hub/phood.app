@@ -29,31 +29,59 @@ exports.handler = async function (event) {
   try {
     const body = JSON.parse(event.body || '{}');
 
-    // Debug mode: return Zelty API response analysis
+    // Debug mode: test pagination parameters
     if (body.debug) {
-      const debugResp = await fetch(`${ZELTY_BASE_URL}/closures`, {
+      const tests = {};
+
+      // Test 1: default (no params)
+      const r1 = await fetch(`${ZELTY_BASE_URL}/closures`, {
         headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
       });
-      const debugData = await debugResp.json();
-      const closures = debugData.closures || [];
-      const dates = closures.map(c => c.date).filter(Boolean).sort();
-      // Check for pagination fields
-      const topLevelKeys = Object.keys(debugData);
+      const d1 = await r1.json();
+      tests.default = { count: (d1.closures || []).length, keys: Object.keys(d1) };
+
+      // Test 2: limit=200
+      const r2 = await fetch(`${ZELTY_BASE_URL}/closures?limit=200`, {
+        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
+      });
+      const d2 = await r2.json();
+      tests.limit200 = { count: (d2.closures || []).length };
+
+      // Test 3: per_page=200
+      const r3 = await fetch(`${ZELTY_BASE_URL}/closures?per_page=200`, {
+        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
+      });
+      const d3 = await r3.json();
+      tests.per_page200 = { count: (d3.closures || []).length };
+
+      // Test 4: offset=100
+      const r4 = await fetch(`${ZELTY_BASE_URL}/closures?offset=100`, {
+        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
+      });
+      const d4 = await r4.json();
+      const c4 = d4.closures || [];
+      tests.offset100 = { count: c4.length, first_date: c4[0]?.date, last_date: c4[c4.length - 1]?.date };
+
+      // Test 5: page=2
+      const r5 = await fetch(`${ZELTY_BASE_URL}/closures?page=2`, {
+        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
+      });
+      const d5 = await r5.json();
+      const c5 = d5.closures || [];
+      tests.page2 = { count: c5.length, first_date: c5[0]?.date, last_date: c5[c5.length - 1]?.date };
+
+      // Test 6: limit=500
+      const r6 = await fetch(`${ZELTY_BASE_URL}/closures?limit=500`, {
+        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
+      });
+      const d6 = await r6.json();
+      const c6 = d6.closures || [];
+      tests.limit500 = { count: c6.length, first_date: c6[0]?.date, last_date: c6[c6.length - 1]?.date };
+
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          debug: true,
-          status: debugResp.status,
-          total_closures: closures.length,
-          first_date: dates[0] || null,
-          last_date: dates[dates.length - 1] || null,
-          top_level_keys: topLevelKeys,
-          has_pagination: !!(debugData.next || debugData.pagination || debugData.meta || debugData.total),
-          pagination_info: { next: debugData.next, pagination: debugData.pagination, meta: debugData.meta, total: debugData.total },
-          sample_first: closures.slice(0, 2),
-          sample_last: closures.slice(-2),
-        }),
+        body: JSON.stringify({ debug: true, tests }),
       };
     }
 
