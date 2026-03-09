@@ -32,6 +32,25 @@ exports.handler = async function (event) {
   try {
     const body = JSON.parse(event.body || '{}');
 
+    // Debug mode: return raw Zelty API response for a single date
+    if (body.debug) {
+      const debugDate = body.debug_date || new Date().toISOString().slice(0, 10);
+      const debugResp = await fetch(`${ZELTY_BASE_URL}/closures?date=${debugDate}`, {
+        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
+      });
+      const debugText = await debugResp.text();
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          debug: true,
+          date: debugDate,
+          status: debugResp.status,
+          raw_response: debugText.slice(0, 4000),
+        }),
+      };
+    }
+
     // Default: yesterday
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
