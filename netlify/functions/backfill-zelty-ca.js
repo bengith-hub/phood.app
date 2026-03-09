@@ -7,12 +7,11 @@
  * Fetches closures from Zelty API for the given date range
  * and upserts into ventes_historique table in Supabase.
  *
- * Uses parallel fetches (10 concurrent) for speed within Netlify's timeout.
- * Called by the UI in monthly chunks.
+ * Sequential fetches with minimal delay. Called by the UI in weekly chunks
+ * (7 days) to stay within Netlify's 10-second free-tier timeout.
  */
 
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
-const CONCURRENCY = 2; // Fetch 2 dates in parallel (Zelty rate limits at 429 if too many)
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -41,7 +40,7 @@ exports.handler = async function (event) {
     let dateFrom = body.date_from;
     if (!dateFrom) {
       const d = new Date(dateTo);
-      d.setMonth(d.getMonth() - 1); // Default: 1 month (called in chunks by UI)
+      d.setDate(d.getDate() - 6); // Default: 7 days (called in weekly chunks by UI)
       dateFrom = d.toISOString().slice(0, 10);
     }
 
@@ -55,8 +54,9 @@ exports.handler = async function (event) {
       dates.push(d.toISOString().slice(0, 10));
     }
 
-    // Fetch a single date from Zelty (with 1 retry on 429)
-    async function fetchDate(dateStr, retry = 0) {
+    // Fetch dates sequentially (safest for rate limits, 7 days = ~3-4s)
+    const allRows = [];
+    for (const dateStr of dates) {
       try {
         const resp = await fetch(`${ZELTY_BASE_URL}/closures?date=${dateStr}`, {
           headers: {
@@ -66,84 +66,92 @@ exports.handler = async function (event) {
         });
 
         if (!resp.ok) {
-          if (resp.status === 404) return { date: dateStr, rows: [], skipped: true };
-          // Retry once on rate limit (429) after a 2-second pause
-          if (resp.status === 429 && retry < 2) {
-            await new Promise(r => setTimeout(r, 2000));
-            return fetchDate(dateStr, retry + 1);
+          if (resp.status === 404) {
+            results.skipped++;
+            continue;
+          }
+          // On 429 rate limit, wait 1s and retry once
+          if (resp.status === 429) {
+            await new Promise(r => setTimeout(r, 1000));
+            const retry = await fetch(`${ZELTY_BASE_URL}/closures?date=${dateStr}`, {
+              headers: {
+                'Authorization': `Bearer ${ZELTY_API_KEY}`,
+                'Accept': 'application/json',
+              },
+            });
+            if (retry.ok) {
+              const retryData = await retry.json();
+              const closures = retryData.closures || [];
+              for (const c of closures) {
+                if (!c.date) continue;
+                allRows.push({
+                  date: c.date,
+                  ca_ttc: c.total_ttc || 0,
+                  nb_tickets: c.nb_tickets || 0,
+                  nb_couverts: c.nb_covers ?? null,
+                  cloture_validee: c.validated ?? true,
+                  zelty_closure_id: c.id || null,
+                });
+              }
+              if (closures.length === 0) results.skipped++;
+              continue;
+            }
           }
           const errBody = await resp.text().catch(() => '');
-          return { date: dateStr, rows: [], error: true, errorDetail: `HTTP ${resp.status}: ${errBody.slice(0, 200)}` };
+          results.errors++;
+          if (!results.first_error) results.first_error = `HTTP ${resp.status}: ${errBody.slice(0, 200)}`;
+          continue;
         }
 
         const data = await resp.json();
         const closures = data.closures || [];
 
         if (closures.length === 0) {
-          return { date: dateStr, rows: [], skipped: true };
+          results.skipped++;
+          continue;
         }
 
-        const rows = closures
-          .filter(c => c.date)
-          .map(c => ({
+        for (const c of closures) {
+          if (!c.date) continue;
+          allRows.push({
             date: c.date,
             ca_ttc: c.total_ttc || 0,
             nb_tickets: c.nb_tickets || 0,
             nb_couverts: c.nb_covers ?? null,
             cloture_validee: c.validated ?? true,
             zelty_closure_id: c.id || null,
-          }));
+          });
+        }
 
-        return { date: dateStr, rows };
+        // Tiny delay to be gentle with Zelty
+        await new Promise(r => setTimeout(r, 100));
       } catch {
-        return { date: dateStr, rows: [], error: true };
+        results.errors++;
       }
     }
 
-    // Process dates in parallel batches of CONCURRENCY with delay between batches
-    const allRows = [];
-    for (let i = 0; i < dates.length; i += CONCURRENCY) {
-      const batch = dates.slice(i, i + CONCURRENCY);
-      const batchResults = await Promise.all(batch.map(d => fetchDate(d)));
-
-      for (const r of batchResults) {
-        if (r.error) {
-          results.errors++;
-          if (!results.first_error && r.errorDetail) results.first_error = r.errorDetail;
-        }
-        else if (r.skipped) results.skipped++;
-        if (r.rows.length > 0) allRows.push(...r.rows);
-      }
-
-      // Small delay between batches to respect Zelty rate limits
-      if (i + CONCURRENCY < dates.length) {
-        await new Promise(r => setTimeout(r, 300));
-      }
-    }
-
-    // Bulk upsert all collected rows to Supabase (in batches of 200)
+    // Bulk upsert all collected rows to Supabase
     if (allRows.length > 0) {
-      for (let i = 0; i < allRows.length; i += 200) {
-        const batch = allRows.slice(i, i + 200);
-        const upsertResp = await fetch(
-          `${SUPABASE_URL}/rest/v1/ventes_historique`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'apikey': SUPABASE_KEY,
-              'Authorization': `Bearer ${SUPABASE_KEY}`,
-              'Prefer': 'resolution=merge-duplicates',
-            },
-            body: JSON.stringify(batch),
-          }
-        );
-
-        if (upsertResp.ok) {
-          results.imported += batch.length;
-        } else {
-          results.errors += batch.length;
+      const upsertResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/ventes_historique`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Prefer': 'resolution=merge-duplicates',
+          },
+          body: JSON.stringify(allRows),
         }
+      );
+
+      if (upsertResp.ok) {
+        results.imported += allRows.length;
+      } else {
+        results.errors += allRows.length;
+        const errText = await upsertResp.text().catch(() => '');
+        if (!results.first_error) results.first_error = `Supabase: ${errText.slice(0, 200)}`;
       }
     }
 

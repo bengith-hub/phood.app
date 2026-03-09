@@ -200,12 +200,13 @@ async function startBackfill() {
     return d.toISOString().slice(0, 10)
   })()
 
-  // Build monthly chunks
+  // Build weekly chunks (7 days each — fits within Netlify 10s free-tier timeout)
   const chunks: { from: string; to: string }[] = []
   let cursor = new Date(dateFrom)
   const end = new Date(dateTo)
   while (cursor <= end) {
-    const chunkEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0) // last day of month
+    const chunkEnd = new Date(cursor)
+    chunkEnd.setDate(chunkEnd.getDate() + 6) // 7 days per chunk
     const to = chunkEnd > end ? dateTo : chunkEnd.toISOString().slice(0, 10)
     chunks.push({ from: cursor.toISOString().slice(0, 10), to })
     cursor = new Date(chunkEnd)
@@ -219,7 +220,7 @@ async function startBackfill() {
   try {
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!
-      zeltyBackfillMsg.value = `Import mois ${i + 1}/${chunks.length} (${chunk.from} → ${chunk.to})...`
+      zeltyBackfillMsg.value = `Import ${i + 1}/${chunks.length} (${chunk.from} → ${chunk.to})...`
 
       const resp = await fetch('/.netlify/functions/backfill-zelty-ca', {
         method: 'POST',
