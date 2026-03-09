@@ -66,14 +66,6 @@ function getMercurialesByIngredient(ingredientId: string): Mercuriale[] {
 const WEIGHT_UNITS = new Set(['g', 'kg'])
 const VOLUME_UNITS = new Set(['mL', 'cl', 'L'])
 
-/** Conversion factor from base unit (kg/L) to stock unit */
-function baseToStockFactor(stockUnite: string): number {
-  const factors: Record<string, number> = {
-    'g': 1000, 'kg': 1,       // prix is per kg
-    'mL': 1000, 'cl': 100, 'L': 1, // prix is per L
-  }
-  return factors[stockUnite] ?? 1
-}
 
 function getCondLabel(merc: Mercuriale): string {
   const cond = merc.conditionnements?.find(c => c.utilise_commande)
@@ -94,9 +86,8 @@ function normalizePrice(merc: Mercuriale): number {
   const su = merc.unite_stock
 
   if (WEIGHT_UNITS.has(su) || VOLUME_UNITS.has(su)) {
-    // Just convert from base unit (kg/L) to stock unit
-    const factor = baseToStockFactor(su)
-    return factor > 0 ? merc.prix_unitaire_ht / factor : merc.prix_unitaire_ht
+    // prix is already per kg or per L — return as-is for display
+    return merc.prix_unitaire_ht
   }
 
   // Count products: prix is per ordering pack → divide by coeff for per-piece
@@ -109,6 +100,12 @@ function normalizePrice(merc: Mercuriale): number {
     return merc.prix_unitaire_ht / divisor
   }
   return merc.prix_unitaire_ht
+}
+
+function displayUnit(unite: string): string {
+  if (WEIGHT_UNITS.has(unite)) return 'kg'
+  if (VOLUME_UNITS.has(unite)) return 'L'
+  return unite
 }
 
 const rows = computed<IngredientCoutRow[]>(() => {
@@ -332,7 +329,7 @@ onMounted(async () => {
               <td class="col-prefere">
                 <div v-if="row.fournisseurPrefere" class="prix-cell">
                   <span class="fournisseur-tag">{{ row.fournisseurPrefere.fournisseurNom }}</span>
-                  <span class="prix-value">{{ formatPrix(row.fournisseurPrefere.prixNormalise) }} &euro;/{{ row.ingredient.unite_stock }}</span>
+                  <span class="prix-value">{{ formatPrix(row.fournisseurPrefere.prixNormalise) }} &euro;/{{ displayUnit(row.ingredient.unite_stock) }}</span>
                 </div>
                 <span v-else class="no-prefere">Aucun</span>
               </td>
@@ -382,7 +379,7 @@ onMounted(async () => {
                           <span class="dsc-prix-value">{{ formatPrix(fp.prixUnitaireHt) }} &euro; HT</span>
                           <span v-if="fp.condLabel" class="dsc-prix-cond">({{ fp.condLabel }})</span>
                           <span class="dsc-prix-conv">
-                            &rarr; {{ formatPrix(fp.prixNormalise) }} &euro;/{{ row.ingredient.unite_stock }}
+                            &rarr; {{ formatPrix(fp.prixNormalise) }} &euro;/{{ displayUnit(row.ingredient.unite_stock) }}
                           </span>
                         </div>
 
