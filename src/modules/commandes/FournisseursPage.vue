@@ -453,7 +453,7 @@ onMounted(() => store.fetchAll())
                 <input v-model="editingFournisseur.nom" required />
               </div>
             </div>
-            <!-- Site web — logo auto-affiché via Clearbit -->
+            <!-- Site web — logo auto-affiché via icon.horse -->
             <div class="field full">
               <label>Site web</label>
               <input v-model="editingFournisseur.site_web" type="text" placeholder="ex: delidrinks.com" />

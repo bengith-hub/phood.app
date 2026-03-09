@@ -15,7 +15,7 @@ import StockCoverageRow from './StockCoverageRow.vue'
 import type { StockCoverageInfo } from './StockCoverageRow.vue'
 import type { Commande, CommandeLigne, Mercuriale, Conditionnement, Fournisseur } from '@/types/database'
 
-/** Get logo URL from fournisseur's site_web via Clearbit */
+/** Get logo URL from fournisseur's site_web via icon.horse (free, reliable) */
 function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): string | null {
   const site = f?.site_web
   if (!site) return null
@@ -23,7 +23,7 @@ function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): s
     const url = site.includes('://') ? site : `https://${site}`
     const domain = new URL(url).hostname.replace(/^www\./, '')
     if (!domain || !domain.includes('.')) return null
-    return `https://logo.clearbit.com/${domain}`
+    return `https://icon.horse/icon/${domain}`
   } catch {
     return null
   }
