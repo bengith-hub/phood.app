@@ -4,11 +4,12 @@
  * POST /.netlify/functions/backfill-zelty-ca
  * Body: { date_from?: "YYYY-MM-DD", date_to?: "YYYY-MM-DD" }
  *
- * Fetches ALL closures from Zelty API in a single call, filters by date range,
- * and upserts into ventes_historique table in Supabase.
+ * Fetches ALL closures from Zelty API with pagination (limit=200 + offset),
+ * filters by date range, deduplicates, and upserts into ventes_historique.
  */
 
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
+const ZELTY_PAGE_SIZE = 200; // max tested working value (500 returns 0)
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -29,63 +30,24 @@ exports.handler = async function (event) {
   try {
     const body = JSON.parse(event.body || '{}');
 
-    // Debug mode: test pagination parameters
+    // Debug mode: show pagination analysis
     if (body.debug) {
-      const tests = {};
-
-      // Test 1: default (no params)
-      const r1 = await fetch(`${ZELTY_BASE_URL}/closures`, {
-        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
-      });
-      const d1 = await r1.json();
-      tests.default = { count: (d1.closures || []).length, keys: Object.keys(d1) };
-
-      // Test 2: limit=200
-      const r2 = await fetch(`${ZELTY_BASE_URL}/closures?limit=200`, {
-        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
-      });
-      const d2 = await r2.json();
-      tests.limit200 = { count: (d2.closures || []).length };
-
-      // Test 3: per_page=200
-      const r3 = await fetch(`${ZELTY_BASE_URL}/closures?per_page=200`, {
-        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
-      });
-      const d3 = await r3.json();
-      tests.per_page200 = { count: (d3.closures || []).length };
-
-      // Test 4: offset=100
-      const r4 = await fetch(`${ZELTY_BASE_URL}/closures?offset=100`, {
-        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
-      });
-      const d4 = await r4.json();
-      const c4 = d4.closures || [];
-      tests.offset100 = { count: c4.length, first_date: c4[0]?.date, last_date: c4[c4.length - 1]?.date };
-
-      // Test 5: page=2
-      const r5 = await fetch(`${ZELTY_BASE_URL}/closures?page=2`, {
-        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
-      });
-      const d5 = await r5.json();
-      const c5 = d5.closures || [];
-      tests.page2 = { count: c5.length, first_date: c5[0]?.date, last_date: c5[c5.length - 1]?.date };
-
-      // Test 6: limit=500
-      const r6 = await fetch(`${ZELTY_BASE_URL}/closures?limit=500`, {
-        headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
-      });
-      const d6 = await r6.json();
-      const c6 = d6.closures || [];
-      tests.limit500 = { count: c6.length, first_date: c6[0]?.date, last_date: c6[c6.length - 1]?.date };
-
+      const allClosures = await fetchAllClosures(ZELTY_API_KEY);
+      const dates = allClosures.map(c => c.date).filter(Boolean).sort();
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ debug: true, tests }),
+        body: JSON.stringify({
+          debug: true,
+          total_closures: allClosures.length,
+          unique_dates: new Set(dates).size,
+          first_date: dates[0] || null,
+          last_date: dates[dates.length - 1] || null,
+        }),
       };
     }
 
-    // Default date range: last 7 days
+    // Default date range: last 18 months
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const dateTo = body.date_to || yesterday.toISOString().slice(0, 10);
@@ -93,45 +55,24 @@ exports.handler = async function (event) {
     let dateFrom = body.date_from;
     if (!dateFrom) {
       const d = new Date(dateTo);
-      d.setDate(d.getDate() - 6);
+      d.setMonth(d.getMonth() - 18);
       dateFrom = d.toISOString().slice(0, 10);
     }
 
-    const results = { imported: 0, skipped: 0, errors: 0, date_from: dateFrom, date_to: dateTo, first_error: null };
+    const results = { imported: 0, skipped: 0, errors: 0, date_from: dateFrom, date_to: dateTo, pages_fetched: 0, total_closures_fetched: 0, first_error: null };
 
-    // Fetch all closures in a single call (Zelty returns all closures regardless of ?date param)
-    const resp = await fetch(`${ZELTY_BASE_URL}/closures`, {
-      headers: {
-        'Authorization': `Bearer ${ZELTY_API_KEY}`,
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!resp.ok) {
-      const errBody = await resp.text().catch(() => '');
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...results,
-          errors: 1,
-          first_error: `Zelty API HTTP ${resp.status}: ${errBody.slice(0, 200)}`,
-        }),
-      };
-    }
-
-    const data = await resp.json();
-    const closures = data.closures || [];
+    // Fetch ALL closures with pagination
+    const closures = await fetchAllClosures(ZELTY_API_KEY);
+    results.total_closures_fetched = closures.length;
 
     // Filter to requested date range and map fields
-    // Zelty closure fields: id, date, turnover (centimes), taxes (centimes)
     const allRows = [];
     for (const c of closures) {
       if (!c.date) continue;
       if (c.date < dateFrom || c.date > dateTo) continue;
       allRows.push({
         date: c.date,
-        ca_ttc: (c.turnover || 0) / 100, // centimes → euros
+        ca_ttc: (c.turnover || 0) / 100,
         nb_tickets: 0,
         nb_couverts: null,
         cloture_validee: true,
@@ -148,12 +89,11 @@ exports.handler = async function (event) {
       };
     }
 
-    // Deduplicate by date (Zelty can return multiple closures per date — e.g. one with turnover=0)
+    // Deduplicate by date (keep highest turnover per date)
     const byDate = {};
     for (const row of allRows) {
       const existing = byDate[row.date];
       if (existing) {
-        // Keep the one with higher turnover (the real closure, not the empty midnight one)
         if (row.ca_ttc > existing.ca_ttc) {
           byDate[row.date] = row;
         }
@@ -163,8 +103,13 @@ exports.handler = async function (event) {
     }
     const uniqueRows = Object.values(byDate);
 
-    // Bulk upsert to Supabase
-    if (uniqueRows.length > 0) {
+    // Bulk upsert to Supabase (batch in chunks of 500 to avoid payload limits)
+    const BATCH_SIZE = 500;
+    let totalImported = 0;
+    let batchError = null;
+
+    for (let i = 0; i < uniqueRows.length; i += BATCH_SIZE) {
+      const batch = uniqueRows.slice(i, i + BATCH_SIZE);
       const upsertResp = await fetch(
         `${SUPABASE_URL}/rest/v1/ventes_historique?on_conflict=date`,
         {
@@ -175,18 +120,21 @@ exports.handler = async function (event) {
             'Authorization': `Bearer ${SUPABASE_KEY}`,
             'Prefer': 'resolution=merge-duplicates',
           },
-          body: JSON.stringify(uniqueRows),
+          body: JSON.stringify(batch),
         }
       );
 
       if (upsertResp.ok) {
-        results.imported = uniqueRows.length;
+        totalImported += batch.length;
       } else {
-        results.errors = uniqueRows.length;
         const errText = await upsertResp.text().catch(() => '');
-        results.first_error = `Supabase: ${errText.slice(0, 200)}`;
+        batchError = `Supabase batch ${Math.floor(i / BATCH_SIZE) + 1}: ${errText.slice(0, 200)}`;
+        results.errors += batch.length;
       }
     }
+
+    results.imported = totalImported;
+    if (batchError) results.first_error = batchError;
 
     return {
       statusCode: 200,
@@ -201,3 +149,38 @@ exports.handler = async function (event) {
     };
   }
 };
+
+/**
+ * Fetch ALL closures from Zelty API with pagination.
+ * Uses limit=200 + offset, stops when a page returns fewer results.
+ */
+async function fetchAllClosures(apiKey) {
+  const allClosures = [];
+  let offset = 0;
+  const MAX_PAGES = 20; // safety limit (20 × 200 = 4000 closures max)
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = `${ZELTY_BASE_URL}/closures?limit=${ZELTY_PAGE_SIZE}&offset=${offset}`;
+    const resp = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!resp.ok) {
+      throw new Error(`Zelty API HTTP ${resp.status} at offset ${offset}`);
+    }
+
+    const data = await resp.json();
+    const closures = data.closures || [];
+    allClosures.push(...closures);
+
+    // Stop if we got fewer than the page size (last page)
+    if (closures.length < ZELTY_PAGE_SIZE) break;
+
+    offset += ZELTY_PAGE_SIZE;
+  }
+
+  return allClosures;
+}
