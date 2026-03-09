@@ -200,4 +200,12 @@ router.beforeEach(async (to) => {
   return true
 })
 
+// Auto-reload on chunk load failure (happens after new deploy with different hashes)
+router.onError((error, to) => {
+  if (error.message?.includes('dynamically imported module') || error.message?.includes('Failed to fetch')) {
+    console.warn('Chunk load failed, reloading...', error.message)
+    window.location.assign(to.fullPath)
+  }
+})
+
 export default router
