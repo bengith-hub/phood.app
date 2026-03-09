@@ -29,21 +29,30 @@ exports.handler = async function (event) {
   try {
     const body = JSON.parse(event.body || '{}');
 
-    // Debug mode: return raw Zelty API response
+    // Debug mode: return Zelty API response analysis
     if (body.debug) {
-      const debugDate = body.debug_date || new Date().toISOString().slice(0, 10);
-      const debugResp = await fetch(`${ZELTY_BASE_URL}/closures?date=${debugDate}`, {
+      const debugResp = await fetch(`${ZELTY_BASE_URL}/closures`, {
         headers: { 'Authorization': `Bearer ${ZELTY_API_KEY}`, 'Accept': 'application/json' },
       });
-      const debugText = await debugResp.text();
+      const debugData = await debugResp.json();
+      const closures = debugData.closures || [];
+      const dates = closures.map(c => c.date).filter(Boolean).sort();
+      // Check for pagination fields
+      const topLevelKeys = Object.keys(debugData);
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           debug: true,
-          date: debugDate,
           status: debugResp.status,
-          raw_response: debugText.slice(0, 4000),
+          total_closures: closures.length,
+          first_date: dates[0] || null,
+          last_date: dates[dates.length - 1] || null,
+          top_level_keys: topLevelKeys,
+          has_pagination: !!(debugData.next || debugData.pagination || debugData.meta || debugData.total),
+          pagination_info: { next: debugData.next, pagination: debugData.pagination, meta: debugData.meta, total: debugData.total },
+          sample_first: closures.slice(0, 2),
+          sample_last: closures.slice(-2),
         }),
       };
     }
