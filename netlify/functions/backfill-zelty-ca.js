@@ -4,13 +4,15 @@
  * POST /.netlify/functions/backfill-zelty-ca
  * Body: { date_from?: "YYYY-MM-DD", date_to?: "YYYY-MM-DD" }
  *
- * Fetches closures from Zelty API for the given date range (default: 18 months)
+ * Fetches closures from Zelty API for the given date range
  * and upserts into ventes_historique table in Supabase.
  *
- * Uses paginated endpoint first, falls back to day-by-day if needed.
+ * Uses parallel fetches (10 concurrent) for speed within Netlify's timeout.
+ * Called by the UI in monthly chunks.
  */
 
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
+const CONCURRENCY = 10; // Fetch 10 dates in parallel
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -31,7 +33,7 @@ exports.handler = async function (event) {
   try {
     const body = JSON.parse(event.body || '{}');
 
-    // Default: 18 months ago to yesterday
+    // Default: yesterday
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const dateTo = body.date_to || yesterday.toISOString().slice(0, 10);
@@ -39,21 +41,24 @@ exports.handler = async function (event) {
     let dateFrom = body.date_from;
     if (!dateFrom) {
       const d = new Date(dateTo);
-      d.setMonth(d.getMonth() - 18);
+      d.setMonth(d.getMonth() - 1); // Default: 1 month (called in chunks by UI)
       dateFrom = d.toISOString().slice(0, 10);
     }
 
     const results = { imported: 0, skipped: 0, errors: 0, date_from: dateFrom, date_to: dateTo };
 
-    // Strategy 1: Try paginated endpoint with date range
-    let useFallback = false;
-    try {
-      let page = 1;
-      let hasMore = true;
+    // Build list of dates to fetch
+    const dates = [];
+    const start = new Date(dateFrom);
+    const end = new Date(dateTo);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
 
-      while (hasMore) {
-        const url = `${ZELTY_BASE_URL}/closures?date_from=${dateFrom}&date_to=${dateTo}&page=${page}&size=100`;
-        const resp = await fetch(url, {
+    // Fetch a single date from Zelty
+    async function fetchDate(dateStr) {
+      try {
+        const resp = await fetch(`${ZELTY_BASE_URL}/closures?date=${dateStr}`, {
           headers: {
             'Authorization': `Bearer ${ZELTY_API_KEY}`,
             'Accept': 'application/json',
@@ -61,23 +66,17 @@ exports.handler = async function (event) {
         });
 
         if (!resp.ok) {
-          if (resp.status === 400 || resp.status === 404) {
-            // Endpoint doesn't support date range — use fallback
-            useFallback = true;
-            break;
-          }
-          throw new Error(`Zelty API error: ${resp.status}`);
+          if (resp.status === 404) return { date: dateStr, rows: [], skipped: true };
+          return { date: dateStr, rows: [], error: true };
         }
 
         const data = await resp.json();
         const closures = data.closures || [];
 
         if (closures.length === 0) {
-          hasMore = false;
-          break;
+          return { date: dateStr, rows: [], skipped: true };
         }
 
-        // Bulk upsert to Supabase via REST API
         const rows = closures
           .filter(c => c.date)
           .map(c => ({
@@ -89,116 +88,47 @@ exports.handler = async function (event) {
             zelty_closure_id: c.id || null,
           }));
 
-        if (rows.length > 0) {
-          const upsertResp = await fetch(
-            `${SUPABASE_URL}/rest/v1/ventes_historique`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'apikey': SUPABASE_KEY,
-                'Authorization': `Bearer ${SUPABASE_KEY}`,
-                'Prefer': 'resolution=merge-duplicates',
-              },
-              body: JSON.stringify(rows),
-            }
-          );
-
-          if (!upsertResp.ok) {
-            const errText = await upsertResp.text();
-            throw new Error(`Supabase upsert error: ${upsertResp.status} — ${errText}`);
-          }
-
-          results.imported += rows.length;
-        }
-
-        page++;
-        if (closures.length < 100) hasMore = false;
-      }
-    } catch (batchErr) {
-      if (!useFallback) {
-        console.error('Batch approach failed:', batchErr.message);
-        useFallback = true;
+        return { date: dateStr, rows };
+      } catch {
+        return { date: dateStr, rows: [], error: true };
       }
     }
 
-    // Strategy 2: Day-by-day fallback
-    if (useFallback) {
-      results.imported = 0; // Reset
-      const start = new Date(dateFrom);
-      const end = new Date(dateTo);
-      const batchRows = [];
+    // Process dates in parallel batches of CONCURRENCY
+    const allRows = [];
+    for (let i = 0; i < dates.length; i += CONCURRENCY) {
+      const batch = dates.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.all(batch.map(d => fetchDate(d)));
 
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dateStr = d.toISOString().slice(0, 10);
-
-        try {
-          const resp = await fetch(`${ZELTY_BASE_URL}/closures?date=${dateStr}`, {
-            headers: {
-              'Authorization': `Bearer ${ZELTY_API_KEY}`,
-              'Accept': 'application/json',
-            },
-          });
-
-          if (!resp.ok) {
-            if (resp.status === 404) {
-              results.skipped++;
-              continue;
-            }
-            results.errors++;
-            continue;
-          }
-
-          const data = await resp.json();
-          const closures = data.closures || [];
-
-          for (const c of closures) {
-            if (!c.date) continue;
-            batchRows.push({
-              date: c.date,
-              ca_ttc: c.total_ttc || 0,
-              nb_tickets: c.nb_tickets || 0,
-              nb_couverts: c.nb_covers ?? null,
-              cloture_validee: c.validated ?? true,
-              zelty_closure_id: c.id || null,
-            });
-          }
-
-          if (closures.length === 0) {
-            results.skipped++;
-          }
-
-          // Small delay to avoid rate limiting
-          await new Promise(r => setTimeout(r, 50));
-        } catch {
-          results.errors++;
-        }
+      for (const r of batchResults) {
+        if (r.error) results.errors++;
+        else if (r.skipped) results.skipped++;
+        if (r.rows.length > 0) allRows.push(...r.rows);
       }
+    }
 
-      // Bulk upsert all collected rows
-      if (batchRows.length > 0) {
-        // Upsert in batches of 100
-        for (let i = 0; i < batchRows.length; i += 100) {
-          const batch = batchRows.slice(i, i + 100);
-          const upsertResp = await fetch(
-            `${SUPABASE_URL}/rest/v1/ventes_historique`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'apikey': SUPABASE_KEY,
-                'Authorization': `Bearer ${SUPABASE_KEY}`,
-                'Prefer': 'resolution=merge-duplicates',
-              },
-              body: JSON.stringify(batch),
-            }
-          );
-
-          if (upsertResp.ok) {
-            results.imported += batch.length;
-          } else {
-            results.errors += batch.length;
+    // Bulk upsert all collected rows to Supabase (in batches of 200)
+    if (allRows.length > 0) {
+      for (let i = 0; i < allRows.length; i += 200) {
+        const batch = allRows.slice(i, i + 200);
+        const upsertResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/ventes_historique`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`,
+              'Prefer': 'resolution=merge-duplicates',
+            },
+            body: JSON.stringify(batch),
           }
+        );
+
+        if (upsertResp.ok) {
+          results.imported += batch.length;
+        } else {
+          results.errors += batch.length;
         }
       }
     }
