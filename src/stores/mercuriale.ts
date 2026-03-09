@@ -120,14 +120,20 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
 
   /** Search product photos via web scraping */
   async function searchPhotos(query: string): Promise<{ url: string; thumbnail: string; title: string }[]> {
-    const res = await fetch('/.netlify/functions/search-product-photo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    })
+    let res: Response
+    try {
+      res = await fetch('/.netlify/functions/search-product-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+    } catch {
+      throw new Error('Impossible de contacter le serveur de recherche photo')
+    }
     if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.error || 'Erreur recherche photo')
+      let msg = 'Erreur recherche photo'
+      try { const err = await res.json(); msg = err.error || msg } catch { /* ignore */ }
+      throw new Error(msg)
     }
     const data = await res.json()
     return data.images || []
