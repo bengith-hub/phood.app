@@ -77,5 +77,39 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     await fetchAll()
   }
 
-  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove, deactivate }
+  /** Delete fournisseur + all associated mercuriale products (cascade) */
+  async function removeWithProducts(id: string) {
+    // 1. Nullify ingredients_restaurant.fournisseur_prefere_id pointing to this supplier's products
+    const { data: produits } = await supabase
+      .from('mercuriale')
+      .select('id')
+      .eq('fournisseur_id', id)
+    const produitIds = (produits || []).map(p => p.id)
+
+    if (produitIds.length > 0) {
+      // Clear fournisseur_prefere_id references to these products
+      await supabase
+        .from('ingredients_restaurant')
+        .update({ fournisseur_prefere_id: null })
+        .in('fournisseur_prefere_id', produitIds)
+
+      // Delete all mercuriale products for this supplier
+      const { error: delProdErr } = await supabase
+        .from('mercuriale')
+        .delete()
+        .eq('fournisseur_id', id)
+      if (delProdErr) throw delProdErr
+    }
+
+    // 2. Delete the fournisseur itself
+    const { error: err } = await supabase
+      .from('fournisseurs')
+      .delete()
+      .eq('id', id)
+    if (err) throw err
+
+    await fetchAll()
+  }
+
+  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove, deactivate, removeWithProducts }
 })

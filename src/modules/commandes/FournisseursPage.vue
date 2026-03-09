@@ -68,29 +68,49 @@ function formatFranco(montant: number) {
 async function handleDelete() {
   if (!editingFournisseur.value?.id) return
   const nom = editingFournisseur.value.nom || 'ce fournisseur'
-  if (!confirm(`Supprimer « ${nom} » ?\nCette action est irréversible.`)) return
+  const id = editingFournisseur.value.id
+
+  // First try simple delete
   try {
-    await store.remove(editingFournisseur.value.id)
+    await store.remove(id)
     closeEditor()
+    return
   } catch (e: unknown) {
     // PostgrestError is a POJO (not instanceof Error) — access .message and .code directly
     const err = e as Record<string, unknown>
     const msg = (err?.message as string) || String(e)
     const code = (err?.code as string) || ''
-    if (msg.includes('violates foreign key') || msg.includes('foreign_key') || code === '23503' || msg.includes('23503')) {
-      const wantDeactivate = confirm(
-        `Impossible de supprimer « ${nom} » car il est lié à des produits ou commandes.\n\nVoulez-vous le désactiver à la place ?\nIl n'apparaîtra plus dans les listes actives mais ses données seront conservées.`
-      )
-      if (wantDeactivate) {
-        try {
-          await store.deactivate(editingFournisseur.value.id!)
-          closeEditor()
-        } catch (e2: unknown) {
-          alert(e2 instanceof Error ? e2.message : 'Erreur de désactivation')
-        }
-      }
-    } else {
+    if (!(msg.includes('violates foreign key') || msg.includes('foreign_key') || code === '23503' || msg.includes('23503'))) {
       alert(msg || 'Erreur de suppression')
+      return
+    }
+  }
+
+  // FK constraint — offer 3 options
+  const choice = prompt(
+    `« ${nom} » est lié à des produits mercuriale, commandes ou ingrédients.\n\nQue souhaitez-vous faire ?\n\n` +
+    `1 — Supprimer le fournisseur ET tous ses produits mercuriale\n` +
+    `    ⚠️ IRRÉVERSIBLE — les lignes de commande liées seront aussi perdues\n\n` +
+    `2 — Désactiver le fournisseur (masqué mais données conservées)\n\n` +
+    `Tapez 1 ou 2 (ou annuler) :`
+  )
+
+  if (choice === '1') {
+    if (!confirm(`⚠️ ATTENTION : Supprimer « ${nom} » ET tous ses produits ?\n\nCette action est IRRÉVERSIBLE.`)) return
+    try {
+      await store.removeWithProducts(id)
+      closeEditor()
+    } catch (e2: unknown) {
+      const err2 = e2 as Record<string, unknown>
+      alert((err2?.message as string) || 'Erreur de suppression en cascade')
+    }
+  } else if (choice === '2') {
+    try {
+      await store.deactivate(id)
+      closeEditor()
+    } catch (e2: unknown) {
+      const err2 = e2 as Record<string, unknown>
+      alert((err2?.message as string) || 'Erreur de désactivation')
     }
   }
 }

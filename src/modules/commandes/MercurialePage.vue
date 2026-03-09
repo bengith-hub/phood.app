@@ -126,8 +126,11 @@ async function handleDeleteProduct() {
     await mercurialeStore.deleteItem(editingProduct.value.id)
     closeEditor()
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : ''
-    if (msg.includes('violates foreign key') || msg.includes('23503')) {
+    // PostgrestError is a POJO (not instanceof Error) — access .message and .code directly
+    const err = e as Record<string, unknown>
+    const msg = (err?.message as string) || String(e)
+    const code = (err?.code as string) || ''
+    if (msg.includes('violates foreign key') || msg.includes('foreign_key') || code === '23503' || msg.includes('23503')) {
       const wantDeactivate = confirm(
         `Impossible de supprimer \u00AB ${nom} \u00BB car il est li\u00E9 \u00E0 des ingr\u00E9dients ou commandes.\n\nVoulez-vous le d\u00E9sactiver \u00E0 la place ?`
       )
@@ -136,7 +139,8 @@ async function handleDeleteProduct() {
           await mercurialeStore.save({ id: editingProduct.value.id, actif: false } as Partial<Mercuriale> & { id: string })
           closeEditor()
         } catch (e2: unknown) {
-          alert(e2 instanceof Error ? e2.message : 'Erreur de d\u00E9sactivation')
+          const err2 = e2 as Record<string, unknown>
+          alert((err2?.message as string) || 'Erreur de d\u00E9sactivation')
         }
       }
     } else {
