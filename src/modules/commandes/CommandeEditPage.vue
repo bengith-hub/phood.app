@@ -615,6 +615,8 @@ watch(selectedFournisseurId, async (newId) => {
           class="fournisseur-btn"
           @click="selectedFournisseurId = f.id"
         >
+          <div v-if="f.logo_url" class="f-logo"><img :src="f.logo_url" :alt="f.nom" /></div>
+          <div v-else class="f-logo f-logo-placeholder">{{ f.nom.charAt(0).toUpperCase() }}</div>
           <span class="f-name">{{ f.nom }}</span>
           <span v-if="f.franco_minimum > 0" class="f-franco">Franco {{ f.franco_minimum }} &#x20AC;</span>
         </button>
@@ -625,6 +627,7 @@ watch(selectedFournisseurId, async (newId) => {
     <div v-else-if="selectedFournisseurId" class="order-form">
       <!-- Fournisseur info bar -->
       <div class="info-bar">
+        <div v-if="fournisseur?.logo_url" class="info-logo"><img :src="fournisseur.logo_url" :alt="fournisseur.nom" /></div>
         <span class="info-fournisseur">{{ fournisseur?.nom }}</span>
         <div class="info-meta">
           <label>Livraison pr&eacute;vue :
@@ -855,6 +858,34 @@ h1 {
   border-color: var(--color-primary);
 }
 
+.f-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.f-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 4px;
+}
+
+.f-logo-placeholder {
+  background: var(--color-primary);
+  color: white;
+  font-size: 22px;
+  font-weight: 800;
+  border: none;
+}
+
 .f-name {
   font-size: 18px;
   font-weight: 700;
@@ -866,9 +897,26 @@ h1 {
 }
 
 /* Order form */
+.info-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: white;
+  flex-shrink: 0;
+}
+
+.info-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 3px;
+}
+
 .info-bar {
   display: flex;
-  justify-content: space-between;
+  gap: 12px;
   align-items: center;
   background: var(--bg-surface);
   padding: 16px 20px;

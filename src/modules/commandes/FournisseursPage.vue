@@ -13,6 +13,18 @@ const search = ref('')
 const showEditor = ref(false)
 const editingFournisseur = ref<Partial<Fournisseur> | null>(null)
 
+// Logo search
+const logoSearching = ref(false)
+const logoResults = ref<{ url: string; source: string; label: string; thumbnail?: string }[]>([])
+
+// Email chips
+const emailChips = ref<string[]>([])
+const emailBccChips = ref<string[]>([])
+const emailInput = ref('')
+const emailBccInput = ref('')
+const emailInputEl = ref<HTMLInputElement | null>(null)
+const emailBccInputEl = ref<HTMLInputElement | null>(null)
+
 const JOURS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
 const JOURS_COURTS = ['D', 'L', 'Ma', 'Me', 'J', 'V', 'S']
 
@@ -33,6 +45,7 @@ function openEditor(fournisseur?: Fournisseur) {
         nom: '',
         contact_nom: '',
         email_commande: '',
+        email_commande_bcc: '',
         telephone: '',
         jours_commande: [],
         jours_livraison: [],
@@ -43,7 +56,102 @@ function openEditor(fournisseur?: Fournisseur) {
         mode_envoi: 'email',
         actif: true,
       }
+  // Parse emails into chips
+  emailChips.value = parseEmails(editingFournisseur.value.email_commande)
+  emailBccChips.value = parseEmails(editingFournisseur.value.email_commande_bcc)
+  emailInput.value = ''
+  emailBccInput.value = ''
+  // Reset logo search
+  logoResults.value = []
+  logoSearching.value = false
   showEditor.value = true
+}
+
+/** Parse semicolon/comma-separated email string into array */
+function parseEmails(val: string | null | undefined): string[] {
+  if (!val) return []
+  return val.split(/[;,\s]+/).map(e => e.trim()).filter(e => e.includes('@'))
+}
+
+/** Join email array back to semicolon-separated string */
+function joinEmails(arr: string[]): string {
+  return arr.join('; ')
+}
+
+type EmailField = 'to' | 'bcc'
+
+function getEmailRefs(field: EmailField) {
+  return field === 'to'
+    ? { input: emailInput, chips: emailChips }
+    : { input: emailBccInput, chips: emailBccChips }
+}
+
+/** Add email to a chip list */
+function addEmail(field: EmailField) {
+  const { input, chips } = getEmailRefs(field)
+  const val = input.value.trim().toLowerCase()
+  if (!val || !val.includes('@') || !val.includes('.')) return
+  if (!chips.value.includes(val)) {
+    chips.value.push(val)
+  }
+  input.value = ''
+}
+
+/** Handle keydown on email input — add on Enter, Tab, semicolon, comma */
+function handleEmailKey(e: KeyboardEvent, field: EmailField) {
+  const { input, chips } = getEmailRefs(field)
+  if (['Enter', 'Tab', ';', ','].includes(e.key)) {
+    e.preventDefault()
+    addEmail(field)
+  }
+  // Backspace on empty input → remove last chip
+  if (e.key === 'Backspace' && !input.value && chips.value.length > 0) {
+    chips.value.pop()
+  }
+}
+
+/** Handle paste → split into multiple emails */
+function handleEmailPaste(e: ClipboardEvent, field: EmailField) {
+  e.preventDefault()
+  const { input, chips } = getEmailRefs(field)
+  const text = e.clipboardData?.getData('text') || ''
+  const emails = text.split(/[;,\s]+/).map(s => s.trim().toLowerCase()).filter(s => s.includes('@') && s.includes('.'))
+  for (const em of emails) {
+    if (!chips.value.includes(em)) {
+      chips.value.push(em)
+    }
+  }
+  input.value = ''
+}
+
+function removeEmailChip(field: EmailField, idx: number) {
+  const { chips } = getEmailRefs(field)
+  chips.value.splice(idx, 1)
+}
+
+/** Search logo for current supplier */
+async function handleSearchLogo() {
+  if (!editingFournisseur.value?.nom) return
+  logoSearching.value = true
+  logoResults.value = []
+  try {
+    const results = await store.searchLogo(
+      editingFournisseur.value.nom,
+      joinEmails(emailChips.value) || undefined
+    )
+    logoResults.value = results
+  } catch {
+    // silent
+  } finally {
+    logoSearching.value = false
+  }
+}
+
+/** Select a logo from search results */
+function selectLogo(url: string) {
+  if (!editingFournisseur.value) return
+  editingFournisseur.value.logo_url = url
+  logoResults.value = []
 }
 
 /** Toggle a delivery day on/off and clean up delays */
@@ -71,6 +179,14 @@ function closeEditor() {
 async function handleSave() {
   if (!editingFournisseur.value) return
   try {
+    // Flush any pending email input
+    if (emailInput.value.trim()) addEmail('to')
+    if (emailBccInput.value.trim()) addEmail('bcc')
+
+    // Write email chips back to string fields
+    editingFournisseur.value.email_commande = joinEmails(emailChips.value) || null
+    editingFournisseur.value.email_commande_bcc = joinEmails(emailBccChips.value) || null
+
     // Auto-compute jours_commande from delivery days + delays
     const livDays = editingFournisseur.value.jours_livraison || []
     const delais = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
@@ -237,6 +353,12 @@ onMounted(() => store.fetchAll())
         @click="isAdmin ? openEditor(f) : undefined"
       >
         <div class="card-header">
+          <div v-if="f.logo_url" class="card-logo">
+            <img :src="f.logo_url" :alt="f.nom" />
+          </div>
+          <div v-else class="card-logo card-logo-placeholder">
+            {{ f.nom.charAt(0).toUpperCase() }}
+          </div>
           <span class="card-nom">{{ f.nom }}</span>
           <span v-if="!f.actif" class="badge-inactive">Inactif</span>
           <span v-if="f.franco_minimum > 0" class="badge-franco">
@@ -284,9 +406,47 @@ onMounted(() => store.fetchAll())
 
         <form @submit.prevent="handleSave" class="modal-body">
           <div class="form-grid">
+            <!-- Logo + Nom -->
+            <div class="field full logo-nom-row">
+              <div v-if="editingFournisseur.logo_url" class="editor-logo">
+                <img :src="editingFournisseur.logo_url" :alt="editingFournisseur.nom || ''" />
+              </div>
+              <div v-else class="editor-logo editor-logo-placeholder">
+                {{ (editingFournisseur.nom || '?').charAt(0).toUpperCase() }}
+              </div>
+              <div class="field" style="flex:1">
+                <label>Nom *</label>
+                <input v-model="editingFournisseur.nom" required />
+              </div>
+            </div>
+            <!-- Logo URL + search -->
             <div class="field full">
-              <label>Nom *</label>
-              <input v-model="editingFournisseur.nom" required />
+              <label>Logo</label>
+              <div class="logo-url-row">
+                <input v-model="editingFournisseur.logo_url" type="url" placeholder="https://..." style="flex:1" />
+                <button
+                  type="button"
+                  class="btn-search-logo"
+                  @click="handleSearchLogo"
+                  :disabled="logoSearching || !editingFournisseur.nom"
+                >
+                  {{ logoSearching ? '...' : 'Rechercher' }}
+                </button>
+              </div>
+              <!-- Logo search results -->
+              <div v-if="logoResults.length > 0" class="logo-results">
+                <div
+                  v-for="(logo, i) in logoResults"
+                  :key="i"
+                  class="logo-result-item"
+                  @click="selectLogo(logo.url)"
+                >
+                  <img :src="logo.thumbnail || logo.url" :alt="logo.label" />
+                  <span class="logo-result-label">{{ logo.label }}</span>
+                </div>
+              </div>
+              <div v-if="logoSearching" class="logo-search-status">Recherche en cours...</div>
+              <div v-if="!logoSearching && logoResults.length === 0 && editingFournisseur.logo_url === null" class="logo-search-status" style="display:none"></div>
             </div>
             <div class="field">
               <label>Contact</label>
@@ -296,9 +456,54 @@ onMounted(() => store.fetchAll())
               <label>Téléphone</label>
               <input v-model="editingFournisseur.telephone" type="tel" />
             </div>
+
+            <!-- Email commande — chip input -->
             <div class="field full">
               <label>Email commande</label>
-              <input v-model="editingFournisseur.email_commande" type="email" />
+              <div class="email-chips-container" @click="emailInputEl?.focus()">
+                <span v-for="(email, i) in emailChips" :key="i" class="email-chip">
+                  {{ email }}
+                  <button type="button" class="chip-remove" @click.stop="removeEmailChip('to', i)">×</button>
+                </span>
+                <input
+                  ref="emailInputEl"
+                  v-model="emailInput"
+                  type="text"
+                  inputmode="email"
+                  class="email-chip-input"
+                  placeholder="Ajouter un email..."
+                  @keydown="handleEmailKey($event, 'to')"
+                  @paste="handleEmailPaste($event, 'to')"
+                  @blur="addEmail('to')"
+                />
+              </div>
+            </div>
+
+            <!-- Email BCC — chip input -->
+            <div class="field full">
+              <label>Email BCC (copie cachée)</label>
+              <div class="email-chips-container" @click="emailBccInputEl?.focus()">
+                <span v-for="(email, i) in emailBccChips" :key="i" class="email-chip email-chip-bcc">
+                  {{ email }}
+                  <button type="button" class="chip-remove" @click.stop="removeEmailChip('bcc', i)">×</button>
+                </span>
+                <input
+                  ref="emailBccInputEl"
+                  v-model="emailBccInput"
+                  type="text"
+                  inputmode="email"
+                  class="email-chip-input"
+                  placeholder="Ajouter un email en copie..."
+                  @keydown="handleEmailKey($event, 'bcc')"
+                  @paste="handleEmailPaste($event, 'bcc')"
+                  @blur="addEmail('bcc')"
+                />
+              </div>
+            </div>
+
+            <div class="field">
+              <label>SIRET</label>
+              <input v-model="editingFournisseur.siret" placeholder="123 456 789 00012" />
             </div>
             <div class="field">
               <label>Franco minimum (€)</label>
@@ -480,8 +685,36 @@ onMounted(() => store.fetchAll())
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 12px;
+}
+
+.card-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 4px;
+}
+
+.card-logo-placeholder {
+  background: var(--color-primary);
+  color: white;
+  font-size: 20px;
+  font-weight: 800;
+  border: none;
 }
 
 .card-nom {
@@ -783,6 +1016,41 @@ onMounted(() => store.fetchAll())
   white-space: nowrap;
 }
 
+.logo-nom-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.editor-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.editor-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 6px;
+}
+
+.editor-logo-placeholder {
+  background: var(--color-primary);
+  color: white;
+  font-size: 28px;
+  font-weight: 800;
+  border: none;
+}
+
 .badge-s1 {
   display: inline-block;
   background: #f59e0b;
@@ -802,5 +1070,153 @@ onMounted(() => store.fetchAll())
 .schedule-detail span:last-child {
   font-size: 14px;
   line-height: 1.4;
+}
+
+/* Logo search */
+.logo-url-row {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-search-logo {
+  height: 52px;
+  padding: 0 16px;
+  background: var(--bg-main);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-search-logo:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.logo-results {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.logo-result-item {
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 6px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: white;
+  transition: border-color 0.15s;
+}
+
+.logo-result-item:active {
+  border-color: var(--color-primary);
+}
+
+.logo-result-item img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.logo-result-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 68px;
+}
+
+.logo-search-status {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+}
+
+/* Email chip input */
+.email-chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 52px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  background: var(--bg-main);
+  cursor: text;
+  align-items: center;
+  transition: border-color 0.15s;
+}
+
+.email-chips-container:focus-within {
+  border-color: var(--color-primary);
+}
+
+.email-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-primary);
+  color: white;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  max-width: 100%;
+  word-break: break-all;
+}
+
+.email-chip-bcc {
+  background: #6366f1;
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.3);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.chip-remove:active {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.email-chip-input {
+  border: none !important;
+  background: transparent !important;
+  outline: none !important;
+  height: 32px !important;
+  min-width: 160px;
+  flex: 1;
+  font-size: 16px !important;
+  padding: 0 !important;
+  color: var(--text-primary);
+}
+
+.email-chip-input::placeholder {
+  color: var(--text-tertiary);
+  font-size: 14px;
 }
 </style>

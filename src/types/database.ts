@@ -34,6 +34,7 @@ export interface Fournisseur {
   nom: string
   contact_nom: string | null
   email_commande: string | null
+  email_commande_bcc: string | null
   telephone: string | null
   jours_commande: number[] // 0=dim, 1=lun, ..., 6=sam
   heure_limite_commande: string | null // "14:00"
@@ -45,6 +46,9 @@ export interface Fournisseur {
   conditions_paiement: string | null
   mode_envoi: string // default 'email'
   adresse: string | null
+  siret: string | null
+  logo_url: string | null
+  pennylane_supplier_id: string | null
   notes: string | null
   actif: boolean
   created_at: string
