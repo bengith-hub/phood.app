@@ -58,23 +58,24 @@ async function handleResetPassword() {
       <img src="/assets/logos/phood-logo.png" alt="Phood" class="login-logo" />
       <p class="login-subtitle">Gestion Restaurant</p>
 
-      <form @submit.prevent="handleSubmit" class="login-form">
+      <form @submit.prevent="handleSubmit" action="/login" method="post" class="login-form">
         <div class="field">
-          <label for="email">Email</label>
+          <label for="login-email">Email</label>
           <input
-            id="email"
+            id="login-email"
             name="email"
             v-model="email"
             type="email"
-            autocomplete="username"
+            autocomplete="email"
+            inputmode="email"
             required
             placeholder="votre@email.fr"
           />
         </div>
         <div class="field">
-          <label for="password">Mot de passe</label>
+          <label for="login-password">Mot de passe</label>
           <input
-            id="password"
+            id="login-password"
             name="password"
             v-model="password"
             type="password"
