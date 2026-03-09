@@ -47,7 +47,7 @@ export interface Fournisseur {
   mode_envoi: string // default 'email'
   adresse: string | null
   siret: string | null
-  logo_url: string | null
+  site_web: string | null
   pennylane_supplier_id: string | null
   notes: string | null
   actif: boolean

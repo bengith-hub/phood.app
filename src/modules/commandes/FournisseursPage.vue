@@ -13,10 +13,6 @@ const search = ref('')
 const showEditor = ref(false)
 const editingFournisseur = ref<Partial<Fournisseur> | null>(null)
 
-// Logo search
-const logoSearching = ref(false)
-const logoResults = ref<{ url: string; source: string; label: string; thumbnail?: string }[]>([])
-
 // Email chips
 const emailChips = ref<string[]>([])
 const emailBccChips = ref<string[]>([])
@@ -61,9 +57,6 @@ function openEditor(fournisseur?: Fournisseur) {
   emailBccChips.value = parseEmails(editingFournisseur.value.email_commande_bcc)
   emailInput.value = ''
   emailBccInput.value = ''
-  // Reset logo search
-  logoResults.value = []
-  logoSearching.value = false
   showEditor.value = true
 }
 
@@ -129,29 +122,23 @@ function removeEmailChip(field: EmailField, idx: number) {
   chips.value.splice(idx, 1)
 }
 
-/** Search logo for current supplier */
-async function handleSearchLogo() {
-  if (!editingFournisseur.value?.nom) return
-  logoSearching.value = true
-  logoResults.value = []
+/**
+ * Get logo URL from fournisseur's site_web via Clearbit Logo API.
+ * Extracts domain from any URL format and returns Clearbit logo URL.
+ * Returns null if no site_web is set.
+ */
+function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): string | null {
+  const site = f?.site_web
+  if (!site) return null
   try {
-    const results = await store.searchLogo(
-      editingFournisseur.value.nom,
-      joinEmails(emailChips.value) || undefined
-    )
-    logoResults.value = results
+    // Handle raw domain (e.g. "delidrinks.com") or full URL
+    const url = site.includes('://') ? site : `https://${site}`
+    const domain = new URL(url).hostname.replace(/^www\./, '')
+    if (!domain || !domain.includes('.')) return null
+    return `https://logo.clearbit.com/${domain}`
   } catch {
-    // silent
-  } finally {
-    logoSearching.value = false
+    return null
   }
-}
-
-/** Select a logo from search results */
-function selectLogo(url: string) {
-  if (!editingFournisseur.value) return
-  editingFournisseur.value.logo_url = url
-  logoResults.value = []
 }
 
 /** Toggle a delivery day on/off and clean up delays */
@@ -353,8 +340,9 @@ onMounted(() => store.fetchAll())
         @click="isAdmin ? openEditor(f) : undefined"
       >
         <div class="card-header">
-          <div v-if="f.logo_url" class="card-logo">
-            <img :src="f.logo_url" :alt="f.nom" @error="($event.target as HTMLImageElement).style.display='none'" />
+          <div v-if="getLogoUrl(f)" class="card-logo">
+            <img :src="getLogoUrl(f)!" :alt="f.nom" @error="($event.target as HTMLImageElement).parentElement!.classList.add('logo-failed')" />
+            <span class="card-logo-fallback">{{ f.nom.charAt(0).toUpperCase() }}</span>
           </div>
           <div v-else class="card-logo card-logo-placeholder">
             {{ f.nom.charAt(0).toUpperCase() }}
@@ -408,8 +396,8 @@ onMounted(() => store.fetchAll())
           <div class="form-grid">
             <!-- Logo + Nom -->
             <div class="field full logo-nom-row">
-              <div v-if="editingFournisseur.logo_url" class="editor-logo">
-                <img :src="editingFournisseur.logo_url" :alt="editingFournisseur.nom || ''" @error="editingFournisseur.logo_url = ''" />
+              <div v-if="getLogoUrl(editingFournisseur)" class="editor-logo">
+                <img :src="getLogoUrl(editingFournisseur)!" :alt="editingFournisseur.nom || ''" @error="($event.target as HTMLImageElement).style.display='none'" />
               </div>
               <div v-else class="editor-logo editor-logo-placeholder">
                 {{ (editingFournisseur.nom || '?').charAt(0).toUpperCase() }}
@@ -419,34 +407,11 @@ onMounted(() => store.fetchAll())
                 <input v-model="editingFournisseur.nom" required />
               </div>
             </div>
-            <!-- Logo URL + search -->
+            <!-- Site web — logo auto-affiché via Clearbit -->
             <div class="field full">
-              <label>Logo</label>
-              <div class="logo-url-row">
-                <input v-model="editingFournisseur.logo_url" type="text" placeholder="https://..." style="flex:1" />
-                <button
-                  type="button"
-                  class="btn-search-logo"
-                  @click="handleSearchLogo"
-                  :disabled="logoSearching || !editingFournisseur.nom"
-                >
-                  {{ logoSearching ? '...' : 'Rechercher' }}
-                </button>
-              </div>
-              <!-- Logo search results -->
-              <div v-if="logoResults.length > 0" class="logo-results">
-                <div
-                  v-for="(logo, i) in logoResults"
-                  :key="i"
-                  class="logo-result-item"
-                  @click="selectLogo(logo.url)"
-                >
-                  <img :src="logo.thumbnail || logo.url" :alt="logo.label" @error="($event.target as HTMLImageElement).parentElement!.style.display='none'" />
-                  <span class="logo-result-label">{{ logo.label }}</span>
-                </div>
-              </div>
-              <div v-if="logoSearching" class="logo-search-status">Recherche en cours...</div>
-              <div v-if="!logoSearching && logoResults.length === 0 && editingFournisseur.logo_url === null" class="logo-search-status" style="display:none"></div>
+              <label>Site web</label>
+              <input v-model="editingFournisseur.site_web" type="text" placeholder="ex: delidrinks.com" />
+              <span v-if="editingFournisseur.site_web" class="site-web-hint">Le logo s'affiche automatiquement</span>
             </div>
             <div class="field">
               <label>Contact</label>
@@ -1072,75 +1037,31 @@ onMounted(() => store.fetchAll())
   line-height: 1.4;
 }
 
-/* Logo search */
-.logo-url-row {
+/* Site web hint */
+.site-web-hint {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* Logo failed — show fallback letter */
+.card-logo .card-logo-fallback {
+  display: none;
+}
+.card-logo.logo-failed img {
+  display: none;
+}
+.card-logo.logo-failed .card-logo-fallback {
   display: flex;
-  gap: 8px;
-}
-
-.btn-search-logo {
-  height: 52px;
-  padding: 0 16px;
-  background: var(--bg-main);
-  border: 2px solid var(--color-primary);
-  border-radius: var(--radius-md);
-  color: var(--color-primary);
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btn-search-logo:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.logo-results {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.logo-result-item {
-  width: 72px;
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  padding: 6px;
-  border: 2px solid var(--border);
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-primary);
+  background: var(--bg-secondary);
   border-radius: var(--radius-md);
-  background: white;
-  transition: border-color 0.15s;
-}
-
-.logo-result-item:active {
-  border-color: var(--color-primary);
-}
-
-.logo-result-item img {
-  width: 56px;
-  height: 56px;
-  object-fit: contain;
-}
-
-.logo-result-label {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 68px;
-}
-
-.logo-search-status {
-  font-size: 14px;
-  color: var(--text-tertiary);
-  margin-top: 6px;
 }
 
 /* Email chip input */

@@ -111,17 +111,5 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     await fetchAll()
   }
 
-  /** Search for supplier logo candidates via Netlify function */
-  async function searchLogo(name: string, email?: string | null): Promise<{ url: string; source: string; label: string; thumbnail?: string }[]> {
-    const resp = await fetch('/.netlify/functions/search-supplier-logo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email: email || undefined }),
-    })
-    if (!resp.ok) return []
-    const data = await resp.json()
-    return data.logos || []
-  }
-
-  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove, deactivate, removeWithProducts, searchLogo }
+  return { fournisseurs, actifs, loading, error, fetchAll, save, getById, remove, deactivate, removeWithProducts }
 })

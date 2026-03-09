@@ -13,7 +13,21 @@ import { generateCommandePdf } from '@/lib/pdf-commande'
 import { supabase } from '@/lib/supabase'
 import StockCoverageRow from './StockCoverageRow.vue'
 import type { StockCoverageInfo } from './StockCoverageRow.vue'
-import type { Commande, CommandeLigne, Mercuriale, Conditionnement } from '@/types/database'
+import type { Commande, CommandeLigne, Mercuriale, Conditionnement, Fournisseur } from '@/types/database'
+
+/** Get logo URL from fournisseur's site_web via Clearbit */
+function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): string | null {
+  const site = f?.site_web
+  if (!site) return null
+  try {
+    const url = site.includes('://') ? site : `https://${site}`
+    const domain = new URL(url).hostname.replace(/^www\./, '')
+    if (!domain || !domain.includes('.')) return null
+    return `https://logo.clearbit.com/${domain}`
+  } catch {
+    return null
+  }
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -615,7 +629,7 @@ watch(selectedFournisseurId, async (newId) => {
           class="fournisseur-btn"
           @click="selectedFournisseurId = f.id"
         >
-          <div v-if="f.logo_url" class="f-logo"><img :src="f.logo_url" :alt="f.nom" @error="($event.target as HTMLImageElement).style.display='none'" /></div>
+          <div v-if="getLogoUrl(f)" class="f-logo"><img :src="getLogoUrl(f)!" :alt="f.nom" @error="($event.target as HTMLImageElement).style.display='none'" /></div>
           <div v-else class="f-logo f-logo-placeholder">{{ f.nom.charAt(0).toUpperCase() }}</div>
           <span class="f-name">{{ f.nom }}</span>
           <span v-if="f.franco_minimum > 0" class="f-franco">Franco {{ f.franco_minimum }} &#x20AC;</span>
@@ -627,7 +641,7 @@ watch(selectedFournisseurId, async (newId) => {
     <div v-else-if="selectedFournisseurId" class="order-form">
       <!-- Fournisseur info bar -->
       <div class="info-bar">
-        <div v-if="fournisseur?.logo_url" class="info-logo"><img :src="fournisseur.logo_url" :alt="fournisseur.nom" @error="($event.target as HTMLImageElement).style.display='none'" /></div>
+        <div v-if="getLogoUrl(fournisseur)" class="info-logo"><img :src="getLogoUrl(fournisseur)!" :alt="fournisseur?.nom ?? ''" @error="($event.target as HTMLImageElement).style.display='none'" /></div>
         <span class="info-fournisseur">{{ fournisseur?.nom }}</span>
         <div class="info-meta">
           <label>Livraison pr&eacute;vue :
