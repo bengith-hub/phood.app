@@ -354,7 +354,7 @@ onMounted(() => store.fetchAll())
       >
         <div class="card-header">
           <div v-if="f.logo_url" class="card-logo">
-            <img :src="f.logo_url" :alt="f.nom" />
+            <img :src="f.logo_url" :alt="f.nom" @error="($event.target as HTMLImageElement).style.display='none'" />
           </div>
           <div v-else class="card-logo card-logo-placeholder">
             {{ f.nom.charAt(0).toUpperCase() }}
@@ -409,7 +409,7 @@ onMounted(() => store.fetchAll())
             <!-- Logo + Nom -->
             <div class="field full logo-nom-row">
               <div v-if="editingFournisseur.logo_url" class="editor-logo">
-                <img :src="editingFournisseur.logo_url" :alt="editingFournisseur.nom || ''" />
+                <img :src="editingFournisseur.logo_url" :alt="editingFournisseur.nom || ''" @error="editingFournisseur.logo_url = ''" />
               </div>
               <div v-else class="editor-logo editor-logo-placeholder">
                 {{ (editingFournisseur.nom || '?').charAt(0).toUpperCase() }}
@@ -423,7 +423,7 @@ onMounted(() => store.fetchAll())
             <div class="field full">
               <label>Logo</label>
               <div class="logo-url-row">
-                <input v-model="editingFournisseur.logo_url" type="url" placeholder="https://..." style="flex:1" />
+                <input v-model="editingFournisseur.logo_url" type="text" placeholder="https://..." style="flex:1" />
                 <button
                   type="button"
                   class="btn-search-logo"
@@ -441,7 +441,7 @@ onMounted(() => store.fetchAll())
                   class="logo-result-item"
                   @click="selectLogo(logo.url)"
                 >
-                  <img :src="logo.thumbnail || logo.url" :alt="logo.label" />
+                  <img :src="logo.thumbnail || logo.url" :alt="logo.label" @error="($event.target as HTMLImageElement).parentElement!.style.display='none'" />
                   <span class="logo-result-label">{{ logo.label }}</span>
                 </div>
               </div>

@@ -615,7 +615,7 @@ watch(selectedFournisseurId, async (newId) => {
           class="fournisseur-btn"
           @click="selectedFournisseurId = f.id"
         >
-          <div v-if="f.logo_url" class="f-logo"><img :src="f.logo_url" :alt="f.nom" /></div>
+          <div v-if="f.logo_url" class="f-logo"><img :src="f.logo_url" :alt="f.nom" @error="($event.target as HTMLImageElement).style.display='none'" /></div>
           <div v-else class="f-logo f-logo-placeholder">{{ f.nom.charAt(0).toUpperCase() }}</div>
           <span class="f-name">{{ f.nom }}</span>
           <span v-if="f.franco_minimum > 0" class="f-franco">Franco {{ f.franco_minimum }} &#x20AC;</span>
@@ -627,7 +627,7 @@ watch(selectedFournisseurId, async (newId) => {
     <div v-else-if="selectedFournisseurId" class="order-form">
       <!-- Fournisseur info bar -->
       <div class="info-bar">
-        <div v-if="fournisseur?.logo_url" class="info-logo"><img :src="fournisseur.logo_url" :alt="fournisseur.nom" /></div>
+        <div v-if="fournisseur?.logo_url" class="info-logo"><img :src="fournisseur.logo_url" :alt="fournisseur.nom" @error="($event.target as HTMLImageElement).style.display='none'" /></div>
         <span class="info-fournisseur">{{ fournisseur?.nom }}</span>
         <div class="info-meta">
           <label>Livraison pr&eacute;vue :
