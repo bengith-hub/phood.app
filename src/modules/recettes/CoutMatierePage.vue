@@ -62,45 +62,53 @@ function getMercurialesByIngredient(ingredientId: string): Mercuriale[] {
   return mercurialeStore.actifs.filter(m => m.ingredient_restaurant_id === ingredientId)
 }
 
-/** Convert conditionnement quantity to stock units (e.g. kg→g, L→mL) */
-function toStockUnits(qty: number, condUnite: string, stockUnite: string): number {
-  if (condUnite === stockUnite) return qty
-  const key = `${condUnite}→${stockUnite}`
+/** Weight/volume stock units where prix_unitaire_ht is per base unit (kg or L) */
+const WEIGHT_UNITS = new Set(['g', 'kg'])
+const VOLUME_UNITS = new Set(['mL', 'cl', 'L'])
+
+/** Conversion factor from base unit (kg/L) to stock unit */
+function baseToStockFactor(stockUnite: string): number {
   const factors: Record<string, number> = {
-    'kg→g': 1000, 'g→kg': 0.001,
-    'L→mL': 1000, 'L→cl': 100,
-    'mL→L': 0.001, 'mL→cl': 0.1,
-    'cl→mL': 10, 'cl→L': 0.01,
+    'g': 1000, 'kg': 1,       // prix is per kg
+    'mL': 1000, 'cl': 100, 'L': 1, // prix is per L
   }
-  return qty * (factors[key] ?? 1)
+  return factors[stockUnite] ?? 1
+}
+
+function getCondLabel(merc: Mercuriale): string {
+  const cond = merc.conditionnements?.find(c => c.utilise_commande)
+  if (cond) {
+    return `${cond.nom} × ${cond.quantite} ${cond.unite}`
+  }
+  if (merc.coefficient_conversion > 1) {
+    return `× ${merc.coefficient_conversion}`
+  }
+  return ''
 }
 
 function normalizePrice(merc: Mercuriale): number {
-  // prix_unitaire_ht = price for the ordering conditionnement.
-  // Use the conditionnement marked as utilise_commande, converting its
-  // quantity to stock units (e.g. 2.5 kg → 2500 g).
-  const condCommande = merc.conditionnements?.find(c => c.utilise_commande)
-  let divisor: number
+  // Convention: prix_unitaire_ht is ALWAYS per base unit:
+  //   - per kg for weight products (stock in g/kg)
+  //   - per L for volume products (stock in mL/cl/L)
+  //   - per ordering pack for count products (stock in unite/piece/botte)
+  const su = merc.unite_stock
 
-  if (condCommande && condCommande.quantite > 0) {
-    divisor = toStockUnits(condCommande.quantite, condCommande.unite, merc.unite_stock)
-  } else {
-    // Fallback: coefficient_conversion (may be in wrong unit but best we have)
-    divisor = merc.coefficient_conversion
+  if (WEIGHT_UNITS.has(su) || VOLUME_UNITS.has(su)) {
+    // Just convert from base unit (kg/L) to stock unit
+    const factor = baseToStockFactor(su)
+    return factor > 0 ? merc.prix_unitaire_ht / factor : merc.prix_unitaire_ht
   }
+
+  // Count products: prix is per ordering pack → divide by coeff for per-piece
+  const condCommande = merc.conditionnements?.find(c => c.utilise_commande)
+  const divisor = (condCommande && condCommande.quantite > 0)
+    ? condCommande.quantite
+    : merc.coefficient_conversion
 
   if (divisor > 0) {
     return merc.prix_unitaire_ht / divisor
   }
   return merc.prix_unitaire_ht
-}
-
-/** Label describing the ordering conditionnement (for display) */
-function getCondLabel(merc: Mercuriale): string {
-  const cond = merc.conditionnements?.find(c => c.utilise_commande)
-  if (cond) return `${cond.nom || cond.unite} × ${cond.quantite}`
-  if (merc.coefficient_conversion > 1) return `× ${merc.coefficient_conversion}`
-  return ''
 }
 
 const rows = computed<IngredientCoutRow[]>(() => {
