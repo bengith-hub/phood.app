@@ -113,8 +113,9 @@ exports.handler = async function (event) {
         .replace(/[ôö]/g, 'o')
         .replace(/[îï]/g, 'i')
         .replace(/[ç]/g, 'c')
-        .replace(/[-_.']/g, ' ')
-        .replace(/\b(sarl|sas|sa|eurl|srl|scp)\b/g, '')
+        .replace(/[-_.'&]/g, ' ')
+        .replace(/\b(sarl|sas|sa|eurl|srl|scp|operations|distribution|france|store|group|groupe)\b/g, '')
+        .replace(/\s+/g, ' ')
         .trim();
     };
 
@@ -147,7 +148,7 @@ exports.handler = async function (event) {
         const plNorm = normalize(pl.name);
         const score = nameSimilarity(fNorm, plNorm);
 
-        if (score > bestScore && score >= 0.6) {
+        if (score > bestScore && score >= 0.35) {
           bestScore = score;
           bestMatch = pl;
         }
@@ -274,30 +275,59 @@ function addMatch(results, fournisseur, plSupplier, matchType) {
   });
 }
 
-/** Simple name similarity score (Jaccard on word tokens) */
+/**
+ * Name similarity score combining Jaccard + containment bonus.
+ * "Transgourmet" vs "TRANSGOURMET OPERATIONS" → high score (containment)
+ * "TT Foods" vs "T & T FOODS" → handled via substring matching
+ */
 function nameSimilarity(a, b) {
   if (a === b) return 1;
   if (!a || !b) return 0;
 
+  // Direct substring: one name fully contains the other
+  if (a.includes(b) || b.includes(a)) return 0.9;
+
   const wordsA = new Set(a.split(/\s+/).filter(w => w.length > 1));
   const wordsB = new Set(b.split(/\s+/).filter(w => w.length > 1));
 
-  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  if (wordsA.size === 0 || wordsB.size === 0) {
+    // Fallback: compare without word-length filter (handles "T T" etc.)
+    const allA = a.split(/\s+/).filter(Boolean);
+    const allB = b.split(/\s+/).filter(Boolean);
+    if (allA.length === 0 || allB.length === 0) return 0;
+    const setA = new Set(allA);
+    let hits = 0;
+    for (const w of allB) { if (setA.has(w)) hits++; }
+    return hits / Math.max(setA.size, allB.length);
+  }
 
+  // Containment: all words of the shorter set found in the longer one
+  const [smaller, larger] = wordsA.size <= wordsB.size ? [wordsA, wordsB] : [wordsB, wordsA];
+  let contained = 0;
+  for (const w of smaller) {
+    if (larger.has(w)) contained++;
+    else {
+      for (const wl of larger) {
+        if (wl.includes(w) || w.includes(wl)) { contained += 0.8; break; }
+      }
+    }
+  }
+  // If all words of the short name are in the long name → strong match
+  if (contained >= smaller.size * 0.9) {
+    return 0.7 + 0.2 * (contained / smaller.size);
+  }
+
+  // Standard Jaccard
   let intersection = 0;
   for (const w of wordsA) {
     if (wordsB.has(w)) intersection++;
-    // Also check if any word in B contains this word or vice versa
     else {
       for (const wb of wordsB) {
-        if (wb.includes(w) || w.includes(wb)) {
-          intersection += 0.7;
-          break;
-        }
+        if (wb.includes(w) || w.includes(wb)) { intersection += 0.7; break; }
       }
     }
   }
 
   const union = wordsA.size + wordsB.size - intersection;
-  return intersection / union;
+  return union > 0 ? intersection / union : 0;
 }
