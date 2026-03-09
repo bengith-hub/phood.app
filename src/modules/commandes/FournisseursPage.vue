@@ -14,6 +14,7 @@ const showEditor = ref(false)
 const editingFournisseur = ref<Partial<Fournisseur> | null>(null)
 
 const JOURS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
+const JOURS_COURTS = ['D', 'L', 'Ma', 'Me', 'J', 'V', 'S']
 
 const filtered = computed(() => {
   const q = search.value.toLowerCase()
@@ -35,11 +36,31 @@ function openEditor(fournisseur?: Fournisseur) {
         telephone: '',
         jours_commande: [],
         jours_livraison: [],
+        delai_commande_livraison: {},
+        heure_limite_commande: null,
+        duree_couverture_defaut: 5,
         franco_minimum: 0,
         mode_envoi: 'email',
         actif: true,
       }
   showEditor.value = true
+}
+
+/** Toggle a delivery day on/off and clean up delays */
+function toggleLivraisonDay(idx: number) {
+  if (!editingFournisseur.value) return
+  const current = editingFournisseur.value.jours_livraison || []
+  if (current.includes(idx)) {
+    editingFournisseur.value.jours_livraison = current.filter((j: number) => j !== idx)
+    // Remove delay entry for this day
+    const delais = { ...(editingFournisseur.value.delai_commande_livraison as Record<string, number> || {}) }
+    delete delais[String(idx)]
+    editingFournisseur.value.delai_commande_livraison = delais
+  } else {
+    editingFournisseur.value.jours_livraison = [...current, idx]
+    // Set default delay = 1
+    setDelai(idx, 1)
+  }
 }
 
 function closeEditor() {
@@ -50,19 +71,66 @@ function closeEditor() {
 async function handleSave() {
   if (!editingFournisseur.value) return
   try {
+    // Auto-compute jours_commande from delivery days + delays
+    const livDays = editingFournisseur.value.jours_livraison || []
+    const delais = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
+    const orderDays = new Set<number>()
+    for (const d of livDays) {
+      const delai = delais[String(d)] ?? 1
+      orderDays.add(getJourCommande(d, delai))
+    }
+    editingFournisseur.value.jours_commande = [...orderDays]
+
     await store.save(editingFournisseur.value)
     closeEditor()
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : 'Erreur de sauvegarde')
+    const err = e as Record<string, unknown>
+    alert((err?.message as string) || 'Erreur de sauvegarde')
   }
-}
-
-function formatJours(jours: number[]) {
-  return jours.map(j => JOURS[j]).join(', ') || '—'
 }
 
 function formatFranco(montant: number) {
   return montant > 0 ? `${montant.toFixed(0)} €` : 'Aucun'
+}
+
+/** Get the delay in days for a specific delivery day */
+function getDelai(deliveryDay: number): number {
+  const delais = editingFournisseur.value?.delai_commande_livraison as Record<string, number> | null
+  return delais?.[String(deliveryDay)] ?? 1
+}
+
+/** Set the delay for a specific delivery day */
+function setDelai(deliveryDay: number, days: number) {
+  if (!editingFournisseur.value) return
+  const current = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
+  editingFournisseur.value.delai_commande_livraison = {
+    ...current,
+    [String(deliveryDay)]: Math.max(1, days),
+  }
+}
+
+/** Calculate order day from delivery day - delay */
+function getJourCommande(deliveryDay: number, delai: number): number {
+  // deliveryDay - delai, wrapping around week
+  return ((deliveryDay - (delai % 7)) + 7) % 7
+}
+
+/** Get sorted delivery days for the editing fournisseur */
+function sortedLivraisonDays(): number[] {
+  const jours = editingFournisseur.value?.jours_livraison || []
+  return [...jours].sort((a, b) => ((a || 7) - (b || 7)))
+}
+
+/** Format delivery schedule summary for card display */
+function formatSchedule(f: Fournisseur): string {
+  if (!f.jours_livraison || f.jours_livraison.length === 0) return '—'
+  const delais = (f.delai_commande_livraison || {}) as Record<string, number>
+  const sorted = [...f.jours_livraison].sort((a, b) => ((a || 7) - (b || 7)))
+  return sorted.map(d => {
+    const delai = delais[String(d)] ?? 1
+    const orderDay = getJourCommande(d, delai)
+    return `Cmd ${JOURS_COURTS[orderDay]} → Liv ${JOURS_COURTS[d]}`
+  }).join(' | ')
 }
 
 async function handleDelete() {
@@ -168,13 +236,13 @@ onMounted(() => store.fetchAll())
             <span class="detail-label">Tél</span>
             <span>{{ f.telephone }}</span>
           </div>
-          <div class="detail">
-            <span class="detail-label">Commande</span>
-            <span>{{ formatJours(f.jours_commande) }}</span>
+          <div class="detail schedule-detail">
+            <span class="detail-label">Planning</span>
+            <span>{{ formatSchedule(f) }}</span>
           </div>
-          <div class="detail">
-            <span class="detail-label">Livraison</span>
-            <span>{{ formatJours(f.jours_livraison) }}</span>
+          <div v-if="f.heure_limite_commande" class="detail">
+            <span class="detail-label">Heure limite</span>
+            <span>{{ f.heure_limite_commande }}</span>
           </div>
         </div>
         <button
@@ -242,26 +310,6 @@ onMounted(() => store.fetchAll())
             </div>
 
             <div class="field full">
-              <label>Jours de commande</label>
-              <div class="day-toggles">
-                <button
-                  v-for="(jour, idx) in JOURS"
-                  :key="idx"
-                  type="button"
-                  class="day-btn"
-                  :class="{ selected: editingFournisseur.jours_commande?.includes(idx) }"
-                  @click="
-                    editingFournisseur.jours_commande = editingFournisseur.jours_commande?.includes(idx)
-                      ? editingFournisseur.jours_commande.filter((j: number) => j !== idx)
-                      : [...(editingFournisseur.jours_commande || []), idx]
-                  "
-                >
-                  {{ jour }}
-                </button>
-              </div>
-            </div>
-
-            <div class="field full">
               <label>Jours de livraison</label>
               <div class="day-toggles">
                 <button
@@ -270,14 +318,30 @@ onMounted(() => store.fetchAll())
                   type="button"
                   class="day-btn"
                   :class="{ selected: editingFournisseur.jours_livraison?.includes(idx) }"
-                  @click="
-                    editingFournisseur.jours_livraison = editingFournisseur.jours_livraison?.includes(idx)
-                      ? editingFournisseur.jours_livraison.filter((j: number) => j !== idx)
-                      : [...(editingFournisseur.jours_livraison || []), idx]
-                  "
+                  @click="toggleLivraisonDay(idx)"
                 >
                   {{ jour }}
                 </button>
+              </div>
+            </div>
+
+            <div v-if="editingFournisseur.jours_livraison?.length" class="field full">
+              <label>Planning commande → livraison</label>
+              <div class="delivery-schedule">
+                <div v-for="day in sortedLivraisonDays()" :key="day" class="schedule-row">
+                  <span class="schedule-cmd">
+                    Cmd <strong>{{ JOURS[getJourCommande(day, getDelai(day))] }}</strong>
+                  </span>
+                  <span class="schedule-arrow">→</span>
+                  <span class="schedule-liv">
+                    Liv <strong>{{ JOURS[day] }}</strong>
+                  </span>
+                  <div class="schedule-delay">
+                    <button type="button" class="delay-btn" @click="setDelai(day, getDelai(day) - 1)" :disabled="getDelai(day) <= 1">−</button>
+                    <span class="delay-value">J-{{ getDelai(day) }}</span>
+                    <button type="button" class="delay-btn" @click="setDelai(day, getDelai(day) + 1)">+</button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -610,5 +674,99 @@ onMounted(() => store.fetchAll())
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
+}
+
+/* Delivery schedule editor */
+.delivery-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-main);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  flex-wrap: wrap;
+}
+
+.schedule-cmd {
+  font-size: 16px;
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+.schedule-cmd strong {
+  color: var(--color-primary);
+}
+
+.schedule-arrow {
+  font-size: 18px;
+  color: var(--text-tertiary);
+}
+
+.schedule-liv {
+  font-size: 16px;
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+.schedule-liv strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.schedule-delay {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.delay-btn {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+}
+
+.delay-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.delay-btn:active:not(:disabled) {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.delay-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 36px;
+  text-align: center;
+}
+
+.schedule-detail {
+  flex-wrap: wrap;
+}
+
+.schedule-detail span:last-child {
+  font-size: 14px;
+  line-height: 1.4;
 }
 </style>

@@ -126,5 +126,51 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     await fetchAll()
   }
 
-  return { items, actifs, allCategories, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, deleteItem }
+  /** Search product photos via web scraping */
+  async function searchPhotos(query: string): Promise<{ url: string; thumbnail: string; title: string }[]> {
+    const res = await fetch('/.netlify/functions/search-product-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error || 'Erreur recherche photo')
+    }
+    const data = await res.json()
+    return data.images || []
+  }
+
+  /** Download an image from URL, compress it, and upload to Supabase storage */
+  async function uploadPhotoFromUrl(mercurialeId: string, imageUrl: string): Promise<string> {
+    // Fetch the image client-side
+    const resp = await fetch(imageUrl)
+    if (!resp.ok) throw new Error('Impossible de télécharger l\'image')
+    const blob = await resp.blob()
+
+    // Convert to File for compression
+    const file = new File([blob], 'photo.jpg', { type: blob.type || 'image/jpeg' })
+    const compressed = await compressImage(file, 1024, 0.75)
+    const base64 = await blobToBase64(compressed)
+    const path = `mercuriale/${mercurialeId}_${Date.now()}.jpg`
+
+    const res = await fetch('/.netlify/functions/upload-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: base64,
+        bucket: 'ingredients-photos',
+        path,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error || 'Erreur upload photo')
+    }
+    const { url: photoUrl } = await res.json()
+    await save({ id: mercurialeId, photo_url: photoUrl } as Partial<Mercuriale> & { id: string })
+    return photoUrl
+  }
+
+  return { items, actifs, allCategories, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, uploadPhotoFromUrl, searchPhotos, deleteItem }
 })

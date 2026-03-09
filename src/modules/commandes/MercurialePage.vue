@@ -25,6 +25,13 @@ const showEditor = ref(false)
 const editingProduct = ref<Partial<Mercuriale> | null>(null)
 const saving = ref(false)
 
+// Photo search
+const photoSearchResults = ref<{ url: string; thumbnail: string; title: string }[]>([])
+const photoSearching = ref(false)
+const photoSearchQuery = ref('')
+const showPhotoSearch = ref(false)
+const photoUploading = ref(false)
+
 // Initialize from route param
 watch(() => route.params.fournisseurId, (id) => {
   if (id) filterFournisseurId.value = id as string
@@ -174,6 +181,43 @@ function setConditionnementCommande(index: number) {
   if (!conds) return
   for (let i = 0; i < conds.length; i++) {
     conds[i]!.utilise_commande = (i === index)
+  }
+}
+
+// Photo search functions
+function openPhotoSearch() {
+  photoSearchQuery.value = editingProduct.value?.designation || ''
+  photoSearchResults.value = []
+  showPhotoSearch.value = true
+}
+
+async function doPhotoSearch() {
+  if (!photoSearchQuery.value.trim()) return
+  photoSearching.value = true
+  photoSearchResults.value = []
+  try {
+    photoSearchResults.value = await mercurialeStore.searchPhotos(photoSearchQuery.value)
+  } catch (e: unknown) {
+    const err = e as Record<string, unknown>
+    alert((err?.message as string) || 'Erreur recherche photo')
+  } finally {
+    photoSearching.value = false
+  }
+}
+
+async function selectPhoto(imageUrl: string) {
+  if (!editingProduct.value?.id) return
+  photoUploading.value = true
+  try {
+    const newUrl = await mercurialeStore.uploadPhotoFromUrl(editingProduct.value.id, imageUrl)
+    editingProduct.value.photo_url = newUrl
+    showPhotoSearch.value = false
+    photoSearchResults.value = []
+  } catch (e: unknown) {
+    const err = e as Record<string, unknown>
+    alert((err?.message as string) || 'Erreur upload photo')
+  } finally {
+    photoUploading.value = false
   }
 }
 
@@ -369,6 +413,62 @@ onMounted(async () => {
             <div class="field">
               <label>Pertes (%)</label>
               <input v-model.number="editingProduct.pertes_pct" type="number" step="0.1" min="0" max="100" />
+            </div>
+
+            <!-- Photo -->
+            <div class="field full">
+              <label>Photo</label>
+              <div class="photo-section">
+                <div v-if="editingProduct.photo_url" class="photo-preview">
+                  <img :src="editingProduct.photo_url" alt="Photo produit" />
+                </div>
+                <div class="photo-actions">
+                  <button type="button" class="btn-photo-search" @click="openPhotoSearch">
+                    Chercher une photo
+                  </button>
+                </div>
+              </div>
+
+              <!-- Photo search panel -->
+              <div v-if="showPhotoSearch" class="photo-search-panel">
+                <div class="photo-search-bar">
+                  <input
+                    v-model="photoSearchQuery"
+                    type="text"
+                    placeholder="Nom du produit..."
+                    class="photo-search-input"
+                    @keyup.enter="doPhotoSearch"
+                  />
+                  <button
+                    type="button"
+                    class="btn-primary btn-sm"
+                    :disabled="photoSearching || !photoSearchQuery.trim()"
+                    @click="doPhotoSearch"
+                  >
+                    {{ photoSearching ? 'Recherche...' : 'Rechercher' }}
+                  </button>
+                  <button type="button" class="btn-close-sm" @click="showPhotoSearch = false">&times;</button>
+                </div>
+
+                <div v-if="photoSearching" class="photo-search-loading">Recherche en cours...</div>
+
+                <div v-else-if="photoSearchResults.length > 0" class="photo-results-grid">
+                  <button
+                    v-for="(img, i) in photoSearchResults"
+                    :key="i"
+                    type="button"
+                    class="photo-result"
+                    :disabled="photoUploading"
+                    @click="selectPhoto(img.url)"
+                  >
+                    <img :src="img.thumbnail" :alt="img.title" loading="lazy" />
+                  </button>
+                </div>
+
+                <div v-if="photoUploading" class="photo-uploading-overlay">
+                  T&eacute;l&eacute;chargement en cours...
+                </div>
+              </div>
             </div>
 
             <!-- Notes -->
@@ -758,5 +858,155 @@ h1 {
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Photo search */
+.photo-section {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.photo-preview {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+}
+
+.photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-photo-search {
+  height: 44px;
+  padding: 0 16px;
+  background: var(--bg-main);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.btn-photo-search:active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.photo-search-panel {
+  margin-top: 12px;
+  background: var(--bg-main);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  position: relative;
+}
+
+.photo-search-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.photo-search-input {
+  flex: 1;
+  height: 44px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  font-size: 15px;
+  background: var(--bg-surface);
+}
+
+.photo-search-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.btn-sm {
+  height: 44px !important;
+  padding: 0 16px !important;
+  font-size: 14px !important;
+}
+
+.btn-close-sm {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  font-size: 22px;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-search-loading {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+.photo-results-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.photo-result {
+  aspect-ratio: 1;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  padding: 0;
+  background: white;
+  transition: border-color 0.15s;
+}
+
+.photo-result:active,
+.photo-result:hover {
+  border-color: var(--color-primary);
+}
+
+.photo-result:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.photo-result img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-uploading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  color: var(--color-primary);
+  font-size: 15px;
 }
 </style>
