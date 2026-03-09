@@ -151,6 +151,19 @@ function onLogoError(e: Event) {
   img.parentElement?.classList.add('editor-logo-placeholder')
 }
 
+/** When logo loads, check if it's actually a useful icon (not blank/tiny) */
+function onCardLogoLoad(e: Event) {
+  const img = e.target as HTMLImageElement
+  // icon.horse returns 1x1 or very small images for unknown domains
+  if (img.naturalWidth <= 1 || img.naturalHeight <= 1) {
+    img.parentElement?.classList.add('logo-failed')
+  }
+}
+
+function onCardLogoError(e: Event) {
+  (e.target as HTMLImageElement).parentElement?.classList.add('logo-failed')
+}
+
 /** Toggle a delivery day on/off and clean up delays */
 function toggleLivraisonDay(idx: number) {
   if (!editingFournisseur.value) return
@@ -391,7 +404,7 @@ onMounted(() => store.fetchAll())
       >
         <div class="card-header">
           <div v-if="getLogoUrl(f)" class="card-logo">
-            <img :src="getLogoUrl(f)!" :alt="f.nom" @error="($event.target as HTMLImageElement).parentElement!.classList.add('logo-failed')" />
+            <img :src="getLogoUrl(f)!" :alt="f.nom" @load="onCardLogoLoad" @error="onCardLogoError" />
             <span class="card-logo-fallback">{{ f.nom.charAt(0).toUpperCase() }}</span>
           </div>
           <div v-else class="card-logo card-logo-placeholder">
@@ -1154,11 +1167,11 @@ onMounted(() => store.fetchAll())
   justify-content: center;
   width: 100%;
   height: 100%;
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--color-primary);
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
+  font-size: 20px;
+  font-weight: 800;
+  color: white;
+  background: var(--color-primary);
+  border-radius: 10px;
 }
 
 /* Email chip input */
