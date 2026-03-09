@@ -73,12 +73,12 @@ function handleNavClick(item: { name: string; route: string }) {
     return
   }
   showPlusMenu.value = false
-  router.push(item.route)
+  router.push(item.route).catch((err: unknown) => console.warn('Nav error:', err))
 }
 
 function handlePlusItemClick(item: { route: string }) {
   showPlusMenu.value = false
-  router.push(item.route)
+  router.push(item.route).catch((err: unknown) => console.warn('Nav error:', err))
 }
 
 async function handleSignOut() {

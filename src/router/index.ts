@@ -153,24 +153,31 @@ const router = createRouter({
   ],
 })
 
-// Auth guard
+// Auth guard — all async calls wrapped in try-catch to prevent
+// unhandled rejections from freezing the Vue router
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
 
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) return { name: 'login' }
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return { name: 'login' }
 
-  // Role-based guard (admin-only pages)
-  if (to.meta.requiresAdmin) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', session.user.id)
-      .single()
-    if (profile?.role !== 'admin') return { name: 'dashboard' }
+    // Role-based guard (admin-only pages)
+    if (to.meta.requiresAdmin) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
+      if (profile?.role !== 'admin') return { name: 'dashboard' }
+    }
+
+    return true
+  } catch (err) {
+    console.error('Auth guard error:', err)
+    // On error, allow navigation rather than freezing the app
+    return true
   }
-
-  return true
 })
 
 export default router
