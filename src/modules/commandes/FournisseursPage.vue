@@ -915,9 +915,12 @@ onMounted(() => store.fetchAll())
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 24px;
-  padding-top: 20px;
+  padding: 16px 24px;
   border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 .modal-actions .spacer {
   flex: 1;

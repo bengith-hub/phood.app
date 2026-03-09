@@ -41,16 +41,25 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
 
   async function save(fournisseur: Partial<Fournisseur> & { id?: string }) {
     if (fournisseur.id) {
-      const { error: err } = await supabase
+      const { data, error: err } = await supabase
         .from('fournisseurs')
         .update(fournisseur)
         .eq('id', fournisseur.id)
+        .select('id')
       if (err) throw err
+      // Detect silent RLS failure: update returns empty array = no rows affected
+      if (!data || data.length === 0) {
+        throw new Error('Sauvegarde refusée — vérifiez que vous êtes bien connecté en tant qu\'admin.')
+      }
     } else {
-      const { error: err } = await supabase
+      const { data, error: err } = await supabase
         .from('fournisseurs')
         .insert(fournisseur)
+        .select('id')
       if (err) throw err
+      if (!data || data.length === 0) {
+        throw new Error('Création refusée — vérifiez que vous êtes bien connecté en tant qu\'admin.')
+      }
     }
     await fetchAll()
   }
