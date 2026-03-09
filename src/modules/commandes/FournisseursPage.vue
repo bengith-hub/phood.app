@@ -141,6 +141,13 @@ function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): s
   }
 }
 
+/** When Clearbit logo fails, hide img and show fallback letter */
+function onLogoError(e: Event) {
+  const img = e.target as HTMLImageElement
+  img.style.display = 'none'
+  img.parentElement?.classList.add('editor-logo-placeholder')
+}
+
 /** Toggle a delivery day on/off and clean up delays */
 function toggleLivraisonDay(idx: number) {
   if (!editingFournisseur.value) return
@@ -165,14 +172,14 @@ function closeEditor() {
 
 async function handleSave() {
   if (!editingFournisseur.value) return
+  if (!editingFournisseur.value.nom?.trim()) {
+    alert('Le nom est obligatoire')
+    return
+  }
   try {
     // Flush any pending email input
     if (emailInput.value.trim()) addEmail('to')
     if (emailBccInput.value.trim()) addEmail('bcc')
-
-    // Write email chips back to string fields
-    editingFournisseur.value.email_commande = joinEmails(emailChips.value) || null
-    editingFournisseur.value.email_commande_bcc = joinEmails(emailBccChips.value) || null
 
     // Auto-compute jours_commande from delivery days + delays
     const livDays = editingFournisseur.value.jours_livraison || []
@@ -182,9 +189,35 @@ async function handleSave() {
       const delai = delais[String(d)] ?? 1
       orderDays.add(getJourCommande(d, delai))
     }
-    editingFournisseur.value.jours_commande = [...orderDays]
 
-    await store.save(editingFournisseur.value)
+    // Build clean payload — only known DB columns
+    const payload: Partial<Fournisseur> = {
+      nom: editingFournisseur.value.nom,
+      contact_nom: editingFournisseur.value.contact_nom || null,
+      email_commande: joinEmails(emailChips.value) || null,
+      email_commande_bcc: joinEmails(emailBccChips.value) || null,
+      telephone: editingFournisseur.value.telephone || null,
+      site_web: editingFournisseur.value.site_web || null,
+      siret: editingFournisseur.value.siret || null,
+      jours_commande: [...orderDays],
+      jours_livraison: livDays,
+      delai_commande_livraison: editingFournisseur.value.delai_commande_livraison || null,
+      heure_limite_commande: editingFournisseur.value.heure_limite_commande || null,
+      creneau_livraison: editingFournisseur.value.creneau_livraison || null,
+      franco_minimum: editingFournisseur.value.franco_minimum ?? 0,
+      duree_couverture_defaut: editingFournisseur.value.duree_couverture_defaut ?? 5,
+      conditions_paiement: editingFournisseur.value.conditions_paiement || null,
+      mode_envoi: editingFournisseur.value.mode_envoi || 'email',
+      adresse: editingFournisseur.value.adresse || null,
+      pennylane_supplier_id: editingFournisseur.value.pennylane_supplier_id || null,
+      notes: editingFournisseur.value.notes || null,
+      actif: editingFournisseur.value.actif ?? true,
+    }
+    if (editingFournisseur.value.id) {
+      payload.id = editingFournisseur.value.id
+    }
+
+    await store.save(payload)
     closeEditor()
   } catch (e: unknown) {
     const err = e as Record<string, unknown>
@@ -392,15 +425,18 @@ onMounted(() => store.fetchAll())
           <button class="btn-close" @click="closeEditor">✕</button>
         </div>
 
-        <form @submit.prevent="handleSave" class="modal-body">
+        <div class="modal-body">
           <div class="form-grid">
             <!-- Logo + Nom -->
             <div class="field full logo-nom-row">
-              <div v-if="getLogoUrl(editingFournisseur)" class="editor-logo">
-                <img :src="getLogoUrl(editingFournisseur)!" :alt="editingFournisseur.nom || ''" @error="($event.target as HTMLImageElement).style.display='none'" />
-              </div>
-              <div v-else class="editor-logo editor-logo-placeholder">
-                {{ (editingFournisseur.nom || '?').charAt(0).toUpperCase() }}
+              <div class="editor-logo" :class="{ 'editor-logo-placeholder': !getLogoUrl(editingFournisseur) }">
+                <img
+                  v-if="getLogoUrl(editingFournisseur)"
+                  :src="getLogoUrl(editingFournisseur)!"
+                  :alt="editingFournisseur.nom || ''"
+                  @error="onLogoError"
+                />
+                <span class="logo-letter">{{ (editingFournisseur.nom || '?').charAt(0).toUpperCase() }}</span>
               </div>
               <div class="field" style="flex:1">
                 <label>Nom *</label>
@@ -560,9 +596,9 @@ onMounted(() => store.fetchAll())
             </button>
             <span class="spacer" />
             <button type="button" class="btn-secondary" @click="closeEditor">Annuler</button>
-            <button type="submit" class="btn-primary">Enregistrer</button>
+            <button type="button" class="btn-primary" @click="handleSave">Enregistrer</button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   </div>
@@ -1014,6 +1050,13 @@ onMounted(() => store.fetchAll())
   font-size: 28px;
   font-weight: 800;
   border: none;
+}
+
+.editor-logo .logo-letter {
+  display: none;
+}
+.editor-logo-placeholder .logo-letter {
+  display: flex;
 }
 
 .badge-s1 {
