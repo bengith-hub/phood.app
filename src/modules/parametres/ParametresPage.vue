@@ -13,7 +13,7 @@ const profiles = ref<Profile[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const saveMsg = ref('')
-const activeTab = ref<'general' | 'zones' | 'users' | 'calendriers' | 'zelty'>('general')
+const activeTab = ref<'general' | 'zones' | 'users' | 'calendriers' | 'zelty' | 'pennylane'>('general')
 
 // Calendar sync
 const calSyncStatus = ref('')
@@ -201,6 +201,67 @@ async function startPhotoSync() {
   }
 }
 
+// ── PennyLane ────────────────────────────────────────────────────────
+interface PLMatch {
+  fournisseur_id: string
+  fournisseur_nom: string
+  pennylane_name: string
+  pennylane_id: string
+  match_type: string
+  enrichment: Record<string, string>
+  status: string
+  error?: string
+}
+
+const plEnrichStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
+const plEnrichMsg = ref('')
+const plMatches = ref<PLMatch[]>([])
+const plUnmatchedPL = ref<{ name: string }[]>([])
+const plUnmatchedF = ref<{ nom: string }[]>([])
+const plAutoApply = ref(false)
+
+async function startPLEnrich() {
+  plEnrichStatus.value = 'running'
+  plEnrichMsg.value = 'Récupération des fournisseurs PennyLane...'
+  plMatches.value = []
+  plUnmatchedPL.value = []
+  plUnmatchedF.value = []
+
+  try {
+    const resp = await fetch('/.netlify/functions/enrich-suppliers-pennylane', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_apply: plAutoApply.value }),
+    })
+
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+      throw new Error(errData.error || `Erreur ${resp.status}`)
+    }
+
+    const r = await resp.json()
+    plMatches.value = r.matches || []
+    plUnmatchedPL.value = r.unmatched_pennylane || []
+    plUnmatchedF.value = r.unmatched_fournisseurs || []
+    plEnrichStatus.value = 'success'
+
+    const enrichable = plMatches.value.filter(m => Object.keys(m.enrichment).length > 0).length
+    const applied = r.applied || 0
+    plEnrichMsg.value = `${r.pennylane_suppliers_total} fournisseurs PennyLane, ${plMatches.value.length} correspondances trouvées, ${enrichable} enrichissables${applied > 0 ? `, ${applied} appliqués` : ''}`
+  } catch (e: unknown) {
+    plEnrichStatus.value = 'error'
+    plEnrichMsg.value = `Erreur : ${(e as Error).message || String(e)}`
+  }
+}
+
+const enrichmentLabels: Record<string, string> = {
+  pennylane_supplier_id: 'ID PennyLane',
+  siret: 'SIREN/SIRET',
+  adresse: 'Adresse',
+  telephone: 'Téléphone',
+  conditions_paiement: 'Conditions paiement',
+}
+
 function formatDate(iso: string | null) {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -233,6 +294,7 @@ function formatDuration(ms: number | null) {
             { key: 'users', label: 'Utilisateurs' },
             { key: 'calendriers', label: 'Calendriers' },
             { key: 'zelty', label: 'Zelty' },
+            { key: 'pennylane', label: 'PennyLane' },
           ]"
           :key="tab.key"
           class="tab"
@@ -353,6 +415,71 @@ function formatDuration(ms: number | null) {
           Synchroniser les calendriers
         </button>
         <p v-if="calSyncStatus" class="sync-status">{{ calSyncStatus }}</p>
+      </div>
+
+      <!-- PennyLane -->
+      <div v-if="activeTab === 'pennylane'" class="tab-content">
+        <div class="zelty-section">
+          <h3 class="section-title">Enrichissement fournisseurs</h3>
+          <p class="section-desc">
+            Récupère les informations fournisseurs depuis PennyLane (SIREN, adresse, téléphone, conditions de paiement)
+            et les croise avec vos fournisseurs par correspondance de nom.
+          </p>
+          <div class="backfill-form">
+            <label class="checkbox-inline">
+              <input type="checkbox" v-model="plAutoApply" />
+              Appliquer automatiquement les enrichissements (champs vides uniquement)
+            </label>
+            <button
+              class="btn-sync"
+              :disabled="plEnrichStatus === 'running'"
+              @click="startPLEnrich"
+            >
+              {{ plEnrichStatus === 'running' ? 'Enrichissement en cours...' : 'Lancer l\'enrichissement' }}
+            </button>
+          </div>
+          <p v-if="plEnrichMsg" class="backfill-msg" :class="plEnrichStatus">
+            {{ plEnrichMsg }}
+          </p>
+        </div>
+
+        <!-- Match results -->
+        <div v-if="plMatches.length > 0" class="zelty-section">
+          <h3 class="section-title">Correspondances trouvées</h3>
+          <div class="pl-matches">
+            <div v-for="m in plMatches" :key="m.fournisseur_id" class="pl-match-card" :class="{ applied: m.status === 'applied' }">
+              <div class="pl-match-header">
+                <strong>{{ m.fournisseur_nom }}</strong>
+                <span class="pl-match-arrow">↔</span>
+                <span class="pl-match-pl">{{ m.pennylane_name }}</span>
+                <span class="pl-match-type">{{ m.match_type }}</span>
+              </div>
+              <div v-if="Object.keys(m.enrichment).length > 0" class="pl-enrichments">
+                <div v-for="(val, key) in m.enrichment" :key="key" class="pl-enrichment-row">
+                  <span class="pl-enrich-label">{{ enrichmentLabels[key] || key }}</span>
+                  <span class="pl-enrich-value">{{ val }}</span>
+                </div>
+              </div>
+              <div v-else class="pl-complete">Déjà complet</div>
+              <span v-if="m.status === 'applied'" class="pl-badge-applied">Appliqué</span>
+              <span v-if="m.status === 'error'" class="pl-badge-error">Erreur</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Unmatched -->
+        <div v-if="plUnmatchedPL.length > 0" class="zelty-section">
+          <h3 class="section-title">Fournisseurs PennyLane non associés ({{ plUnmatchedPL.length }})</h3>
+          <div class="pl-unmatched-list">
+            <span v-for="u in plUnmatchedPL" :key="u.name" class="pl-unmatched-tag">{{ u.name }}</span>
+          </div>
+        </div>
+        <div v-if="plUnmatchedF.length > 0" class="zelty-section">
+          <h3 class="section-title">Fournisseurs PhoodApp sans PennyLane ({{ plUnmatchedF.length }})</h3>
+          <div class="pl-unmatched-list">
+            <span v-for="u in plUnmatchedF" :key="u.nom" class="pl-unmatched-tag pl-unmatched-local">{{ u.nom }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Zelty -->
@@ -887,5 +1014,125 @@ function formatDuration(ms: number | null) {
   text-overflow: ellipsis;
   color: var(--color-danger);
   font-size: 13px;
+}
+
+/* PennyLane */
+.pl-matches {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.pl-match-card {
+  background: var(--bg-main);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  position: relative;
+}
+
+.pl-match-card.applied {
+  border-left: 4px solid var(--color-success);
+}
+
+.pl-match-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pl-match-arrow {
+  color: var(--text-tertiary);
+  font-size: 16px;
+}
+
+.pl-match-pl {
+  color: var(--text-secondary);
+  font-size: 15px;
+}
+
+.pl-match-type {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 8px;
+  border-radius: 8px;
+  margin-left: auto;
+}
+
+.pl-enrichments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pl-enrichment-row {
+  display: flex;
+  gap: 6px;
+  font-size: 14px;
+  background: rgba(232, 93, 44, 0.06);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.pl-enrich-label {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.pl-enrich-value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.pl-complete {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.pl-badge-applied {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-success);
+  background: rgba(34, 197, 94, 0.1);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.pl-badge-error {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger);
+  background: rgba(239, 68, 68, 0.1);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.pl-unmatched-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pl-unmatched-tag {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-secondary);
+}
+
+.pl-unmatched-local {
+  background: rgba(232, 93, 44, 0.08);
+  color: var(--color-primary);
 }
 </style>
