@@ -130,10 +130,28 @@ exports.handler = async function (event) {
       }
     }
 
-    // Bulk upsert all collected rows to Supabase
-    if (allRows.length > 0) {
+    // Deduplicate by date (Zelty can return multiple closures per date)
+    const byDate = {};
+    for (const row of allRows) {
+      const existing = byDate[row.date];
+      if (existing) {
+        // Aggregate: sum CA and tickets, keep latest closure id
+        existing.ca_ttc += row.ca_ttc;
+        existing.nb_tickets += row.nb_tickets;
+        if (row.nb_couverts != null) {
+          existing.nb_couverts = (existing.nb_couverts || 0) + row.nb_couverts;
+        }
+        if (row.zelty_closure_id) existing.zelty_closure_id = row.zelty_closure_id;
+      } else {
+        byDate[row.date] = { ...row };
+      }
+    }
+    const uniqueRows = Object.values(byDate);
+
+    // Bulk upsert to Supabase (on_conflict=date for proper UPSERT)
+    if (uniqueRows.length > 0) {
       const upsertResp = await fetch(
-        `${SUPABASE_URL}/rest/v1/ventes_historique`,
+        `${SUPABASE_URL}/rest/v1/ventes_historique?on_conflict=date`,
         {
           method: 'POST',
           headers: {
@@ -142,14 +160,14 @@ exports.handler = async function (event) {
             'Authorization': `Bearer ${SUPABASE_KEY}`,
             'Prefer': 'resolution=merge-duplicates',
           },
-          body: JSON.stringify(allRows),
+          body: JSON.stringify(uniqueRows),
         }
       );
 
       if (upsertResp.ok) {
-        results.imported += allRows.length;
+        results.imported += uniqueRows.length;
       } else {
-        results.errors += allRows.length;
+        results.errors += uniqueRows.length;
         const errText = await upsertResp.text().catch(() => '');
         if (!results.first_error) results.first_error = `Supabase: ${errText.slice(0, 200)}`;
       }
