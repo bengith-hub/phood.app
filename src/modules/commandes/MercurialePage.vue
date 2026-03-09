@@ -129,7 +129,7 @@ function formatPrix(prix: number, unite: string, conditionnements?: Conditionnem
   const cmd = conditionnements?.find(c => c.utilise_commande)
   if (cmd && cmd.quantite > 1 && cmd.nom) {
     // Extraire le type: "Colis de 500pcs" → "colis", "carton de 5kg" → "carton"
-    const label = cmd.nom.split(/[\s_]/)[0].toLowerCase()
+    const label = (cmd.nom.split(/[\s_]/)[0] ?? '').toLowerCase()
     return `${prix.toFixed(2)} €/${label}`
   }
   return `${prix.toFixed(2)} €/${unite}`
