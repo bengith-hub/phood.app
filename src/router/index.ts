@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { hasValidSession, getCachedRole, restCall, setCachedRole } from '@/lib/rest-client'
+import { hasValidSession, refreshSession, getCachedRole, restCall, setCachedRole } from '@/lib/rest-client'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -160,7 +160,16 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
 
-  const session = hasValidSession()
+  let session = hasValidSession()
+
+  // If JWT expired, try to refresh it directly (bypasses Supabase client)
+  if (!session.valid) {
+    const refreshed = await refreshSession()
+    if (refreshed) {
+      session = hasValidSession()
+    }
+  }
+
   if (!session.valid) return { name: 'login' }
 
   // Role-based guard (admin-only pages)

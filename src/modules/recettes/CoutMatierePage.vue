@@ -30,6 +30,8 @@ interface FournisseurPrix {
   coeffConversion: number
   /** Normalized price per unite_stock of the ingredient */
   prixNormalise: number
+  /** Label for the ordering conditionnement (e.g. "sachet × 50") */
+  condLabel: string
   isPreferred: boolean
 }
 
@@ -61,11 +63,27 @@ function getMercurialesByIngredient(ingredientId: string): Mercuriale[] {
 }
 
 function normalizePrice(merc: Mercuriale): number {
-  // Convert to price per unite_stock using coefficient_conversion
-  if (merc.coefficient_conversion > 0) {
-    return merc.prix_unitaire_ht / merc.coefficient_conversion
+  // prix_unitaire_ht = price for the ordering conditionnement.
+  // Use the conditionnement marked as utilise_commande for its quantity,
+  // which represents how many stock-units are in one ordering unit.
+  // Fallback to coefficient_conversion if no conditionnement is marked.
+  const condCommande = merc.conditionnements?.find(c => c.utilise_commande)
+  const divisor = (condCommande && condCommande.quantite > 0)
+    ? condCommande.quantite
+    : merc.coefficient_conversion
+
+  if (divisor > 0) {
+    return merc.prix_unitaire_ht / divisor
   }
   return merc.prix_unitaire_ht
+}
+
+/** Label describing the ordering conditionnement (for display) */
+function getCondLabel(merc: Mercuriale): string {
+  const cond = merc.conditionnements?.find(c => c.utilise_commande)
+  if (cond) return `${cond.nom || cond.unite} × ${cond.quantite}`
+  if (merc.coefficient_conversion > 1) return `× ${merc.coefficient_conversion}`
+  return ''
 }
 
 const rows = computed<IngredientCoutRow[]>(() => {
@@ -88,6 +106,7 @@ const rows = computed<IngredientCoutRow[]>(() => {
         uniteStock: m.unite_stock,
         coeffConversion: m.coefficient_conversion,
         prixNormalise: prixNorm,
+        condLabel: getCondLabel(m),
         isPreferred: m.id === ing.fournisseur_prefere_id,
       }
     })
@@ -336,6 +355,7 @@ onMounted(async () => {
                         <div class="dsc-designation">{{ fp.designation }}</div>
                         <div class="dsc-prix">
                           <span class="dsc-prix-value">{{ formatPrix(fp.prixUnitaireHt) }} &euro; HT</span>
+                          <span v-if="fp.condLabel" class="dsc-prix-cond">({{ fp.condLabel }})</span>
                           <span class="dsc-prix-conv">
                             &rarr; {{ formatPrix(fp.prixNormalise) }} &euro;/{{ row.ingredient.unite_stock }}
                           </span>
@@ -742,6 +762,11 @@ h1 {
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.dsc-prix-cond {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .dsc-prix-conv {

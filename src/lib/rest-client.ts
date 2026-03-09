@@ -44,6 +44,68 @@ export function hasValidSession(): { valid: boolean; userId?: string } {
   }
 }
 
+/**
+ * Refresh the JWT directly via Supabase Auth API (bypasses Supabase JS client).
+ * Called when hasValidSession() returns false but a refresh_token exists.
+ * Returns true if the token was successfully refreshed.
+ */
+let _refreshPromise: Promise<boolean> | null = null
+
+export async function refreshSession(): Promise<boolean> {
+  // Deduplicate concurrent refresh calls
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = _doRefresh()
+  try { return await _refreshPromise } finally { _refreshPromise = null }
+}
+
+async function _doRefresh(): Promise<boolean> {
+  try {
+    const stored = localStorage.getItem(`sb-${PROJECT_REF}-auth-token`)
+    if (!stored) return false
+    const parsed = JSON.parse(stored)
+    const refreshToken = parsed.refresh_token || parsed.currentSession?.refresh_token
+    if (!refreshToken) return false
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5000)
+
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+        signal: controller.signal,
+      })
+
+      if (!resp.ok) return false
+      const data = await resp.json()
+
+      if (data.access_token && data.refresh_token) {
+        // Update localStorage with fresh tokens (same format Supabase client uses)
+        const newSession = {
+          ...parsed,
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_at: data.expires_at,
+          expires_in: data.expires_in,
+          token_type: data.token_type || 'bearer',
+          user: data.user || parsed.user,
+        }
+        localStorage.setItem(`sb-${PROJECT_REF}-auth-token`, JSON.stringify(newSession))
+        return true
+      }
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return false
+  }
+}
+
 /** Cache the user role in localStorage (avoids network call in router guard) */
 export function getCachedRole(): string | null {
   try { return localStorage.getItem('phood-user-role') } catch { return null }
@@ -161,6 +223,17 @@ export async function restCall<T = unknown>(
     if (!resp.ok) {
       // maybeSingle: 406 = 0 or 2+ rows → return null
       if (options?.maybeSingle && resp.status === 406) return null as T
+
+      // 401 = JWT expired → try refresh and retry once
+      if (resp.status === 401) {
+        const refreshed = await refreshSession()
+        if (refreshed) {
+          clearTimeout(timer)
+          // Retry with new token (recursive call, won't loop because fresh token won't 401)
+          return restCall(method, path, body, options)
+        }
+      }
+
       const text = await resp.text().catch(() => '')
       throw new Error(`Erreur ${resp.status}: ${text.slice(0, 300)}`)
     }
