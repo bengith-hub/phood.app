@@ -12,6 +12,8 @@ const { isAdmin } = useAuth()
 const search = ref('')
 const showEditor = ref(false)
 const editingFournisseur = ref<Partial<Fournisseur> | null>(null)
+const saving = ref(false)
+const saveError = ref('')
 
 // Email chips
 const emailChips = ref<string[]>([])
@@ -57,6 +59,7 @@ function openEditor(fournisseur?: Fournisseur) {
   emailBccChips.value = parseEmails(editingFournisseur.value.email_commande_bcc)
   emailInput.value = ''
   emailBccInput.value = ''
+  saveError.value = ''
   showEditor.value = true
 }
 
@@ -171,76 +174,64 @@ function closeEditor() {
 }
 
 async function handleSave() {
-  if (!editingFournisseur.value) return
-  if (!editingFournisseur.value.nom?.trim()) {
-    alert('Le nom est obligatoire')
-    return
-  }
-
-  // Flush any pending email input
-  if (emailInput.value.trim()) addEmail('to')
-  if (emailBccInput.value.trim()) addEmail('bcc')
-
-  // Auto-compute jours_commande from delivery days + delays
-  const livDays = editingFournisseur.value.jours_livraison || []
-  const delais = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
-  const orderDays = new Set<number>()
-  for (const d of livDays) {
-    const delai = delais[String(d)] ?? 1
-    orderDays.add(getJourCommande(d, delai))
-  }
-
-  // Build clean payload — only known DB columns
-  const payload: Record<string, unknown> = {
-    nom: editingFournisseur.value.nom,
-    contact_nom: editingFournisseur.value.contact_nom || null,
-    email_commande: joinEmails(emailChips.value) || null,
-    email_commande_bcc: joinEmails(emailBccChips.value) || null,
-    telephone: editingFournisseur.value.telephone || null,
-    site_web: editingFournisseur.value.site_web || null,
-    siret: editingFournisseur.value.siret || null,
-    jours_commande: [...orderDays],
-    jours_livraison: livDays,
-    delai_commande_livraison: editingFournisseur.value.delai_commande_livraison || null,
-    heure_limite_commande: editingFournisseur.value.heure_limite_commande || null,
-    creneau_livraison: editingFournisseur.value.creneau_livraison || null,
-    franco_minimum: editingFournisseur.value.franco_minimum ?? 0,
-    duree_couverture_defaut: editingFournisseur.value.duree_couverture_defaut ?? 5,
-    conditions_paiement: editingFournisseur.value.conditions_paiement || null,
-    mode_envoi: editingFournisseur.value.mode_envoi || 'email',
-    adresse: editingFournisseur.value.adresse || null,
-    pennylane_supplier_id: editingFournisseur.value.pennylane_supplier_id || null,
-    notes: editingFournisseur.value.notes || null,
-    actif: editingFournisseur.value.actif ?? true,
-  }
-  if (editingFournisseur.value.id) {
-    payload.id = editingFournisseur.value.id
-  }
-
   try {
+    if (!editingFournisseur.value) return
+    if (!editingFournisseur.value.nom?.trim()) {
+      saveError.value = 'Le nom est obligatoire'
+      return
+    }
+
+    saving.value = true
+    saveError.value = ''
+
+    // Flush any pending email input
+    if (emailInput.value.trim()) addEmail('to')
+    if (emailBccInput.value.trim()) addEmail('bcc')
+
+    // Auto-compute jours_commande from delivery days + delays
+    const livDays = editingFournisseur.value.jours_livraison || []
+    const delais = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
+    const orderDays = new Set<number>()
+    for (const d of livDays) {
+      const delai = delais[String(d)] ?? 1
+      orderDays.add(getJourCommande(d, delai))
+    }
+
+    // Build clean payload — only known DB columns
+    const payload: Record<string, unknown> = {
+      nom: editingFournisseur.value.nom,
+      contact_nom: editingFournisseur.value.contact_nom || null,
+      email_commande: joinEmails(emailChips.value) || null,
+      email_commande_bcc: joinEmails(emailBccChips.value) || null,
+      telephone: editingFournisseur.value.telephone || null,
+      site_web: editingFournisseur.value.site_web || null,
+      siret: editingFournisseur.value.siret || null,
+      jours_commande: [...orderDays],
+      jours_livraison: livDays,
+      delai_commande_livraison: editingFournisseur.value.delai_commande_livraison || null,
+      heure_limite_commande: editingFournisseur.value.heure_limite_commande || null,
+      creneau_livraison: editingFournisseur.value.creneau_livraison || null,
+      franco_minimum: Number(editingFournisseur.value.franco_minimum) || 0,
+      duree_couverture_defaut: Number(editingFournisseur.value.duree_couverture_defaut) || 5,
+      conditions_paiement: editingFournisseur.value.conditions_paiement || null,
+      mode_envoi: editingFournisseur.value.mode_envoi || 'email',
+      adresse: editingFournisseur.value.adresse || null,
+      pennylane_supplier_id: editingFournisseur.value.pennylane_supplier_id || null,
+      notes: editingFournisseur.value.notes || null,
+      actif: editingFournisseur.value.actif ?? true,
+    }
+    if (editingFournisseur.value.id) {
+      payload.id = editingFournisseur.value.id
+    }
+
     await store.save(payload as Partial<Fournisseur>)
     closeEditor()
   } catch (e: unknown) {
-    const err = e as Record<string, unknown>
-    const msg = (err?.message as string) || ''
-
-    // If a column doesn't exist yet (migration not applied), retry without it
-    const colMatch = msg.match(/column[' ]+(\w+)[' ]/)
-    if (colMatch) {
-      const badCol = colMatch[1] as string
-      console.warn(`Colonne '${badCol}' introuvable en base, retry sans...`)
-      delete payload[badCol as keyof typeof payload]
-      try {
-        await store.save(payload as Partial<Fournisseur>)
-        closeEditor()
-        return
-      } catch {
-        // fallthrough to error display
-      }
-    }
-
-    alert(msg || 'Erreur de sauvegarde')
+    const msg = (e as Error)?.message || String(e)
+    saveError.value = msg
     console.error('Save error:', e)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -615,8 +606,11 @@ onMounted(() => store.fetchAll())
             </button>
             <span class="spacer" />
             <button type="button" class="btn-secondary" @click="closeEditor">Annuler</button>
-            <button type="button" class="btn-primary" @click="handleSave">Enregistrer</button>
+            <button type="button" class="btn-primary" :disabled="saving" @click="handleSave">
+              {{ saving ? 'Sauvegarde...' : 'Enregistrer' }}
+            </button>
           </div>
+          <div v-if="saveError" class="save-error">⚠️ {{ saveError }}</div>
         </div>
       </div>
     </div>
@@ -924,6 +918,16 @@ onMounted(() => store.fetchAll())
 }
 .modal-actions .spacer {
   flex: 1;
+}
+.save-error {
+  padding: 12px 24px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--color-danger);
+  font-size: 14px;
+  font-weight: 500;
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid rgba(239, 68, 68, 0.2);
 }
 .btn-produits {
   margin-top: 12px;
