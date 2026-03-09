@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { supabase } from '@/lib/supabase'
+import { hasValidSession, getCachedRole, restCall, setCachedRole } from '@/lib/rest-client'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -153,31 +153,42 @@ const router = createRouter({
   ],
 })
 
-// Auth guard — all async calls wrapped in try-catch to prevent
-// unhandled rejections from freezing the Vue router
+/**
+ * Auth guard — uses localStorage JWT check (instant, no network call).
+ * NEVER calls supabase.auth.getSession() which can hang indefinitely.
+ */
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
 
-  try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return { name: 'login' }
+  const session = hasValidSession()
+  if (!session.valid) return { name: 'login' }
 
-    // Role-based guard (admin-only pages)
-    if (to.meta.requiresAdmin) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', session.user.id)
-        .single()
-      if (profile?.role !== 'admin') return { name: 'dashboard' }
+  // Role-based guard (admin-only pages)
+  if (to.meta.requiresAdmin && session.userId) {
+    // Check cached role first (instant, no network)
+    let role = getCachedRole()
+
+    // If no cached role, fetch via REST with 5s timeout
+    if (!role) {
+      try {
+        const profile = await restCall<{ role: string } | null>(
+          'GET',
+          `profiles?id=eq.${session.userId}&select=role`,
+          undefined,
+          { maybeSingle: true, timeout: 5000 },
+        )
+        role = profile?.role || null
+        if (role) setCachedRole(role)
+      } catch {
+        // On error, allow navigation rather than blocking
+        return true
+      }
     }
 
-    return true
-  } catch (err) {
-    console.error('Auth guard error:', err)
-    // On error, allow navigation rather than freezing the app
-    return true
+    if (role !== 'admin') return { name: 'dashboard' }
   }
+
+  return true
 })
 
 export default router

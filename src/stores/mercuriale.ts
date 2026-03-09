@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Mercuriale } from '@/types/database'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
@@ -32,7 +32,6 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
       if (!groups[cat]) groups[cat] = []
       groups[cat].push(p)
     }
-    // Sort categories, sort items within each category
     return Object.entries(groups)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([categorie, produits]) => ({
@@ -46,14 +45,10 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('mercuriale')
-          .select('*')
-          .order('designation')
-        if (err) throw err
-        items.value = data as Mercuriale[]
+        const data = await restCall<Mercuriale[]>('GET', 'mercuriale?select=*&order=designation')
+        items.value = data
         await db.mercuriale.clear()
-        await db.mercuriale.bulkPut(data as Mercuriale[])
+        await db.mercuriale.bulkPut(data)
       } else {
         items.value = await db.mercuriale.orderBy('designation').toArray()
       }
@@ -67,16 +62,10 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
 
   async function save(item: Partial<Mercuriale> & { id?: string }) {
     if (item.id) {
-      const { error: err } = await supabase
-        .from('mercuriale')
-        .update(item)
-        .eq('id', item.id)
-      if (err) throw err
+      const { id, ...payload } = item
+      await restCall('PATCH', `mercuriale?id=eq.${id}`, payload)
     } else {
-      const { error: err } = await supabase
-        .from('mercuriale')
-        .insert(item)
-      if (err) throw err
+      await restCall('POST', 'mercuriale', item)
     }
     await fetchAll()
   }
@@ -118,11 +107,7 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
   }
 
   async function deleteItem(id: string) {
-    const { error: err } = await supabase
-      .from('mercuriale')
-      .delete()
-      .eq('id', id)
-    if (err) throw err
+    await restCall('DELETE', `mercuriale?id=eq.${id}`)
     await fetchAll()
   }
 
@@ -143,12 +128,10 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
 
   /** Download an image from URL, compress it, and upload to Supabase storage */
   async function uploadPhotoFromUrl(mercurialeId: string, imageUrl: string): Promise<string> {
-    // Fetch the image client-side
     const resp = await fetch(imageUrl)
     if (!resp.ok) throw new Error('Impossible de télécharger l\'image')
     const blob = await resp.blob()
 
-    // Convert to File for compression
     const file = new File([blob], 'photo.jpg', { type: blob.type || 'image/jpeg' })
     const compressed = await compressImage(file, 1024, 0.75)
     const base64 = await blobToBase64(compressed)

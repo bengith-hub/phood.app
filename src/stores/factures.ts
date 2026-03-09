@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { FacturePennylane, AchatHorsCommande } from '@/types/database'
 
@@ -63,34 +63,24 @@ export const useFacturesStore = defineStore('factures', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const [facturesRes, achatsRes] = await Promise.all([
-          supabase
-            .from('factures_pennylane')
-            .select('*')
-            .order('date_facture', { ascending: false }),
-          supabase
-            .from('achats_hors_commande')
-            .select('*')
-            .order('date_achat', { ascending: false }),
+        const [facturesData, achatsData] = await Promise.all([
+          restCall<FacturePennylane[]>('GET', 'factures_pennylane?select=*&order=date_facture.desc'),
+          restCall<AchatHorsCommande[]>('GET', 'achats_hors_commande?select=*&order=date_achat.desc'),
         ])
-        if (facturesRes.error) throw facturesRes.error
-        if (achatsRes.error) throw achatsRes.error
 
-        factures.value = facturesRes.data as FacturePennylane[]
-        achatsHorsCommande.value = achatsRes.data as AchatHorsCommande[]
+        factures.value = facturesData
+        achatsHorsCommande.value = achatsData
 
-        // Cache in IndexedDB
         await db.facturesPennylane.clear()
-        await db.facturesPennylane.bulkPut(facturesRes.data as FacturePennylane[])
+        await db.facturesPennylane.bulkPut(facturesData)
         await db.achatsHorsCommande.clear()
-        await db.achatsHorsCommande.bulkPut(achatsRes.data as AchatHorsCommande[])
+        await db.achatsHorsCommande.bulkPut(achatsData)
       } else {
         factures.value = await db.facturesPennylane.reverse().sortBy('date_facture')
         achatsHorsCommande.value = await db.achatsHorsCommande.reverse().sortBy('date_achat')
       }
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Erreur chargement factures'
-      // Fallback to IndexedDB
       factures.value = await db.facturesPennylane.reverse().sortBy('date_facture')
       achatsHorsCommande.value = await db.achatsHorsCommande.reverse().sortBy('date_achat')
     } finally {
@@ -100,44 +90,37 @@ export const useFacturesStore = defineStore('factures', () => {
 
   // --- Rapprochement: link invoice to a reception/BL ---
   async function rapprocher(factureId: string, receptionId: string) {
-    // Fetch the linked commande to compare amounts
-    const { data: reception, error: recErr } = await supabase
-      .from('receptions')
-      .select('commande_id')
-      .eq('id', receptionId)
-      .single()
-    if (recErr) throw recErr
+    const reception = await restCall<{ commande_id: string }>(
+      'GET',
+      `receptions?id=eq.${receptionId}&select=commande_id`,
+      undefined,
+      { single: true },
+    )
 
-    const { data: commande, error: cmdErr } = await supabase
-      .from('commandes')
-      .select('montant_total_ht')
-      .eq('id', reception.commande_id)
-      .single()
-    if (cmdErr) throw cmdErr
+    const commande = await restCall<{ montant_total_ht: number }>(
+      'GET',
+      `commandes?id=eq.${reception.commande_id}&select=montant_total_ht`,
+      undefined,
+      { single: true },
+    )
 
     const facture = factures.value.find(f => f.id === factureId)
     if (!facture) throw new Error('Facture introuvable')
 
-    // Detect ecart: >2% difference between invoice and commande HT
     const ecartPct = Math.abs(facture.montant_ht - commande.montant_total_ht) / commande.montant_total_ht * 100
     const statut: StatutRapprochement = ecartPct > 2 ? 'ecart_detecte' : 'rapprochee'
 
-    const { error: updateErr } = await supabase
-      .from('factures_pennylane')
-      .update({
-        reception_id: receptionId,
-        statut_rapprochement: statut,
-      })
-      .eq('id', factureId)
-    if (updateErr) throw updateErr
+    await restCall('PATCH', `factures_pennylane?id=eq.${factureId}`, {
+      reception_id: receptionId,
+      statut_rapprochement: statut,
+    })
 
     await fetchAll()
     return { statut, ecartPct }
   }
 
-  // --- Detect depannage: invoices with "matieres premieres" category and no matching BC ---
+  // --- Detect depannage ---
   async function detecterDepannage() {
-    // Find non-reconciled invoices that have no reception_id (meaning no BC)
     const candidats = factures.value.filter(
       f => f.statut_rapprochement === 'non_rapprochee' && !f.reception_id
     )
@@ -146,35 +129,29 @@ export const useFacturesStore = defineStore('factures', () => {
 
     let count = 0
     for (const facture of candidats) {
-      // Check if there's a matching commande for this fournisseur around the same date
-      const { data: matchingCommandes } = await supabase
-        .from('commandes')
-        .select('id')
-        .eq('fournisseur_id', facture.fournisseur_id || '')
-        .in('statut', ['envoyee', 'receptionnee', 'controlee', 'validee', 'cloturee'])
-        .limit(1)
+      try {
+        const matchingCommandes = await restCall<{ id: string }[]>(
+          'GET',
+          `commandes?fournisseur_id=eq.${facture.fournisseur_id || ''}&statut=in.(envoyee,receptionnee,controlee,validee,cloturee)&select=id&limit=1`,
+        )
 
-      // If no matching commande found, it's a depannage
-      if (!matchingCommandes || matchingCommandes.length === 0) {
-        const { error: updateErr } = await supabase
-          .from('factures_pennylane')
-          .update({ statut_rapprochement: 'depannage' })
-          .eq('id', facture.id)
-        if (!updateErr) {
+        if (!matchingCommandes || matchingCommandes.length === 0) {
+          await restCall('PATCH', `factures_pennylane?id=eq.${facture.id}`, {
+            statut_rapprochement: 'depannage',
+          })
           count++
 
-          // Auto-create achat hors commande entry
           const fournisseurNom = facture.fournisseur_id || 'Inconnu'
-          await supabase
-            .from('achats_hors_commande')
-            .insert({
-              facture_pennylane_id: facture.id,
-              fournisseur_nom: fournisseurNom,
-              montant_ht: facture.montant_ht,
-              date_achat: facture.date_facture || new Date().toISOString().split('T')[0],
-              description: `Achat dépannage détecté automatiquement (facture ${facture.numero || facture.pennylane_id})`,
-            })
+          await restCall('POST', 'achats_hors_commande', {
+            facture_pennylane_id: facture.id,
+            fournisseur_nom: fournisseurNom,
+            montant_ht: facture.montant_ht,
+            date_achat: facture.date_facture || new Date().toISOString().split('T')[0],
+            description: `Achat dépannage détecté automatiquement (facture ${facture.numero || facture.pennylane_id})`,
+          })
         }
+      } catch {
+        // Continue with other factures on error
       }
     }
 
@@ -182,43 +159,47 @@ export const useFacturesStore = defineStore('factures', () => {
     return count
   }
 
-  // --- Get ecarts: compare invoice amounts vs commande amounts ---
+  // --- Get ecarts ---
   async function getEcarts(): Promise<EcartFacture[]> {
     const results: EcartFacture[] = []
 
-    // Get all factures that have a reception_id linked
     const facturesAvecReception = factures.value.filter(f => f.reception_id)
 
     for (const facture of facturesAvecReception) {
-      // Fetch reception -> commande to get the commande montant
-      const { data: reception } = await supabase
-        .from('receptions')
-        .select('commande_id')
-        .eq('id', facture.reception_id!)
-        .single()
+      try {
+        const reception = await restCall<{ commande_id: string } | null>(
+          'GET',
+          `receptions?id=eq.${facture.reception_id!}&select=commande_id`,
+          undefined,
+          { maybeSingle: true },
+        )
 
-      if (!reception) continue
+        if (!reception) continue
 
-      const { data: commande } = await supabase
-        .from('commandes')
-        .select('montant_total_ht')
-        .eq('id', reception.commande_id)
-        .single()
+        const commande = await restCall<{ montant_total_ht: number } | null>(
+          'GET',
+          `commandes?id=eq.${reception.commande_id}&select=montant_total_ht`,
+          undefined,
+          { maybeSingle: true },
+        )
 
-      if (!commande) continue
+        if (!commande) continue
 
-      const ecartHt = facture.montant_ht - commande.montant_total_ht
-      const ecartPct = commande.montant_total_ht !== 0
-        ? (ecartHt / commande.montant_total_ht) * 100
-        : 0
+        const ecartHt = facture.montant_ht - commande.montant_total_ht
+        const ecartPct = commande.montant_total_ht !== 0
+          ? (ecartHt / commande.montant_total_ht) * 100
+          : 0
 
-      if (Math.abs(ecartPct) > 0.5) {
-        results.push({
-          facture,
-          commandeMontantHt: commande.montant_total_ht,
-          ecartHt,
-          ecartPct,
-        })
+        if (Math.abs(ecartPct) > 0.5) {
+          results.push({
+            facture,
+            commandeMontantHt: commande.montant_total_ht,
+            ecartHt,
+            ecartPct,
+          })
+        }
+      } catch {
+        // Skip factures with errors
       }
     }
 

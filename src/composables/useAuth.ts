@@ -1,5 +1,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { supabase } from '@/lib/supabase'
+import { restCall, hasValidSession, setCachedRole } from '@/lib/rest-client'
 import type { Profile, UserRole } from '@/types/database'
 import type { User, Session } from '@supabase/supabase-js'
 
@@ -13,13 +14,18 @@ export function useAuth() {
   const isAdmin = computed(() => role.value === 'admin')
   const isManagerOrAbove = computed(() => role.value === 'admin' || role.value === 'manager')
 
+  /** Fetch profile via direct REST (bypasses Supabase client) */
   async function fetchProfile(userId: string) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    if (data) profile.value = data as Profile
+    const data = await restCall<Profile | null>(
+      'GET',
+      `profiles?id=eq.${userId}&select=*`,
+      undefined,
+      { maybeSingle: true, timeout: 5000 },
+    )
+    if (data) {
+      profile.value = data
+      setCachedRole(data.role)
+    }
   }
 
   async function signIn(email: string, password: string) {
@@ -55,23 +61,34 @@ export function useAuth() {
     await supabase.auth.signOut()
     user.value = null
     profile.value = null
+    setCachedRole(null)
   }
 
+  /**
+   * Initialize auth state from localStorage (instant, no hang risk).
+   * Sets up onAuthStateChange listener for real-time session updates.
+   * NEVER calls supabase.auth.getSession() which can hang indefinitely.
+   */
   function initAuth() {
     onMounted(async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.user) {
-        user.value = session.user
-        await fetchProfile(session.user.id)
+      // Fast check from localStorage — no network call, no hang risk
+      const session = hasValidSession()
+      if (session.valid && session.userId) {
+        user.value = { id: session.userId } as User
+        try {
+          await fetchProfile(session.userId)
+        } catch { /* ignore — profile will load when network is available */ }
       }
       loading.value = false
 
-      supabase.auth.onAuthStateChange(async (_event: string, session: Session | null) => {
-        user.value = session?.user ?? null
-        if (session?.user) {
-          await fetchProfile(session.user.id)
+      // Listen for auth state changes (event-driven, safe — doesn't trigger refresh)
+      supabase.auth.onAuthStateChange(async (_event: string, sess: Session | null) => {
+        user.value = sess?.user ?? null
+        if (sess?.user) {
+          try { await fetchProfile(sess.user.id) } catch { /* ignore */ }
         } else {
           profile.value = null
+          setCachedRole(null)
         }
       })
     })

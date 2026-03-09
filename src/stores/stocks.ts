@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Stock } from '@/types/database'
 
@@ -12,13 +12,10 @@ export const useStocksStore = defineStore('stocks', () => {
     loading.value = true
     try {
       if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('stocks')
-          .select('*')
-        if (error) throw error
-        stocks.value = data as Stock[]
+        const data = await restCall<Stock[]>('GET', 'stocks?select=*')
+        stocks.value = data
         await db.stocks.clear()
-        await db.stocks.bulkPut(data as Stock[])
+        await db.stocks.bulkPut(data)
       } else {
         stocks.value = await db.stocks.toArray()
       }

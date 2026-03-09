@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Inventaire, InventaireLigne, ZoneStockage } from '@/types/database'
 
@@ -19,14 +19,10 @@ export const useInventaireStore = defineStore('inventaire', () => {
   async function fetchZones() {
     try {
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('zones_stockage')
-          .select('*')
-          .order('ordre')
-        if (err) throw err
-        zones.value = data as ZoneStockage[]
+        const data = await restCall<ZoneStockage[]>('GET', 'zones_stockage?select=*&order=ordre')
+        zones.value = data
         await db.zonesStockage.clear()
-        await db.zonesStockage.bulkPut(data as ZoneStockage[])
+        await db.zonesStockage.bulkPut(data)
       } else {
         zones.value = await db.zonesStockage.orderBy('ordre').toArray()
       }
@@ -46,14 +42,10 @@ export const useInventaireStore = defineStore('inventaire', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('inventaires')
-          .select('*')
-          .order('created_at', { ascending: false })
-        if (err) throw err
-        inventaires.value = data as Inventaire[]
+        const data = await restCall<Inventaire[]>('GET', 'inventaires?select=*&order=created_at.desc')
+        inventaires.value = data
         await db.inventaires.clear()
-        await db.inventaires.bulkPut(data as Inventaire[])
+        await db.inventaires.bulkPut(data)
       } else {
         inventaires.value = await db.inventaires.reverse().sortBy('created_at')
       }
@@ -75,21 +67,21 @@ export const useInventaireStore = defineStore('inventaire', () => {
     zoneIds: string[],
     userId: string,
   ): Promise<Inventaire> {
-    const { data, error: err } = await supabase
-      .from('inventaires')
-      .insert({
+    const data = await restCall<Inventaire>(
+      'POST',
+      'inventaires',
+      {
         nom,
         date: new Date().toISOString().split('T')[0],
         type,
         zones: zoneIds,
         statut: 'en_cours',
         created_by: userId,
-      })
-      .select()
-      .single()
-    if (err) throw err
+      },
+      { single: true },
+    )
     await fetchAll()
-    return data as Inventaire
+    return data
   }
 
   // ── Lignes d'inventaire ──────────────────────────────────────────────
@@ -97,13 +89,11 @@ export const useInventaireStore = defineStore('inventaire', () => {
   async function fetchLignes(inventaireId: string): Promise<InventaireLigne[]> {
     try {
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('inventaire_lignes')
-          .select('*')
-          .eq('inventaire_id', inventaireId)
-          .order('created_at')
-        if (err) throw err
-        lignes.value = data as InventaireLigne[]
+        const data = await restCall<InventaireLigne[]>(
+          'GET',
+          `inventaire_lignes?inventaire_id=eq.${inventaireId}&select=*&order=created_at`,
+        )
+        lignes.value = data
         // Sync to Dexie
         const existing = await db.inventaireLignes
           .where('inventaire_id')
@@ -112,8 +102,8 @@ export const useInventaireStore = defineStore('inventaire', () => {
         if (existing.length > 0) {
           await db.inventaireLignes.bulkDelete(existing.map(l => l.id))
         }
-        await db.inventaireLignes.bulkPut(data as InventaireLigne[])
-        return data as InventaireLigne[]
+        await db.inventaireLignes.bulkPut(data)
+        return data
       } else {
         const data = await db.inventaireLignes
           .where('inventaire_id')
@@ -133,54 +123,36 @@ export const useInventaireStore = defineStore('inventaire', () => {
   }
 
   async function saveLignes(inventaireId: string, newLignes: Partial<InventaireLigne>[]) {
-    // Delete existing lines for this inventaire then re-insert
-    await supabase
-      .from('inventaire_lignes')
-      .delete()
-      .eq('inventaire_id', inventaireId)
+    await restCall('DELETE', `inventaire_lignes?inventaire_id=eq.${inventaireId}`)
 
     if (newLignes.length > 0) {
-      const { error: err } = await supabase
-        .from('inventaire_lignes')
-        .insert(newLignes.map(l => ({ ...l, inventaire_id: inventaireId })))
-      if (err) throw err
+      await restCall('POST', 'inventaire_lignes', newLignes.map(l => ({ ...l, inventaire_id: inventaireId })))
     }
   }
 
   async function upsertLigne(ligne: Partial<InventaireLigne> & { inventaire_id: string; ingredient_id: string }) {
-    // Check if line already exists for this inventaire + ingredient
-    const { data: existing } = await supabase
-      .from('inventaire_lignes')
-      .select('id')
-      .eq('inventaire_id', ligne.inventaire_id)
-      .eq('ingredient_id', ligne.ingredient_id)
-      .maybeSingle()
+    // Check if line already exists
+    const existing = await restCall<{ id: string } | null>(
+      'GET',
+      `inventaire_lignes?inventaire_id=eq.${ligne.inventaire_id}&ingredient_id=eq.${ligne.ingredient_id}&select=id`,
+      undefined,
+      { maybeSingle: true },
+    )
 
     if (existing) {
-      const { error: err } = await supabase
-        .from('inventaire_lignes')
-        .update({
-          quantite_comptee: ligne.quantite_comptee,
-          ecart: ligne.ecart,
-          conditionnement_saisie: ligne.conditionnement_saisie,
-          notes: ligne.notes,
-        })
-        .eq('id', existing.id)
-      if (err) throw err
+      await restCall('PATCH', `inventaire_lignes?id=eq.${existing.id}`, {
+        quantite_comptee: ligne.quantite_comptee,
+        ecart: ligne.ecart,
+        conditionnement_saisie: ligne.conditionnement_saisie,
+        notes: ligne.notes,
+      })
     } else {
-      const { error: err } = await supabase
-        .from('inventaire_lignes')
-        .insert(ligne)
-      if (err) throw err
+      await restCall('POST', 'inventaire_lignes', ligne)
     }
   }
 
   async function valider(inventaireId: string) {
-    const { error: err } = await supabase
-      .from('inventaires')
-      .update({ statut: 'valide' })
-      .eq('id', inventaireId)
-    if (err) throw err
+    await restCall('PATCH', `inventaires?id=eq.${inventaireId}`, { statut: 'valide' })
     await fetchAll()
   }
 
@@ -191,30 +163,26 @@ export const useInventaireStore = defineStore('inventaire', () => {
   ) {
     for (const ligne of lignesFinales) {
       // Upsert stock row
-      const { data: existing } = await supabase
-        .from('stocks')
-        .select('id')
-        .eq('ingredient_id', ligne.ingredient_id)
-        .maybeSingle()
+      const existing = await restCall<{ id: string } | null>(
+        'GET',
+        `stocks?ingredient_id=eq.${ligne.ingredient_id}&select=id`,
+        undefined,
+        { maybeSingle: true },
+      )
 
       if (existing) {
-        await supabase
-          .from('stocks')
-          .update({
-            quantite: ligne.quantite_comptee,
-            derniere_maj: new Date().toISOString(),
-            source_maj: 'inventaire',
-          })
-          .eq('id', existing.id)
+        await restCall('PATCH', `stocks?id=eq.${existing.id}`, {
+          quantite: ligne.quantite_comptee,
+          derniere_maj: new Date().toISOString(),
+          source_maj: 'inventaire',
+        })
       } else {
-        await supabase
-          .from('stocks')
-          .insert({
-            ingredient_id: ligne.ingredient_id,
-            quantite: ligne.quantite_comptee,
-            derniere_maj: new Date().toISOString(),
-            source_maj: 'inventaire',
-          })
+        await restCall('POST', 'stocks', {
+          ingredient_id: ligne.ingredient_id,
+          quantite: ligne.quantite_comptee,
+          derniere_maj: new Date().toISOString(),
+          source_maj: 'inventaire',
+        })
       }
     }
 

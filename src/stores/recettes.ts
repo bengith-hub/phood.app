@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Recette, RecetteIngredient } from '@/types/database'
 
@@ -19,21 +19,19 @@ export const useRecettesStore = defineStore('recettes', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const [recRes, riRes] = await Promise.all([
-          supabase.from('recettes').select('*').order('nom'),
-          supabase.from('recette_ingredients').select('*'),
+        const [recData, riData] = await Promise.all([
+          restCall<Recette[]>('GET', 'recettes?select=*&order=nom'),
+          restCall<RecetteIngredient[]>('GET', 'recette_ingredients?select=*'),
         ])
-        if (recRes.error) throw recRes.error
-        if (riRes.error) throw riRes.error
 
-        recettes.value = recRes.data as Recette[]
-        recetteIngredients.value = riRes.data as RecetteIngredient[]
+        recettes.value = recData
+        recetteIngredients.value = riData
 
         // Cache
         await db.recettes.clear()
-        await db.recettes.bulkPut(recRes.data as Recette[])
+        await db.recettes.bulkPut(recData)
         await db.recetteIngredients.clear()
-        await db.recetteIngredients.bulkPut(riRes.data as RecetteIngredient[])
+        await db.recetteIngredients.bulkPut(riData)
       } else {
         recettes.value = await db.recettes.orderBy('nom').toArray()
         recetteIngredients.value = await db.recetteIngredients.toArray()

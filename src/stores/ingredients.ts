@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import type { IngredientRestaurant } from '@/types/database'
@@ -32,13 +32,12 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('ingredients_restaurant')
-          .select('*, mercuriale_pref:fournisseur_prefere_id(ref_fournisseur, photo_url, designation)')
-          .order('nom')
-        if (err) throw err
+        const data = await restCall<Record<string, unknown>[]>(
+          'GET',
+          'ingredients_restaurant?select=*,mercuriale_pref:fournisseur_prefere_id(ref_fournisseur,photo_url,designation)&order=nom',
+        )
         // Flatten mercuriale join data onto each ingredient
-        const enriched: IngredientEnriched[] = (data ?? []).map((row: Record<string, unknown>) => {
+        const enriched: IngredientEnriched[] = (data ?? []).map((row) => {
           const merc = row.mercuriale_pref as { ref_fournisseur?: string; photo_url?: string; designation?: string } | null
           const { mercuriale_pref: _, ...rest } = row
           return {
@@ -78,16 +77,10 @@ export const useIngredientsStore = defineStore('ingredients', () => {
 
   async function save(item: Partial<IngredientRestaurant> & { id?: string }) {
     if (item.id) {
-      const { error: err } = await supabase
-        .from('ingredients_restaurant')
-        .update(item)
-        .eq('id', item.id)
-      if (err) throw err
+      const { id, ...payload } = item
+      await restCall('PATCH', `ingredients_restaurant?id=eq.${id}`, payload)
     } else {
-      const { error: err } = await supabase
-        .from('ingredients_restaurant')
-        .insert(item)
-      if (err) throw err
+      await restCall('POST', 'ingredients_restaurant', item)
     }
     await fetchAll()
   }
@@ -116,11 +109,7 @@ export const useIngredientsStore = defineStore('ingredients', () => {
   }
 
   async function remove(id: string) {
-    const { error: err } = await supabase
-      .from('ingredients_restaurant')
-      .delete()
-      .eq('id', id)
-    if (err) throw err
+    await restCall('DELETE', `ingredients_restaurant?id=eq.${id}`)
     await fetchAll()
   }
 

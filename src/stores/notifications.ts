@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Notification } from '@/types/database'
 
@@ -15,15 +15,10 @@ export const useNotificationsStore = defineStore('notifications', () => {
     loading.value = true
     try {
       if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('notifications')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100)
-        if (error) throw error
-        notifications.value = data as Notification[]
+        const data = await restCall<Notification[]>('GET', 'notifications?select=*&order=created_at.desc&limit=100')
+        notifications.value = data
         await db.notifications.clear()
-        await db.notifications.bulkPut(data as Notification[])
+        await db.notifications.bulkPut(data)
       } else {
         notifications.value = await db.notifications.reverse().sortBy('created_at')
       }
@@ -35,7 +30,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   }
 
   async function markAsRead(id: string) {
-    await supabase.from('notifications').update({ lue: true }).eq('id', id)
+    await restCall('PATCH', `notifications?id=eq.${id}`, { lue: true })
     const n = notifications.value.find(n => n.id === id)
     if (n) n.lue = true
   }
@@ -43,7 +38,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   async function markAllAsRead() {
     const ids = unread.value.map(n => n.id)
     if (ids.length === 0) return
-    await supabase.from('notifications').update({ lue: true }).in('id', ids)
+    await restCall('PATCH', `notifications?id=in.(${ids.join(',')})`, { lue: true })
     notifications.value.forEach(n => { n.lue = true })
   }
 

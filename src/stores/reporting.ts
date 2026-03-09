@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import type { VenteHistorique, FacturePennylane, Recette } from '@/types/database'
 
 // ── Reporting-specific types ──────────────────────────────────
@@ -90,34 +90,23 @@ export const useReportingStore = defineStore('reporting', () => {
 
   // Settings
   const period = ref<PeriodType>('semaine')
-  const cibleCM = ref(30) // Target CM % (configurable)
+  const cibleCM = ref(30)
 
   // ── Fetch data ────────────────────────────────────────────
-  async function fetchVentes(dateDebut: string, dateFin: string) {
-    const { data, error: err } = await supabase
-      .from('ventes_historique')
-      .select('*')
-      .gte('date', dateDebut)
-      .lte('date', dateFin)
-      .order('date')
-    if (err) throw err
-    return (data || []) as VenteHistorique[]
+  async function fetchVentesRange(dateDebut: string, dateFin: string) {
+    return await restCall<VenteHistorique[]>(
+      'GET',
+      `ventes_historique?select=*&date=gte.${dateDebut}&date=lte.${dateFin}&order=date`,
+    )
   }
 
-  async function fetchFactures(dateDebut: string, dateFin: string) {
-    const { data, error: err } = await supabase
-      .from('factures_pennylane')
-      .select('*')
-      .gte('date_facture', dateDebut)
-      .lte('date_facture', dateFin)
-    if (err) throw err
-    return (data || []) as FacturePennylane[]
+  async function fetchFacturesRange(dateDebut: string, dateFin: string) {
+    return await restCall<FacturePennylane[]>(
+      'GET',
+      `factures_pennylane?select=*&date_facture=gte.${dateDebut}&date_facture=lte.${dateFin}`,
+    )
   }
 
-  /**
-   * Load all data needed for the reporting module.
-   * Fetches the last 8 weeks or 6 months depending on the period.
-   */
   async function fetchAll(_recettes: Recette[]) {
     loading.value = true
     error.value = null
@@ -128,21 +117,19 @@ export const useReportingStore = defineStore('reporting', () => {
       let dateFin: string
 
       if (period.value === 'semaine') {
-        // Last 8 weeks
         const start = new Date(now)
         start.setDate(start.getDate() - 8 * 7)
         dateDebut = toDateStr(startOfWeek(start))
         dateFin = toDateStr(endOfWeek(now))
       } else {
-        // Last 6 months
         const start = new Date(now.getFullYear(), now.getMonth() - 5, 1)
         dateDebut = toDateStr(start)
         dateFin = toDateStr(endOfMonth(now))
       }
 
       const [v, f] = await Promise.all([
-        fetchVentes(dateDebut, dateFin),
-        fetchFactures(dateDebut, dateFin),
+        fetchVentesRange(dateDebut, dateFin),
+        fetchFacturesRange(dateDebut, dateFin),
       ])
 
       ventes.value = v
@@ -154,7 +141,7 @@ export const useReportingStore = defineStore('reporting', () => {
     }
   }
 
-  // ── Tab 1: Coût Matière ───────────────────────────────────
+  // ── Tab 1: Coût Matière (unchanged — pure computation) ──
   function computeCoutMatiere(
     recettes: Recette[],
     nbVentesParRecette: Map<string, number>,
@@ -163,7 +150,6 @@ export const useReportingStore = defineStore('reporting', () => {
     const now = new Date()
 
     if (period.value === 'semaine') {
-      // Last 8 weeks
       for (let i = 7; i >= 0; i--) {
         const weekStart = new Date(now)
         weekStart.setDate(weekStart.getDate() - i * 7)
@@ -179,7 +165,6 @@ export const useReportingStore = defineStore('reporting', () => {
 
         const ca = weekVentes.reduce((sum, v) => sum + v.ca_ttc, 0)
 
-        // CM theorique: sum of (cout_matiere * nb_ventes) for each recipe
         let cmTheo = 0
         for (const r of recettes) {
           const nv = nbVentesParRecette.get(r.id) || 0
@@ -187,8 +172,6 @@ export const useReportingStore = defineStore('reporting', () => {
             cmTheo += r.cout_matiere * nv
           }
         }
-        // Scale by the proportion of this week's CA to total CA
-        // (simplified: use factures HT for reel)
         const cmReel = weekFactures.reduce((sum, f) => sum + f.montant_ht, 0)
 
         rows.push({
@@ -203,7 +186,6 @@ export const useReportingStore = defineStore('reporting', () => {
         })
       }
     } else {
-      // Last 6 months
       for (let i = 5; i >= 0; i--) {
         const ms = new Date(now.getFullYear(), now.getMonth() - i, 1)
         const me = endOfMonth(ms)
@@ -241,7 +223,7 @@ export const useReportingStore = defineStore('reporting', () => {
     return rows
   }
 
-  // ── Tab 2: Top/Flop Produits ──────────────────────────────
+  // ── Tab 2: Top/Flop Produits (unchanged — pure computation) ──
   function computeProduitRankings(
     recettes: Recette[],
     nbVentesParRecette: Map<string, number>,
@@ -252,7 +234,6 @@ export const useReportingStore = defineStore('reporting', () => {
       if (r.type !== 'recette' || !r.actif) continue
 
       const nbVentes = nbVentesParRecette.get(r.id) || 0
-      // Prix moyen across channels
       let prixMoyen = 0
       let channels = 0
       if (r.prix_vente) {
@@ -283,25 +264,15 @@ export const useReportingStore = defineStore('reporting', () => {
   }
 
   // ── Tab 3: Associations Produits (scaffold) ───────────────
-  // Data will come from Zelty ticket analysis later
   const associations = ref<AssociationProduit[]>([])
 
   async function fetchAssociations() {
-    // TODO: Will be populated from Zelty ticket line-item analysis
-    // For now, return empty — the UI is scaffolded
     associations.value = []
   }
 
   // ── Tab 4: Précision Prévisions ───────────────────────────
-  /**
-   * Compare forecast vs actual for previous week (S-1).
-   * Forecasts will come from the previsions module when built.
-   * For now, we query ventes_historique for S-1 actuals
-   * and look for previsions_ca for forecasts.
-   */
   async function fetchPrecisionPrevisions(): Promise<PrevisionJour[]> {
     const now = new Date()
-    // S-1: the previous full week (Mon to Sun)
     const thisWeekStart = startOfWeek(now)
     const lastWeekStart = new Date(thisWeekStart)
     lastWeekStart.setDate(lastWeekStart.getDate() - 7)
@@ -312,30 +283,22 @@ export const useReportingStore = defineStore('reporting', () => {
     const dateFin = toDateStr(lastWeekEnd)
 
     // Fetch actuals
-    const { data: ventesData } = await supabase
-      .from('ventes_historique')
-      .select('*')
-      .gte('date', dateDebut)
-      .lte('date', dateFin)
-      .order('date')
-
-    const actualVentes = (ventesData || []) as VenteHistorique[]
+    const actualVentes = await restCall<VenteHistorique[]>(
+      'GET',
+      `ventes_historique?select=*&date=gte.${dateDebut}&date=lte.${dateFin}&order=date`,
+    )
 
     // Try to fetch previsions (table may not exist yet)
     let previsionsMap = new Map<string, number>()
     try {
-      const { data: prevData } = await supabase
-        .from('previsions_ca')
-        .select('date, ca_prevu')
-        .gte('date', dateDebut)
-        .lte('date', dateFin)
-      if (prevData) {
-        for (const p of prevData as Array<{ date: string; ca_prevu: number }>) {
-          previsionsMap.set(p.date, p.ca_prevu)
-        }
+      const prevData = await restCall<{ date: string; ca_prevu: number }[]>(
+        'GET',
+        `previsions_ca?select=date,ca_prevu&date=gte.${dateDebut}&date=lte.${dateFin}`,
+      )
+      for (const p of prevData) {
+        previsionsMap.set(p.date, p.ca_prevu)
       }
     } catch {
-      // Table doesn't exist yet — previsions will be 0
       previsionsMap = new Map()
     }
 
@@ -380,25 +343,9 @@ export const useReportingStore = defineStore('reporting', () => {
   )
 
   return {
-    // State
-    ventes,
-    factures,
-    loading,
-    error,
-    period,
-    cibleCM,
-    associations,
-
-    // Computed
-    totalCA,
-    totalFacturesHT,
-    cmReelGlobal,
-
-    // Actions
-    fetchAll,
-    computeCoutMatiere,
-    computeProduitRankings,
-    fetchAssociations,
-    fetchPrecisionPrevisions,
+    ventes, factures, loading, error, period, cibleCM, associations,
+    totalCA, totalFacturesHT, cmReelGlobal,
+    fetchAll, computeCoutMatiere, computeProduitRankings,
+    fetchAssociations, fetchPrecisionPrevisions,
   }
 })

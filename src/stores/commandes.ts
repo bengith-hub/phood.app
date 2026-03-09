@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Commande, CommandeLigne, StatutCommande } from '@/types/database'
 
@@ -20,14 +20,10 @@ export const useCommandesStore = defineStore('commandes', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const { data, error: err } = await supabase
-          .from('commandes')
-          .select('*')
-          .order('created_at', { ascending: false })
-        if (err) throw err
-        commandes.value = data as Commande[]
+        const data = await restCall<Commande[]>('GET', 'commandes?select=*&order=created_at.desc')
+        commandes.value = data
         await db.commandes.clear()
-        await db.commandes.bulkPut(data as Commande[])
+        await db.commandes.bulkPut(data)
       } else {
         commandes.value = await db.commandes.reverse().sortBy('created_at')
       }
@@ -43,11 +39,13 @@ export const useCommandesStore = defineStore('commandes', () => {
     const today = new Date()
     const prefix = `BC${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
 
-    // Count today's orders
-    const { count } = await supabase
-      .from('commandes')
-      .select('*', { count: 'exact', head: true })
-      .like('numero', `${prefix}%`)
+    // Count today's orders via HEAD + count
+    const count = await restCall<number>(
+      'HEAD',
+      `commandes?select=*&numero=like.${encodeURIComponent(prefix + '%')}`,
+      undefined,
+      { prefer: 'count=exact' },
+    )
 
     const seq = String((count || 0) + 1).padStart(3, '0')
     return `${prefix}-${seq}`
@@ -55,19 +53,19 @@ export const useCommandesStore = defineStore('commandes', () => {
 
   async function createBrouillon(fournisseurId: string, userId: string): Promise<Commande> {
     const numero = await generateNumero()
-    const { data, error: err } = await supabase
-      .from('commandes')
-      .insert({
+    const data = await restCall<Commande>(
+      'POST',
+      'commandes',
+      {
         numero,
         fournisseur_id: fournisseurId,
         statut: 'brouillon',
         created_by: userId,
-      })
-      .select()
-      .single()
-    if (err) throw err
+      },
+      { single: true },
+    )
     await fetchAll()
-    return data as Commande
+    return data
   }
 
   async function updateStatut(id: string, statut: StatutCommande) {
@@ -75,45 +73,25 @@ export const useCommandesStore = defineStore('commandes', () => {
     if (statut === 'envoyee') {
       updates.date_commande = new Date().toISOString().split('T')[0]
     }
-    const { error: err } = await supabase
-      .from('commandes')
-      .update(updates)
-      .eq('id', id)
-    if (err) throw err
+    await restCall('PATCH', `commandes?id=eq.${id}`, updates)
     await fetchAll()
   }
 
   async function updateCommande(id: string, updates: Partial<Commande>) {
-    const { error: err } = await supabase
-      .from('commandes')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', id)
-    if (err) throw err
+    await restCall('PATCH', `commandes?id=eq.${id}`, { ...updates, updated_at: new Date().toISOString() })
     await fetchAll()
   }
 
   async function fetchLignes(commandeId: string): Promise<CommandeLigne[]> {
-    const { data, error: err } = await supabase
-      .from('commande_lignes')
-      .select('*')
-      .eq('commande_id', commandeId)
-      .order('created_at')
-    if (err) throw err
-    return data as CommandeLigne[]
+    return await restCall<CommandeLigne[]>('GET', `commande_lignes?commande_id=eq.${commandeId}&select=*&order=created_at`)
   }
 
   async function saveLignes(commandeId: string, lignes: Partial<CommandeLigne>[]) {
     // Delete existing lines then re-insert
-    await supabase
-      .from('commande_lignes')
-      .delete()
-      .eq('commande_id', commandeId)
+    await restCall('DELETE', `commande_lignes?commande_id=eq.${commandeId}`)
 
     if (lignes.length > 0) {
-      const { error: err } = await supabase
-        .from('commande_lignes')
-        .insert(lignes.map(l => ({ ...l, commande_id: commandeId })))
-      if (err) throw err
+      await restCall('POST', 'commande_lignes', lignes.map(l => ({ ...l, commande_id: commandeId })))
     }
 
     // Recalculate totals
@@ -130,10 +108,8 @@ export const useCommandesStore = defineStore('commandes', () => {
   }
 
   async function remove(id: string) {
-    // Delete lines first, then the order
-    await supabase.from('commande_lignes').delete().eq('commande_id', id)
-    const { error: err } = await supabase.from('commandes').delete().eq('id', id)
-    if (err) throw err
+    await restCall('DELETE', `commande_lignes?commande_id=eq.${id}`)
+    await restCall('DELETE', `commandes?id=eq.${id}`)
     await fetchAll()
   }
 

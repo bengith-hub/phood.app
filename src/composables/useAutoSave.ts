@@ -1,5 +1,5 @@
 import { ref, watch, onUnmounted, type Ref } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error'
@@ -39,16 +39,14 @@ export function useAutoSave<T extends Record<string, unknown>>(
       // IndexedDB save failed, continue to try Supabase
     }
 
-    // Then sync to Supabase if online
+    // Then sync to Supabase via direct REST (bypasses hanging client)
     if (navigator.onLine) {
       try {
-        // Use update (not upsert) — the row must already exist
-        // upsert fails when NOT NULL columns (statut, created_by, etc.) are missing
-        const { error } = await supabase
-          .from(options.table)
-          .update({ ...data.value })
-          .eq('id', options.id.value)
-        if (error) throw error
+        await restCall(
+          'PATCH',
+          `${options.table}?id=eq.${options.id.value}`,
+          { ...data.value },
+        )
         status.value = 'saved'
       } catch {
         status.value = 'error'
