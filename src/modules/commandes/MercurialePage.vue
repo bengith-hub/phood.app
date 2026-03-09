@@ -25,6 +25,61 @@ const showEditor = ref(false)
 const editingProduct = ref<Partial<Mercuriale> | null>(null)
 const saving = ref(false)
 
+// Bulk selection mode
+const selectionMode = ref(false)
+const selectedIds = ref<Set<string>>(new Set())
+const bulkActioning = ref(false)
+
+function toggleSelectionMode() {
+  selectionMode.value = !selectionMode.value
+  if (!selectionMode.value) selectedIds.value = new Set()
+}
+
+function toggleSelected(id: string) {
+  const s = new Set(selectedIds.value)
+  if (s.has(id)) { s.delete(id) } else { s.add(id) }
+  selectedIds.value = s
+}
+
+function selectAll() {
+  selectedIds.value = new Set(displayedProducts.value.map(p => p.id))
+}
+
+function deselectAll() {
+  selectedIds.value = new Set()
+}
+
+async function bulkDeactivate() {
+  const count = selectedIds.value.size
+  if (count === 0) return
+  if (!confirm(`Désactiver ${count} produit${count > 1 ? 's' : ''} ?`)) return
+  bulkActioning.value = true
+  try {
+    await mercurialeStore.bulkSetActif([...selectedIds.value], false)
+    selectedIds.value = new Set()
+    selectionMode.value = false
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur de désactivation')
+  } finally {
+    bulkActioning.value = false
+  }
+}
+
+async function bulkActivate() {
+  const count = selectedIds.value.size
+  if (count === 0) return
+  bulkActioning.value = true
+  try {
+    await mercurialeStore.bulkSetActif([...selectedIds.value], true)
+    selectedIds.value = new Set()
+    selectionMode.value = false
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur de réactivation')
+  } finally {
+    bulkActioning.value = false
+  }
+}
+
 // Photo search
 const photoSearchResults = ref<{ url: string; thumbnail: string; title: string }[]>([])
 const photoSearching = ref(false)
@@ -268,6 +323,13 @@ onMounted(async () => {
         Actifs
       </label>
       <span class="result-count">{{ displayedProducts.length }} produits</span>
+      <button
+        class="btn-select-mode"
+        :class="{ active: selectionMode }"
+        @click="toggleSelectionMode"
+      >
+        {{ selectionMode ? 'Annuler' : 'S\u00e9lectionner' }}
+      </button>
     </div>
 
     <div v-if="mercurialeStore.loading" class="loading">Chargement...</div>
@@ -278,18 +340,35 @@ onMounted(async () => {
 
     <!-- Product list -->
     <div v-else class="product-list">
+      <!-- Select all / deselect all bar -->
+      <div v-if="selectionMode" class="select-all-bar">
+        <button class="btn-select-all" @click="selectAll">Tout s&eacute;lectionner ({{ displayedProducts.length }})</button>
+        <button v-if="selectedIds.size > 0" class="btn-deselect-all" @click="deselectAll">Tout d&eacute;s&eacute;lectionner</button>
+        <span v-if="selectedIds.size > 0" class="selection-count">{{ selectedIds.size }} s&eacute;lectionn&eacute;(s)</span>
+      </div>
+
       <div
         v-for="p in displayedProducts"
         :key="p.id"
         class="product-card"
-        @click="openEditor(p)"
+        :class="{ selected: selectionMode && selectedIds.has(p.id) }"
+        @click="selectionMode ? toggleSelected(p.id) : openEditor(p)"
       >
         <div class="product-row">
+          <!-- Checkbox in selection mode -->
+          <label v-if="selectionMode" class="bulk-checkbox" @click.stop>
+            <input
+              type="checkbox"
+              :checked="selectedIds.has(p.id)"
+              @change="toggleSelected(p.id)"
+            />
+          </label>
+
           <!-- Photo thumbnail -->
           <button
             class="product-photo"
             :class="{ uploading: uploadingPhotoId === p.id }"
-            @click.stop="triggerPhotoUpload(p.id)"
+            @click.stop="selectionMode ? toggleSelected(p.id) : triggerPhotoUpload(p.id)"
           >
             <img v-if="p.photo_url" :src="p.photo_url" :alt="p.designation" />
             <span v-else-if="uploadingPhotoId === p.id" class="photo-spinner">...</span>
@@ -325,6 +404,31 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- Bulk action bar -->
+    <Teleport to="body">
+      <Transition name="slide-up">
+        <div v-if="selectionMode && selectedIds.size > 0" class="bulk-action-bar">
+          <span class="bulk-count">{{ selectedIds.size }} produit{{ selectedIds.size > 1 ? 's' : '' }}</span>
+          <button
+            v-if="filterActif"
+            class="btn-bulk btn-bulk-deactivate"
+            :disabled="bulkActioning"
+            @click="bulkDeactivate"
+          >
+            {{ bulkActioning ? 'En cours...' : 'D\u00e9sactiver' }}
+          </button>
+          <button
+            v-else
+            class="btn-bulk btn-bulk-activate"
+            :disabled="bulkActioning"
+            @click="bulkActivate"
+          >
+            {{ bulkActioning ? 'En cours...' : 'R\u00e9activer' }}
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- Edit modal -->
     <div v-if="showEditor && editingProduct" class="modal-overlay" @click.self="closeEditor">
@@ -579,6 +683,130 @@ h1 {
   color: var(--text-tertiary);
   font-size: 15px;
   white-space: nowrap;
+}
+
+/* Selection mode button */
+.btn-select-mode {
+  height: 44px;
+  padding: 0 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.btn-select-mode.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(234, 88, 12, 0.06);
+}
+
+/* Select all bar */
+.select-all-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  margin-bottom: 4px;
+}
+.btn-select-all, .btn-deselect-all {
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.btn-select-all:active, .btn-deselect-all:active {
+  background: var(--bg-page);
+}
+.selection-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+/* Bulk checkbox on product card */
+.bulk-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 4px;
+}
+.bulk-checkbox input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+.product-card.selected {
+  box-shadow: 0 0 0 2px var(--color-primary);
+  background: rgba(234, 88, 12, 0.03);
+}
+
+/* Bulk action bar (fixed bottom) */
+.bulk-action-bar {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
+  background: var(--bg-surface);
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+  z-index: 100;
+}
+.bulk-count {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.btn-bulk {
+  height: 48px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-bulk-deactivate {
+  background: #dc2626;
+  color: #fff;
+}
+.btn-bulk-deactivate:active {
+  background: #b91c1c;
+}
+.btn-bulk-activate {
+  background: #16a34a;
+  color: #fff;
+}
+.btn-bulk-activate:active {
+  background: #15803d;
+}
+.btn-bulk:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Slide-up transition */
+.slide-up-enter-active, .slide-up-leave-active {
+  transition: all 0.25s ease;
+}
+.slide-up-enter-from, .slide-up-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(30px);
 }
 
 .loading, .empty {

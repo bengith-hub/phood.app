@@ -70,6 +70,13 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     await fetchAll()
   }
 
+  async function bulkSetActif(ids: string[], actif: boolean) {
+    if (ids.length === 0) return
+    const idsParam = `(${ids.join(',')})`
+    await restCall('PATCH', `mercuriale?id=in.${idsParam}`, { actif })
+    await fetchAll()
+  }
+
   function getById(id: string) {
     return items.value.find(m => m.id === id)
   }
@@ -155,5 +162,5 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     return photoUrl
   }
 
-  return { items, actifs, allCategories, loading, error, fetchAll, save, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, uploadPhotoFromUrl, searchPhotos, deleteItem }
+  return { items, actifs, allCategories, loading, error, fetchAll, save, bulkSetActif, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, uploadPhotoFromUrl, searchPhotos, deleteItem }
 })
