@@ -39,52 +39,83 @@ export const useFournisseursStore = defineStore('fournisseurs', () => {
     }
   }
 
-  /** Wrap a thenable with a timeout to prevent infinite hangs */
-  function withTimeout<T>(thenable: PromiseLike<T>, ms: number, label: string): Promise<T> {
-    return Promise.race([
-      Promise.resolve(thenable),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout (${ms / 1000}s) : ${label}. Essayez de vous déconnecter puis reconnecter.`)), ms)
-      ),
-    ])
+  /**
+   * Direct REST call to Supabase, bypassing the JS client's auth layer.
+   * The Supabase JS client's token refresh mechanism can hang indefinitely,
+   * blocking all write operations. This function uses fetch() directly
+   * with the JWT token read from localStorage.
+   */
+  async function supabaseRest(
+    method: 'POST' | 'PATCH' | 'DELETE',
+    table: string,
+    body: Record<string, unknown>,
+    filter?: string,
+  ): Promise<Record<string, unknown>[]> {
+    const url = import.meta.env.VITE_SUPABASE_URL as string
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+
+    // Read JWT from Supabase's localStorage (bypasses the hanging refresh)
+    const ref = url.replace('https://', '').split('.')[0]
+    const storageKey = `sb-${ref}-auth-token`
+    const stored = localStorage.getItem(storageKey)
+    let accessToken = anonKey // fallback to anon key
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        // Supabase v2 stores { access_token, refresh_token, ... } or { currentSession: ... }
+        accessToken = parsed.access_token || parsed.currentSession?.access_token || anonKey
+      } catch { /* use anon key */ }
+    }
+
+    const endpoint = filter
+      ? `${url}/rest/v1/${table}?${filter}`
+      : `${url}/rest/v1/${table}`
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15000)
+
+    try {
+      const resp = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': `Bearer ${accessToken}`,
+          'Prefer': 'return=representation',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '')
+        throw new Error(`Erreur ${resp.status}: ${text.slice(0, 200)}`)
+      }
+
+      const data = await resp.json()
+      return Array.isArray(data) ? data : []
+    } catch (e: unknown) {
+      if ((e as Error).name === 'AbortError') {
+        throw new Error('Timeout (15s) : le serveur ne répond pas. Essayez de vous reconnecter.')
+      }
+      throw e
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   async function save(fournisseur: Partial<Fournisseur> & { id?: string }) {
-    // Pre-check: verify we have a valid auth session before calling Supabase
-    const { data: { session } } = await withTimeout(
-      supabase.auth.getSession(), 5000, 'vérification session'
-    )
-    if (!session) {
-      throw new Error('Session expirée — veuillez vous reconnecter (déconnexion puis connexion).')
-    }
-
     if (fournisseur.id) {
       // Remove id from update payload — it should only be in the .eq() filter
       const { id, ...updatePayload } = fournisseur
-      const result = await withTimeout(
-        supabase
-          .from('fournisseurs')
-          .update(updatePayload)
-          .eq('id', id)
-          .select('id'),
-        15000, 'sauvegarde fournisseur'
-      ) as { data: { id: string }[] | null; error: { message: string } | null }
-      if (result.error) throw result.error
-      // Detect silent RLS failure: update returns empty array = no rows affected
-      if (!result.data || result.data.length === 0) {
-        throw new Error('Sauvegarde refusée — vérifiez que vous êtes bien connecté en tant qu\'admin.')
+      const data = await supabaseRest('PATCH', 'fournisseurs', updatePayload, `id=eq.${id}`)
+      if (data.length === 0) {
+        throw new Error('Sauvegarde refusée — session expirée ou droits insuffisants. Essayez de vous reconnecter.')
       }
     } else {
-      const result = await withTimeout(
-        supabase
-          .from('fournisseurs')
-          .insert(fournisseur)
-          .select('id'),
-        15000, 'création fournisseur'
-      ) as { data: { id: string }[] | null; error: { message: string } | null }
-      if (result.error) throw result.error
-      if (!result.data || result.data.length === 0) {
-        throw new Error('Création refusée — vérifiez que vous êtes bien connecté en tant qu\'admin.')
+      const data = await supabaseRest('POST', 'fournisseurs', fournisseur as Record<string, unknown>)
+      if (data.length === 0) {
+        throw new Error('Création refusée — session expirée ou droits insuffisants. Essayez de vous reconnecter.')
       }
     }
     await fetchAll()
