@@ -123,8 +123,8 @@ function removeEmailChip(field: EmailField, idx: number) {
 }
 
 /**
- * Get logo URL from fournisseur's site_web via Clearbit Logo API.
- * Extracts domain from any URL format and returns Clearbit logo URL.
+ * Get logo URL from fournisseur's site_web via icon.horse (free, reliable).
+ * Extracts domain from any URL format and returns icon URL.
  * Returns null if no site_web is set.
  */
 function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): string | null {
@@ -135,13 +135,13 @@ function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): s
     const url = site.includes('://') ? site : `https://${site}`
     const domain = new URL(url).hostname.replace(/^www\./, '')
     if (!domain || !domain.includes('.')) return null
-    return `https://logo.clearbit.com/${domain}`
+    return `https://icon.horse/icon/${domain}`
   } catch {
     return null
   }
 }
 
-/** When Clearbit logo fails, hide img and show fallback letter */
+/** When logo fails to load, hide img and show fallback letter */
 function onLogoError(e: Event) {
   const img = e.target as HTMLImageElement
   img.style.display = 'none'
@@ -176,52 +176,71 @@ async function handleSave() {
     alert('Le nom est obligatoire')
     return
   }
+
+  // Flush any pending email input
+  if (emailInput.value.trim()) addEmail('to')
+  if (emailBccInput.value.trim()) addEmail('bcc')
+
+  // Auto-compute jours_commande from delivery days + delays
+  const livDays = editingFournisseur.value.jours_livraison || []
+  const delais = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
+  const orderDays = new Set<number>()
+  for (const d of livDays) {
+    const delai = delais[String(d)] ?? 1
+    orderDays.add(getJourCommande(d, delai))
+  }
+
+  // Build clean payload — only known DB columns
+  const payload: Record<string, unknown> = {
+    nom: editingFournisseur.value.nom,
+    contact_nom: editingFournisseur.value.contact_nom || null,
+    email_commande: joinEmails(emailChips.value) || null,
+    email_commande_bcc: joinEmails(emailBccChips.value) || null,
+    telephone: editingFournisseur.value.telephone || null,
+    site_web: editingFournisseur.value.site_web || null,
+    siret: editingFournisseur.value.siret || null,
+    jours_commande: [...orderDays],
+    jours_livraison: livDays,
+    delai_commande_livraison: editingFournisseur.value.delai_commande_livraison || null,
+    heure_limite_commande: editingFournisseur.value.heure_limite_commande || null,
+    creneau_livraison: editingFournisseur.value.creneau_livraison || null,
+    franco_minimum: editingFournisseur.value.franco_minimum ?? 0,
+    duree_couverture_defaut: editingFournisseur.value.duree_couverture_defaut ?? 5,
+    conditions_paiement: editingFournisseur.value.conditions_paiement || null,
+    mode_envoi: editingFournisseur.value.mode_envoi || 'email',
+    adresse: editingFournisseur.value.adresse || null,
+    pennylane_supplier_id: editingFournisseur.value.pennylane_supplier_id || null,
+    notes: editingFournisseur.value.notes || null,
+    actif: editingFournisseur.value.actif ?? true,
+  }
+  if (editingFournisseur.value.id) {
+    payload.id = editingFournisseur.value.id
+  }
+
   try {
-    // Flush any pending email input
-    if (emailInput.value.trim()) addEmail('to')
-    if (emailBccInput.value.trim()) addEmail('bcc')
-
-    // Auto-compute jours_commande from delivery days + delays
-    const livDays = editingFournisseur.value.jours_livraison || []
-    const delais = (editingFournisseur.value.delai_commande_livraison || {}) as Record<string, number>
-    const orderDays = new Set<number>()
-    for (const d of livDays) {
-      const delai = delais[String(d)] ?? 1
-      orderDays.add(getJourCommande(d, delai))
-    }
-
-    // Build clean payload — only known DB columns
-    const payload: Partial<Fournisseur> = {
-      nom: editingFournisseur.value.nom,
-      contact_nom: editingFournisseur.value.contact_nom || null,
-      email_commande: joinEmails(emailChips.value) || null,
-      email_commande_bcc: joinEmails(emailBccChips.value) || null,
-      telephone: editingFournisseur.value.telephone || null,
-      site_web: editingFournisseur.value.site_web || null,
-      siret: editingFournisseur.value.siret || null,
-      jours_commande: [...orderDays],
-      jours_livraison: livDays,
-      delai_commande_livraison: editingFournisseur.value.delai_commande_livraison || null,
-      heure_limite_commande: editingFournisseur.value.heure_limite_commande || null,
-      creneau_livraison: editingFournisseur.value.creneau_livraison || null,
-      franco_minimum: editingFournisseur.value.franco_minimum ?? 0,
-      duree_couverture_defaut: editingFournisseur.value.duree_couverture_defaut ?? 5,
-      conditions_paiement: editingFournisseur.value.conditions_paiement || null,
-      mode_envoi: editingFournisseur.value.mode_envoi || 'email',
-      adresse: editingFournisseur.value.adresse || null,
-      pennylane_supplier_id: editingFournisseur.value.pennylane_supplier_id || null,
-      notes: editingFournisseur.value.notes || null,
-      actif: editingFournisseur.value.actif ?? true,
-    }
-    if (editingFournisseur.value.id) {
-      payload.id = editingFournisseur.value.id
-    }
-
-    await store.save(payload)
+    await store.save(payload as Partial<Fournisseur>)
     closeEditor()
   } catch (e: unknown) {
     const err = e as Record<string, unknown>
-    alert((err?.message as string) || 'Erreur de sauvegarde')
+    const msg = (err?.message as string) || ''
+
+    // If a column doesn't exist yet (migration not applied), retry without it
+    const colMatch = msg.match(/column[' ]+(\w+)[' ]/)
+    if (colMatch) {
+      const badCol = colMatch[1] as string
+      console.warn(`Colonne '${badCol}' introuvable en base, retry sans...`)
+      delete payload[badCol as keyof typeof payload]
+      try {
+        await store.save(payload as Partial<Fournisseur>)
+        closeEditor()
+        return
+      } catch {
+        // fallthrough to error display
+      }
+    }
+
+    alert(msg || 'Erreur de sauvegarde')
+    console.error('Save error:', e)
   }
 }
 
