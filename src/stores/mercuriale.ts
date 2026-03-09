@@ -139,29 +139,24 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     return data.images || []
   }
 
-  /** Download an image from URL, compress it, and upload to Supabase storage */
+  /** Download an image from URL (server-side) and upload to Supabase storage */
   async function uploadPhotoFromUrl(mercurialeId: string, imageUrl: string): Promise<string> {
-    const resp = await fetch(imageUrl)
-    if (!resp.ok) throw new Error('Impossible de télécharger l\'image')
-    const blob = await resp.blob()
-
-    const file = new File([blob], 'photo.jpg', { type: blob.type || 'image/jpeg' })
-    const compressed = await compressImage(file, 1024, 0.75)
-    const base64 = await blobToBase64(compressed)
     const path = `mercuriale/${mercurialeId}_${Date.now()}.jpg`
 
+    // Download + upload server-side to avoid CORS issues
     const res = await fetch('/.netlify/functions/upload-photo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        image_base64: base64,
+        image_url: imageUrl,
         bucket: 'ingredients-photos',
         path,
       }),
     })
     if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.error || 'Erreur upload photo')
+      let msg = 'Erreur upload photo'
+      try { const err = await res.json(); msg = err.error || msg } catch { /* ignore */ }
+      throw new Error(msg)
     }
     const { url: photoUrl } = await res.json()
     await save({ id: mercurialeId, photo_url: photoUrl } as Partial<Mercuriale> & { id: string })
