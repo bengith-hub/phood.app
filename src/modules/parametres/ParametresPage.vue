@@ -36,6 +36,11 @@ const zeltyBackfillFrom = ref('')
 const zeltyBackfillTo = ref('')
 const zeltyBackfillStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
 const zeltyBackfillMsg = ref('')
+
+// Zelty photo sync
+const zeltyPhotoStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
+const zeltyPhotoMsg = ref('')
+const zeltyPhotoForce = ref(false)
 const ventesCount = ref(0)
 
 const lastSuccessSync = computed(() => {
@@ -168,6 +173,31 @@ async function startBackfill() {
   } catch (e: unknown) {
     zeltyBackfillStatus.value = 'error'
     zeltyBackfillMsg.value = `Erreur : ${(e as Error).message || String(e)}`
+  }
+}
+
+async function startPhotoSync() {
+  zeltyPhotoStatus.value = 'running'
+  zeltyPhotoMsg.value = 'Récupération des photos Zelty en cours...'
+
+  try {
+    const resp = await fetch('/.netlify/functions/sync-zelty-photos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force_overwrite: zeltyPhotoForce.value }),
+    })
+
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+      throw new Error(errData.error || `Erreur ${resp.status}`)
+    }
+
+    const r = await resp.json()
+    zeltyPhotoStatus.value = 'success'
+    zeltyPhotoMsg.value = `Terminé : ${r.synced} photos synchronisées, ${r.skipped_already_has_photo} déjà présentes, ${r.skipped_no_zelty_photo} sans photo Zelty. (${r.zelty_products_total} produits Zelty, ${r.zelty_products_with_photos} avec photo)`
+  } catch (e: unknown) {
+    zeltyPhotoStatus.value = 'error'
+    zeltyPhotoMsg.value = `Erreur : ${(e as Error).message || String(e)}`
   }
 }
 
@@ -371,6 +401,31 @@ function formatDuration(ms: number | null) {
           </div>
           <p v-if="zeltyBackfillMsg" class="backfill-msg" :class="zeltyBackfillStatus">
             {{ zeltyBackfillMsg }}
+          </p>
+        </div>
+
+        <!-- Photo sync section -->
+        <div class="zelty-section">
+          <h3 class="section-title">Synchronisation photos produits</h3>
+          <p class="section-desc">
+            Récupère les photos des produits depuis Zelty et les associe aux recettes liées (via zelty_product_id).
+            Par défaut, seules les recettes sans photo sont mises à jour.
+          </p>
+          <div class="backfill-form">
+            <label class="checkbox-inline">
+              <input type="checkbox" v-model="zeltyPhotoForce" />
+              Écraser les photos existantes
+            </label>
+            <button
+              class="btn-sync"
+              :disabled="zeltyPhotoStatus === 'running'"
+              @click="startPhotoSync"
+            >
+              {{ zeltyPhotoStatus === 'running' ? 'Sync en cours...' : 'Synchroniser les photos' }}
+            </button>
+          </div>
+          <p v-if="zeltyPhotoMsg" class="backfill-msg" :class="zeltyPhotoStatus">
+            {{ zeltyPhotoMsg }}
           </p>
         </div>
 
@@ -757,6 +812,21 @@ function formatDuration(ms: number | null) {
 .backfill-msg.running {
   color: var(--color-primary);
   background: rgba(232, 93, 44, 0.08);
+}
+
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.checkbox-inline input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
 }
 
 .cron-table-wrap {
