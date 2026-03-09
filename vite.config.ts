@@ -8,7 +8,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'assets/logos/*.png'],
+      includeAssets: ['favicon.ico'],
       manifest: {
         name: 'PhoodApp',
         short_name: 'Phood',
