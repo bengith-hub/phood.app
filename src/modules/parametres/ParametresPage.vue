@@ -195,7 +195,7 @@ async function loadVentesCount() {
   } catch { /* ignore */ }
 }
 
-/** Split date range into monthly chunks and process sequentially to avoid timeout */
+/** Fetch all Zelty closures and import the requested date range in one call */
 async function startBackfill() {
   zeltyBackfillStatus.value = 'running'
 
@@ -208,54 +208,33 @@ async function startBackfill() {
     return d.toISOString().slice(0, 10)
   })()
 
-  // Build weekly chunks (7 days each — fits within Netlify 10s free-tier timeout)
-  const chunks: { from: string; to: string }[] = []
-  let cursor = new Date(dateFrom)
-  const end = new Date(dateTo)
-  while (cursor <= end) {
-    const chunkEnd = new Date(cursor)
-    chunkEnd.setDate(chunkEnd.getDate() + 6) // 7 days per chunk
-    const to = chunkEnd > end ? dateTo : chunkEnd.toISOString().slice(0, 10)
-    chunks.push({ from: cursor.toISOString().slice(0, 10), to })
-    cursor = new Date(chunkEnd)
-    cursor.setDate(cursor.getDate() + 1)
-  }
-
-  let totalImported = 0
-  let totalErrors = 0
-  let firstError = ''
-
   try {
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]!
-      zeltyBackfillMsg.value = `Import ${i + 1}/${chunks.length} (${chunk.from} → ${chunk.to})...`
+    zeltyBackfillMsg.value = `Import en cours (${dateFrom} → ${dateTo})...`
 
-      const resp = await fetch('/.netlify/functions/backfill-zelty-ca', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date_from: chunk.from, date_to: chunk.to }),
-      })
+    const resp = await fetch('/.netlify/functions/backfill-zelty-ca', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }),
+    })
 
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
-        throw new Error(`Mois ${chunk.from}: ${errData.error || `Erreur ${resp.status}`}`)
-      }
-
-      const result = await resp.json()
-      totalImported += result.imported || 0
-      totalErrors += result.errors || 0
-      if (result.first_error && !firstError) firstError = result.first_error
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+      throw new Error(errData.error || `Erreur ${resp.status}`)
     }
+
+    const result = await resp.json()
+    const totalImported = result.imported || 0
+    const totalErrors = result.errors || 0
 
     zeltyBackfillStatus.value = totalErrors > 0 && totalImported === 0 ? 'error' : 'success'
     let msg = `Import terminé : ${totalImported} jours importés, ${totalErrors} erreurs (${dateFrom} → ${dateTo})`
-    if (firstError) msg += `\nDétail erreur Zelty : ${firstError}`
+    if (result.first_error) msg += `\nDétail erreur Zelty : ${result.first_error}`
     zeltyBackfillMsg.value = msg
 
     await Promise.all([loadCronLogs(), loadVentesCount()])
   } catch (e: unknown) {
     zeltyBackfillStatus.value = 'error'
-    zeltyBackfillMsg.value = `${totalImported} importés avant erreur. ${(e as Error).message || String(e)}`
+    zeltyBackfillMsg.value = (e as Error).message || String(e)
   }
 }
 

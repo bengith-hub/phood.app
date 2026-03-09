@@ -1,6 +1,6 @@
 // Sync Zelty closures → ventes_historique
 // Triggered daily at 06:00 via pg_cron → pg_net
-// Fetches yesterday's closure from Zelty API and upserts into ventes_historique
+// Fetches closures from Zelty API and upserts yesterday's data
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -8,12 +8,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10'
 
 interface ZeltyClosure {
-  id: string
+  id: number
   date: string
-  total_ttc: number
-  nb_tickets: number
-  nb_covers?: number
-  validated: boolean
+  turnover: number // CA TTC in centimes
+  taxes: number    // Taxes in centimes
 }
 
 serve(async (req) => {
@@ -43,12 +41,12 @@ serve(async (req) => {
 
     const startTime = Date.now()
 
-    // Fetch yesterday's closure
+    // Fetch closures from Zelty
     const yesterday = new Date()
     yesterday.setDate(yesterday.getDate() - 1)
     const dateStr = yesterday.toISOString().split('T')[0]
 
-    const response = await fetch(`${ZELTY_BASE_URL}/closures?date=${dateStr}`, {
+    const response = await fetch(`${ZELTY_BASE_URL}/closures`, {
       headers: {
         'Authorization': `Bearer ${zeltyApiKey}`,
         'Accept': 'application/json',
@@ -62,25 +60,32 @@ serve(async (req) => {
     const data = await response.json()
     const closures: ZeltyClosure[] = data.closures || []
 
+    // Filter for yesterday's closures and pick the one with highest turnover
+    // (Zelty can create a duplicate empty closure at midnight)
+    const yesterdayClosures = closures.filter(c => c.date === dateStr)
+
     let upsertCount = 0
 
-    for (const closure of closures) {
+    if (yesterdayClosures.length > 0) {
+      // Keep the closure with highest turnover (the real one)
+      const best = yesterdayClosures.reduce((a, b) => (b.turnover || 0) > (a.turnover || 0) ? b : a)
+
       const { error } = await supabase
         .from('ventes_historique')
         .upsert(
           {
-            date: closure.date,
-            ca_ttc: closure.total_ttc,
-            nb_tickets: closure.nb_tickets,
-            nb_couverts: closure.nb_covers ?? null,
-            cloture_validee: closure.validated,
-            zelty_closure_id: closure.id,
+            date: best.date,
+            ca_ttc: (best.turnover || 0) / 100, // centimes → euros
+            nb_tickets: 0,
+            nb_couverts: null,
+            cloture_validee: true,
+            zelty_closure_id: String(best.id),
           },
           { onConflict: 'date' }
         )
 
       if (error) {
-        console.error(`Error upserting closure for ${closure.date}:`, error)
+        console.error(`Error upserting closure for ${best.date}:`, error)
       } else {
         upsertCount++
       }
