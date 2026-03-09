@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import { useAuth } from '@/composables/useAuth'
 import { syncCalendriers } from '@/lib/calendriers'
 import type { Config, ZoneStockage, Profile } from '@/types/database'
@@ -68,60 +68,70 @@ watch(activeTab, async (tab) => {
 })
 
 async function loadConfig() {
-  const { data } = await supabase.from('config').select('*').single()
-  if (data) config.value = data as Config
+  try {
+    const data = await restCall<Config>('GET', 'config?select=*', undefined, { single: true })
+    if (data) config.value = data
+  } catch { /* ignore */ }
 }
 
 async function loadZones() {
-  const { data } = await supabase.from('zones_stockage').select('*').order('ordre')
-  if (data) zones.value = data as ZoneStockage[]
+  try {
+    const data = await restCall<ZoneStockage[]>('GET', 'zones_stockage?select=*&order=ordre')
+    if (data) zones.value = data
+  } catch { /* ignore */ }
 }
 
 async function loadProfiles() {
-  const { data } = await supabase.from('profiles').select('*').order('nom')
-  if (data) profiles.value = data as Profile[]
+  try {
+    const data = await restCall<Profile[]>('GET', 'profiles?select=*&order=nom')
+    if (data) profiles.value = data
+  } catch { /* ignore */ }
 }
 
 async function saveConfig() {
   if (!config.value) return
   saving.value = true
   saveMsg.value = ''
-  const { error } = await supabase
-    .from('config')
-    .update({
+  try {
+    await restCall('PATCH', `config?id=eq.${config.value.id}`, {
       seuil_ecart_prix_pct: config.value.seuil_ecart_prix_pct,
       delai_alerte_avoir_heures: config.value.delai_alerte_avoir_heures,
       delai_expiration_avoir_heures: config.value.delai_expiration_avoir_heures,
       destinataires_email_avoir: config.value.destinataires_email_avoir,
       destinataires_email_alertes: config.value.destinataires_email_alertes,
     })
-    .eq('id', config.value.id)
-  saving.value = false
-  saveMsg.value = error ? `Erreur : ${error.message}` : 'Enregistré'
-  if (!error) setTimeout(() => saveMsg.value = '', 3000)
+    saveMsg.value = 'Enregistré'
+    setTimeout(() => saveMsg.value = '', 3000)
+  } catch (e: unknown) {
+    saveMsg.value = `Erreur : ${e instanceof Error ? e.message : 'inconnue'}`
+  } finally {
+    saving.value = false
+  }
 }
 
 async function addZone() {
   if (!newZoneName.value.trim()) return
   const ordre = zones.value.length + 1
-  const { error } = await supabase
-    .from('zones_stockage')
-    .insert({ nom: newZoneName.value.trim(), ordre })
-  if (!error) {
+  try {
+    await restCall('POST', 'zones_stockage', { nom: newZoneName.value.trim(), ordre })
     newZoneName.value = ''
     await loadZones()
-  }
+  } catch { /* ignore */ }
 }
 
 async function deleteZone(id: string) {
-  const { error } = await supabase.from('zones_stockage').delete().eq('id', id)
-  if (!error) await loadZones()
+  try {
+    await restCall('DELETE', `zones_stockage?id=eq.${id}`)
+    await loadZones()
+  } catch { /* ignore */ }
 }
 
 async function updateRole(profileId: string, newRole: string) {
   if (profileId === myProfile.value?.id) return // Can't change own role
-  await supabase.from('profiles').update({ role: newRole }).eq('id', profileId)
-  await loadProfiles()
+  try {
+    await restCall('PATCH', `profiles?id=eq.${profileId}`, { role: newRole })
+    await loadProfiles()
+  } catch { /* ignore */ }
 }
 
 async function inviteUser() {
@@ -172,19 +182,17 @@ async function syncCalendars() {
 
 // ── Zelty ──────────────────────────────────────────────────────────────
 async function loadCronLogs() {
-  const { data } = await supabase
-    .from('cron_logs')
-    .select('*')
-    .order('started_at', { ascending: false })
-    .limit(20)
-  if (data) cronLogs.value = data as CronLog[]
+  try {
+    const data = await restCall<CronLog[]>('GET', 'cron_logs?select=*&order=started_at.desc&limit=20')
+    if (data) cronLogs.value = data
+  } catch { /* ignore */ }
 }
 
 async function loadVentesCount() {
-  const { count } = await supabase
-    .from('ventes_historique')
-    .select('*', { count: 'exact', head: true })
-  ventesCount.value = count || 0
+  try {
+    const count = await restCall<number>('HEAD', 'ventes_historique?select=*', undefined, { prefer: 'count=exact' })
+    ventesCount.value = count || 0
+  } catch { /* ignore */ }
 }
 
 /** Split date range into monthly chunks and process sequentially to avoid timeout */

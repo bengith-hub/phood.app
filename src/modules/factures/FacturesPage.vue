@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useFacturesStore, type StatutRapprochement, type EcartFacture } from '@/stores/factures'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useCommandesStore } from '@/stores/commandes'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import type { FacturePennylane, Reception } from '@/types/database'
 
 const facturesStore = useFacturesStore()
@@ -125,18 +125,14 @@ async function openRapprochement(facture: FacturePennylane) {
 
   try {
     // Fetch receptions for this fournisseur that are not yet linked to an invoice
-    const query = supabase
-      .from('receptions')
-      .select('*, commandes!inner(numero, montant_total_ht, fournisseur_id)')
-      .eq('validee', true)
+    let path = 'receptions?select=*,commandes!inner(numero,montant_total_ht,fournisseur_id)&validee=eq.true&order=date_reception.desc&limit=20'
 
     // Filter by fournisseur if available
     if (facture.fournisseur_id) {
-      query.eq('commandes.fournisseur_id', facture.fournisseur_id)
+      path += `&commandes.fournisseur_id=eq.${facture.fournisseur_id}`
     }
 
-    const { data, error } = await query.order('date_reception', { ascending: false }).limit(20)
-    if (error) throw error
+    const data = await restCall<Record<string, unknown>[]>('GET', path)
 
     matchingReceptions.value = (data || []).map((r: Record<string, unknown>) => {
       const cmd = r.commandes as Record<string, unknown> | null

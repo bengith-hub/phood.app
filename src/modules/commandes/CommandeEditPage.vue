@@ -10,7 +10,7 @@ import { useAuth } from '@/composables/useAuth'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { useLocking } from '@/composables/useLocking'
 import { generateCommandePdf } from '@/lib/pdf-commande'
-import { supabase } from '@/lib/supabase'
+import { storageUpload, storagePublicUrl } from '@/lib/rest-client'
 import StockCoverageRow from './StockCoverageRow.vue'
 import type { StockCoverageInfo } from './StockCoverageRow.vue'
 import type { Commande, CommandeLigne, Mercuriale, Conditionnement, Fournisseur } from '@/types/database'
@@ -473,13 +473,13 @@ async function handleEnvoyer() {
     try {
       const pdfBlob = pdf.output('blob')
       const pdfPath = `commandes/${commandeData.numero}.pdf`
-      await supabase.storage.from('pdfs').upload(pdfPath, pdfBlob, {
+      await storageUpload('pdfs', pdfPath, pdfBlob, {
         contentType: 'application/pdf',
         upsert: true,
       })
       // Update commande with PDF URL
-      const { data: urlData } = supabase.storage.from('pdfs').getPublicUrl(pdfPath)
-      await commandesStore.updateCommande(commandeId.value, { pdf_url: urlData.publicUrl })
+      const publicUrl = storagePublicUrl('pdfs', pdfPath)
+      await commandesStore.updateCommande(commandeId.value, { pdf_url: publicUrl })
     } catch {
       // PDF upload is not critical — continue
       console.warn('PDF upload to storage failed, continuing...')

@@ -65,6 +65,57 @@ export interface RestCallOptions {
 }
 
 /** Direct REST call to Supabase PostgREST with timeout */
+// ── Storage helpers ──────────────────────────────────────────────
+
+/** Upload a file to Supabase Storage */
+export async function storageUpload(
+  bucket: string,
+  path: string,
+  file: Blob | File,
+  options?: { contentType?: string; upsert?: boolean },
+): Promise<{ path: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const headers: Record<string, string> = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${getAccessToken()}`,
+    }
+    if (options?.contentType) headers['Content-Type'] = options.contentType
+    if (options?.upsert) headers['x-upsert'] = 'true'
+
+    const resp = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+      method: 'POST',
+      headers,
+      body: file,
+      signal: controller.signal,
+    })
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Storage upload error ${resp.status}: ${text.slice(0, 300)}`)
+    }
+
+    return { path }
+  } catch (e: unknown) {
+    if ((e as Error).name === 'AbortError') {
+      throw new Error('Timeout upload : le serveur ne répond pas.')
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Get public URL for a file in Supabase Storage */
+export function storagePublicUrl(bucket: string, path: string): string {
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`
+}
+
+// ── REST call ────────────────────────────────────────────────────
+
+/** Direct REST call to Supabase PostgREST with timeout */
 export async function restCall<T = unknown>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'HEAD',
   path: string,

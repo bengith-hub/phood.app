@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRecettesStore } from '@/stores/recettes'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useAuth } from '@/composables/useAuth'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import type {
   Recette,
   RecetteType,
@@ -270,27 +270,17 @@ async function handleSave() {
     let savedId: string
 
     if (isNew.value) {
-      const { data, error } = await supabase
-        .from('recettes')
-        .insert(recetteData)
-        .select('id')
-        .single()
-      if (error) throw error
+      const data = await restCall<{ id: string }>(
+        'POST', 'recettes', recetteData, { single: true },
+      )
       savedId = data.id
     } else {
       savedId = recetteId.value!
-      const { error } = await supabase
-        .from('recettes')
-        .update(recetteData)
-        .eq('id', savedId)
-      if (error) throw error
+      await restCall('PATCH', `recettes?id=eq.${savedId}`, recetteData)
     }
 
     // Save ingredient lines: delete all then re-insert
-    await supabase
-      .from('recette_ingredients')
-      .delete()
-      .eq('recette_id', savedId)
+    await restCall('DELETE', `recette_ingredients?recette_id=eq.${savedId}`)
 
     if (ingredientLignes.value.length > 0) {
       const lignesInsert = ingredientLignes.value.map(l => ({
@@ -300,10 +290,7 @@ async function handleSave() {
         quantite: l.quantite,
         unite: l.unite,
       }))
-      const { error: riError } = await supabase
-        .from('recette_ingredients')
-        .insert(lignesInsert)
-      if (riError) throw riError
+      await restCall('POST', 'recette_ingredients', lignesInsert)
     }
 
     // Refresh store
@@ -323,14 +310,8 @@ async function handleDelete() {
   if (!recetteId.value) return
   deleting.value = true
   try {
-    await supabase
-      .from('recette_ingredients')
-      .delete()
-      .eq('recette_id', recetteId.value)
-    await supabase
-      .from('recettes')
-      .delete()
-      .eq('id', recetteId.value)
+    await restCall('DELETE', `recette_ingredients?recette_id=eq.${recetteId.value}`)
+    await restCall('DELETE', `recettes?id=eq.${recetteId.value}`)
     await recettesStore.fetchAll()
     router.replace('/recettes')
   } catch (e: unknown) {

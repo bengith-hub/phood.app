@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRecettesStore } from '@/stores/recettes'
 import { useIngredientsStore } from '@/stores/ingredients'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import type {
   IngredientRestaurant,
   RecetteType,
@@ -186,9 +186,10 @@ async function handleSave() {
     // Step 1: Create new ingredients if needed
     for (const pi of parsedIngredients.value) {
       if (pi.createNew && !pi.matched_id) {
-        const { data, error } = await supabase
-          .from('ingredients_restaurant')
-          .insert({
+        const data = await restCall<{ id: string }>(
+          'POST',
+          'ingredients_restaurant',
+          {
             nom: pi.nom_extrait,
             unite_stock: pi.unite,
             categorie: null,
@@ -196,10 +197,9 @@ async function handleSave() {
             contient: null,
             cout_unitaire: 0,
             actif: true,
-          })
-          .select('id')
-          .single()
-        if (error) throw error
+          },
+          { single: true },
+        )
         pi.matched_id = data.id
         pi.matched_nom = pi.nom_extrait
       }
@@ -218,9 +218,10 @@ async function handleSave() {
     }
 
     // Step 3: Create recette
-    const { data: recette, error: recError } = await supabase
-      .from('recettes')
-      .insert({
+    const recette = await restCall<{ id: string }>(
+      'POST',
+      'recettes',
+      {
         nom: parsedNom.value,
         type: type.value,
         categorie: categorie.value || null,
@@ -231,10 +232,9 @@ async function handleSave() {
         cout_emballage: coutEmballage.value || null,
         prix_vente: Object.keys(prixVente).length > 0 ? prixVente : null,
         actif: true,
-      })
-      .select('id')
-      .single()
-    if (recError) throw recError
+      },
+      { single: true },
+    )
 
     // Step 4: Create ingredient lines
     const lignes = parsedIngredients.value
@@ -248,10 +248,7 @@ async function handleSave() {
       }))
 
     if (lignes.length > 0) {
-      const { error: riError } = await supabase
-        .from('recette_ingredients')
-        .insert(lignes)
-      if (riError) throw riError
+      await restCall('POST', 'recette_ingredients', lignes)
     }
 
     // Refresh stores

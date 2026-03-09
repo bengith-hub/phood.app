@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useMercurialeStore } from '@/stores/mercuriale'
 import { useFournisseursStore } from '@/stores/fournisseurs'
-import { supabase } from '@/lib/supabase'
+import { restCall } from '@/lib/rest-client'
 import type { IngredientRestaurant, Mercuriale, HistoriquePrix } from '@/types/database'
 
 const ingredientsStore = useIngredientsStore()
@@ -46,13 +46,11 @@ interface IngredientCoutRow {
 async function fetchHistoriquePrix() {
   try {
     if (!navigator.onLine) return
-    const { data, error } = await supabase
-      .from('historique_prix')
-      .select('*')
-      .order('date_constatation', { ascending: false })
-      .limit(500)
-    if (error) throw error
-    historiquePrix.value = (data as HistoriquePrix[]) || []
+    const data = await restCall<HistoriquePrix[]>(
+      'GET',
+      'historique_prix?select=*&order=date_constatation.desc&limit=500',
+    )
+    historiquePrix.value = data || []
   } catch {
     historiquePrix.value = []
   }

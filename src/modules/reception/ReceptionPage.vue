@@ -4,7 +4,7 @@ import { useCommandesStore } from '@/stores/commandes'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useMercurialeStore } from '@/stores/mercuriale'
 import { useAuth } from '@/composables/useAuth'
-import { supabase } from '@/lib/supabase'
+import { restCall, storageUpload } from '@/lib/rest-client'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import type { Commande, CommandeLigne, AnomalieType } from '@/types/database'
 
@@ -165,25 +165,27 @@ async function handleValidate() {
     let photoUrl: string | null = null
     if (photoBlob.value) {
       const fileName = `${selectedCommande.value.numero}_${Date.now()}.jpg`
-      const { data } = await supabase.storage
-        .from('bl-photos')
-        .upload(fileName, photoBlob.value, { contentType: 'image/jpeg' })
-      if (data) photoUrl = data.path
+      try {
+        const result = await storageUpload('bl-photos', fileName, photoBlob.value, { contentType: 'image/jpeg' })
+        photoUrl = result.path
+      } catch {
+        console.warn('BL photo upload failed, continuing...')
+      }
     }
 
     // Create reception record
-    const { data: reception, error: recError } = await supabase
-      .from('receptions')
-      .insert({
+    const reception = await restCall<{ id: string }>(
+      'POST',
+      'receptions',
+      {
         commande_id: selectedCommande.value.id,
         photo_bl_url: photoUrl,
         ia_extraction: iaResult.value,
         validee: !hasAnomalies.value,
         created_by: user.value.id,
-      })
-      .select()
-      .single()
-    if (recError) throw recError
+      },
+      { single: true },
+    )
 
     // Create reception lines
     const lignesInsert = receptionLignes.value.map(l => ({
@@ -197,7 +199,7 @@ async function handleValidate() {
       anomalie_detail: l.anomalie_detail || null,
       prix_bl: l.prix_bl,
     }))
-    await supabase.from('reception_lignes').insert(lignesInsert)
+    await restCall('POST', 'reception_lignes', lignesInsert)
 
     // Update order status
     await commandesStore.updateStatut(
@@ -210,8 +212,8 @@ async function handleValidate() {
       if (l.quantite_acceptee > 0) {
         const merc = mercurialeStore.getById(l.mercuriale_id)
         if (merc?.ingredient_restaurant_id) {
-          // Upsert stock
-          await supabase.rpc('increment_stock', {
+          // Upsert stock via RPC
+          await restCall('POST', 'rpc/increment_stock', {
             p_ingredient_id: merc.ingredient_restaurant_id,
             p_quantite: l.quantite_acceptee,
           })
