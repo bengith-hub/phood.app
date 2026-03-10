@@ -190,6 +190,8 @@ export interface RecetteIngredient {
   sous_recette_id: string | null
   quantite: number
   unite: string
+  sur_place: boolean
+  emporter: boolean
   created_at: string
 }
 

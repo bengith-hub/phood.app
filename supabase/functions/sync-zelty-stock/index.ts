@@ -26,9 +26,13 @@ interface ZeltyOrderLine {
   name: string
 }
 
+/** Zelty order_type: 'on_site' = sur place, 'take_away' / 'delivery' = emporter/livraison */
+type OrderChannel = 'sur_place' | 'emporter'
+
 interface ZeltyOrder {
   id: string
   status: string
+  order_type?: string // 'on_site', 'take_away', 'delivery', etc.
   items: ZeltyOrderLine[]
 }
 
@@ -39,6 +43,8 @@ interface RecetteIngredient {
   sous_recette_id: string | null
   quantite: number
   unite: string
+  sur_place: boolean
+  emporter: boolean
 }
 
 interface Recette {
@@ -86,12 +92,22 @@ Deno.serve(async (req) => {
     const zeltyData = await zeltyResponse.json()
     const orders: ZeltyOrder[] = zeltyData.orders || zeltyData.data || []
 
-    // Aggregate quantities by zelty_product_id
-    const productQty = new Map<string, number>()
+    // Map Zelty order_type to our channel
+    function getChannel(order: ZeltyOrder): OrderChannel {
+      const t = (order.order_type || '').toLowerCase()
+      if (t === 'on_site' || t === 'eat_in' || t === 'dine_in') return 'sur_place'
+      return 'emporter' // take_away, delivery, etc.
+    }
+
+    // Aggregate quantities by zelty_product_id + channel
+    const productQty = new Map<string, { sur_place: number; emporter: number }>()
     for (const order of orders) {
+      const channel = getChannel(order)
       for (const item of (order.items || [])) {
         const pid = String(item.product_id)
-        productQty.set(pid, (productQty.get(pid) || 0) + item.quantity)
+        const entry = productQty.get(pid) || { sur_place: 0, emporter: 0 }
+        entry[channel] += item.quantity
+        productQty.set(pid, entry)
       }
     }
 
@@ -120,10 +136,11 @@ Deno.serve(async (req) => {
       ingredientsByRecette.set(ri.recette_id, list)
     }
 
-    // Recursive decomposition: recette → base ingredients
+    // Recursive decomposition: recette → base ingredients, filtered by channel
     function decomposeRecette(
       recetteId: string,
       multiplier: number,
+      channel: OrderChannel,
       depth: number = 0
     ): Map<string, number> {
       const result = new Map<string, number>()
@@ -131,6 +148,10 @@ Deno.serve(async (req) => {
 
       const ings = ingredientsByRecette.get(recetteId) || []
       for (const ri of ings) {
+        // Skip ingredient if not used for this channel
+        if (channel === 'sur_place' && !ri.sur_place) continue
+        if (channel === 'emporter' && !ri.emporter) continue
+
         const qty = ri.quantite * multiplier
 
         if (ri.ingredient_id) {
@@ -138,7 +159,7 @@ Deno.serve(async (req) => {
           result.set(ri.ingredient_id, (result.get(ri.ingredient_id) || 0) + qty)
         } else if (ri.sous_recette_id) {
           // Sub-recipe: recurse
-          const subResult = decomposeRecette(ri.sous_recette_id, qty, depth + 1)
+          const subResult = decomposeRecette(ri.sous_recette_id, qty, channel, depth + 1)
           for (const [ingId, subQty] of subResult) {
             result.set(ingId, (result.get(ingId) || 0) + subQty)
           }
@@ -148,24 +169,29 @@ Deno.serve(async (req) => {
       return result
     }
 
-    // Process each sold product
+    // Process each sold product, per channel
     const allDecrements = new Map<string, number>()
     let productsProcessed = 0
     let productsUnmatched = 0
 
-    for (const [zeltyId, qtySold] of productQty) {
+    for (const [zeltyId, qtyByChannel] of productQty) {
       const recette = recetteByZelty.get(zeltyId)
       if (!recette) {
         productsUnmatched++
         continue
       }
 
-      // Decompose: qty sold * (1 / nb_portions) to get ingredient quantities per unit sold
-      const portionMultiplier = qtySold / Math.max(1, recette.nb_portions)
-      const ingredients = decomposeRecette(recette.id, portionMultiplier)
+      // Decompose per channel to respect sur_place/emporter toggles
+      for (const channel of ['sur_place', 'emporter'] as OrderChannel[]) {
+        const qtySold = qtyByChannel[channel]
+        if (qtySold <= 0) continue
 
-      for (const [ingId, qty] of ingredients) {
-        allDecrements.set(ingId, (allDecrements.get(ingId) || 0) + qty)
+        const portionMultiplier = qtySold / Math.max(1, recette.nb_portions)
+        const ingredients = decomposeRecette(recette.id, portionMultiplier, channel)
+
+        for (const [ingId, qty] of ingredients) {
+          allDecrements.set(ingId, (allDecrements.get(ingId) || 0) + qty)
+        }
       }
       productsProcessed++
     }

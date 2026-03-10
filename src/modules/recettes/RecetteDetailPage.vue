@@ -51,6 +51,8 @@ interface IngredientLigne {
   quantite: number
   unite: string
   label: string // display name
+  sur_place: boolean
+  emporter: boolean
 }
 const ingredientLignes = ref<IngredientLigne[]>([])
 
@@ -203,6 +205,8 @@ function addIngredient(ing: IngredientRestaurant) {
     quantite: newIngQty.value,
     unite: newIngUnite.value || ing.unite_stock,
     label: ing.nom,
+    sur_place: true,
+    emporter: true,
   })
   ingredientSearch.value = ''
   newIngQty.value = 0
@@ -211,13 +215,15 @@ function addIngredient(ing: IngredientRestaurant) {
 }
 
 function addSousRecette(sr: Recette) {
-  if (newSrQty.value <= 0) return
+  const qty = newSrQty.value > 0 ? newSrQty.value : 1
   ingredientLignes.value.push({
     ingredient_id: null,
     sous_recette_id: sr.id,
-    quantite: newSrQty.value,
+    quantite: qty,
     unite: 'portion(s)',
     label: sr.nom,
+    sur_place: true,
+    emporter: true,
   })
   sousRecetteSearch.value = ''
   newSrQty.value = 0
@@ -307,6 +313,8 @@ async function handleSave() {
         sous_recette_id: l.sous_recette_id,
         quantite: l.quantite,
         unite: l.unite,
+        sur_place: l.sur_place,
+        emporter: l.emporter,
       }))
       await restCall('POST', 'recette_ingredients', lignesInsert)
     }
@@ -417,6 +425,8 @@ onMounted(async () => {
         quantite: ri.quantite,
         unite: ri.unite,
         label,
+        sur_place: ri.sur_place ?? true,
+        emporter: ri.emporter ?? true,
       }
     })
   }
@@ -526,6 +536,18 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <section class="form-section">
       <h2>Ingr&eacute;dients</h2>
 
+      <!-- Column headers -->
+      <div v-if="ingredientLignes.length > 0" class="ingredient-header">
+        <span class="ih-spacer"></span>
+        <span class="ih-name"></span>
+        <span class="ih-qty"></span>
+        <span class="ih-unite"></span>
+        <span class="ih-cost"></span>
+        <span class="ih-canal" title="Sur place">SP</span>
+        <span class="ih-canal" title="Emporter / Livraison">EMP</span>
+        <span class="ih-remove"></span>
+      </div>
+
       <!-- Current ingredients list -->
       <div class="ingredient-list">
         <div
@@ -553,6 +575,14 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
                 : '--'
             }} &euro;
           </span>
+          <label class="canal-toggle" title="Sur place">
+            <input type="checkbox" v-model="ligne.sur_place" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <label class="canal-toggle" title="Emporter / Livraison">
+            <input type="checkbox" v-model="ligne.emporter" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
           <button class="btn-remove" @click="removeLigne(idx)">&times;</button>
         </div>
         <div v-if="ingredientLignes.length === 0" class="empty-small">
@@ -1068,6 +1098,75 @@ h1 {
   width: 70px;
   text-align: right;
   flex-shrink: 0;
+}
+
+/* Canal toggles */
+.ingredient-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 4px;
+}
+
+.ih-spacer { width: 36px; flex-shrink: 0; }
+.ih-name { flex: 1; }
+.ih-qty { width: 80px; flex-shrink: 0; }
+.ih-unite { width: 50px; flex-shrink: 0; }
+.ih-cost { width: 70px; flex-shrink: 0; }
+.ih-canal {
+  width: 42px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+.ih-remove { width: 36px; flex-shrink: 0; }
+
+.canal-toggle {
+  width: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.canal-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  width: 36px;
+  height: 20px;
+  background: #d1d5db;
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.2s;
+}
+
+.canal-toggle input:checked + .toggle-track {
+  background: var(--color-primary);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.canal-toggle input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(16px);
 }
 
 .btn-remove {
