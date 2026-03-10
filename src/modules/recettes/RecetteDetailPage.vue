@@ -74,6 +74,24 @@ const saving = ref(false)
 const saveError = ref<string | null>(null)
 const deleting = ref(false)
 const showDeleteConfirm = ref(false)
+const sousRecetteParents = ref<string[]>([])
+
+/** Check and show delete confirmation, warning if used as sous-recette elsewhere */
+async function confirmDelete() {
+  sousRecetteParents.value = []
+  if (recetteId.value) {
+    try {
+      const refs = await restCall<{ recette_id: string }[]>(
+        'GET',
+        `recette_ingredients?sous_recette_id=eq.${recetteId.value}&select=recette_id`,
+      )
+      sousRecetteParents.value = refs
+        .map((r) => recettesStore.getById(r.recette_id)?.nom || 'Recette inconnue')
+        .filter((v, i, a) => a.indexOf(v) === i)
+    } catch { /* proceed anyway */ }
+  }
+  showDeleteConfirm.value = true
+}
 
 // --- Computed ---
 
@@ -311,19 +329,8 @@ async function handleDelete() {
   deleting.value = true
   saveError.value = null
   try {
-    // Check if this recipe is used as a sous-recette in other recipes
-    const refs = await restCall<{ recette_id: string }[]>(
-      'GET',
-      `recette_ingredients?sous_recette_id=eq.${recetteId.value}&select=recette_id`,
-    )
-    if (refs.length > 0) {
-      // Find parent recipe names for a clear error message
-      const parentNames = refs
-        .map((r) => recettesStore.getById(r.recette_id)?.nom || 'Recette inconnue')
-        .filter((v, i, a) => a.indexOf(v) === i)
-      saveError.value = `Impossible de supprimer : cette recette est utilisée comme sous-recette dans : ${parentNames.join(', ')}. Retirez-la de ces recettes d'abord.`
-      return
-    }
+    // Clean up any sous-recette references in other recipes before deleting
+    await restCall('DELETE', `recette_ingredients?sous_recette_id=eq.${recetteId.value}`)
 
     // Delete child rows: ingredients of this recipe
     await restCall('DELETE', `recette_ingredients?recette_id=eq.${recetteId.value}`)
@@ -442,7 +449,7 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       <div v-if="!isNew && isAdmin" class="header-actions">
         <button
           class="btn-delete"
-          @click.stop="showDeleteConfirm = true"
+          @click.stop="confirmDelete"
         >
           Supprimer
         </button>
@@ -453,6 +460,9 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <div v-if="showDeleteConfirm" class="confirm-overlay" @click.self="showDeleteConfirm = false">
       <div class="confirm-dialog">
         <p>Supprimer la recette <strong>{{ nom }}</strong> ?</p>
+        <p v-if="sousRecetteParents.length > 0" class="confirm-warning">
+          Cette recette est r&eacute;f&eacute;renc&eacute;e comme sous-recette dans : <strong>{{ sousRecetteParents.join(', ') }}</strong>. Ces r&eacute;f&eacute;rences seront retir&eacute;es automatiquement.
+        </p>
         <p class="confirm-sub">Cette action est irr&eacute;versible.</p>
         <div class="confirm-actions">
           <button class="btn-secondary" @click="showDeleteConfirm = false">Annuler</button>
@@ -1370,6 +1380,14 @@ h1 {
   margin-bottom: 8px;
 }
 
+.confirm-warning {
+  font-size: 14px;
+  color: var(--warning, #e67e22);
+  background: #fef3e2;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
 .confirm-sub {
   font-size: 14px !important;
   color: var(--text-tertiary);
