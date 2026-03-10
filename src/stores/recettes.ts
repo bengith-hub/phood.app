@@ -20,7 +20,7 @@ export const useRecettesStore = defineStore('recettes', () => {
     try {
       if (navigator.onLine) {
         const [recData, riData] = await Promise.all([
-          restCall<Recette[]>('GET', 'recettes?select=*&order=nom'),
+          restCall<Recette[]>('GET', 'recettes?select=*&actif=eq.true&order=nom'),
           restCall<RecetteIngredient[]>('GET', 'recette_ingredients?select=*'),
         ])
 
