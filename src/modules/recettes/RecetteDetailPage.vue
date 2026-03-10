@@ -541,56 +541,62 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <!-- SECTION: Info de base -->
     <section class="form-section">
       <h2>Informations</h2>
-      <div v-if="photoUrl" class="recette-photo-container">
-        <img :src="photoUrl" :alt="nom" class="recette-photo" />
-      </div>
-      <div class="form-grid">
-        <div class="field full">
-          <label>Nom</label>
-          <input
-            v-model="nom"
-            type="text"
-            placeholder="Nom de la recette"
-            class="input"
-            :disabled="!!zeltyProductId"
-          />
-          <span v-if="zeltyProductId" class="field-hint">Synchronisé depuis Zelty — nom non modifiable</span>
+      <div class="info-header" :class="{ 'has-photo': !!photoUrl }">
+        <div v-if="photoUrl" class="recette-photo-container">
+          <img :src="photoUrl" :alt="nom" class="recette-photo" />
         </div>
-        <div class="field">
-          <label>Type</label>
-          <select v-model="type" class="input">
-            <option v-for="t in TYPE_OPTIONS" :key="t.value" :value="t.value">
-              {{ t.label }}
-            </option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Catégorie</label>
-          <div class="search-dropdown" @click.stop>
+        <div class="info-fields">
+          <div class="field full">
+            <label>Nom</label>
             <input
-              v-model="categorie"
+              v-model="nom"
               type="text"
-              placeholder="Ex: Bowls, Desserts..."
+              placeholder="Nom de la recette"
               class="input"
-              @focus="showCategorieDropdown = true"
-              @blur="closeCategorieDropdown"
+              :disabled="!!zeltyProductId"
             />
-            <div v-if="showCategorieDropdown && filteredCategories.length > 0" class="dropdown-list">
-              <button
-                v-for="cat in filteredCategories"
-                :key="cat"
-                class="dropdown-item"
-                @mousedown.prevent="selectCategorie(cat)"
-              >
-                {{ cat }}
-              </button>
+            <span v-if="zeltyProductId" class="field-hint">Synchronisé depuis Zelty — nom non modifiable</span>
+          </div>
+          <div class="info-fields-row">
+            <div class="field">
+              <label>Type</label>
+              <select v-model="type" class="input">
+                <option v-for="t in TYPE_OPTIONS" :key="t.value" :value="t.value">
+                  {{ t.label }}
+                </option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Catégorie</label>
+              <div class="search-dropdown" @click.stop>
+                <input
+                  v-model="categorie"
+                  type="text"
+                  placeholder="Ex: Bowls, Desserts..."
+                  class="input"
+                  @focus="showCategorieDropdown = true"
+                  @blur="closeCategorieDropdown"
+                />
+                <div v-if="showCategorieDropdown && filteredCategories.length > 0" class="dropdown-list">
+                  <button
+                    v-for="cat in filteredCategories"
+                    :key="cat"
+                    class="dropdown-item"
+                    @mousedown.prevent="selectCategorie(cat)"
+                  >
+                    {{ cat }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label>Nb portions</label>
+              <input v-model.number="nbPortions" type="number" min="1" inputmode="numeric" class="input" />
             </div>
           </div>
         </div>
-        <div class="field">
-          <label>Nb portions</label>
-          <input v-model.number="nbPortions" type="number" min="1" inputmode="numeric" class="input" />
-        </div>
+      </div>
+      <div class="form-grid">
         <div class="field full">
           <label>Description</label>
           <textarea v-model="description" rows="2" placeholder="Description courte..." class="input textarea" />
@@ -1176,16 +1182,47 @@ h1 {
   text-decoration: underline;
 }
 
-.recette-photo-container {
+.info-header {
+  display: flex;
+  gap: 24px;
   margin-bottom: 16px;
+}
+.info-header:not(.has-photo) {
+  display: block;
+}
+.info-header .recette-photo-container {
+  flex-shrink: 0;
+}
+.info-header .info-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.info-fields-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+.recette-photo-container {
   text-align: center;
 }
 .recette-photo {
-  max-width: 200px;
-  max-height: 200px;
+  width: 180px;
+  height: 180px;
   border-radius: 12px;
   object-fit: cover;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+@media (max-width: 700px) {
+  .info-header {
+    flex-direction: column;
+    align-items: center;
+  }
+  .info-fields-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .ing-qty {
