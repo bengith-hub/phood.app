@@ -20,7 +20,7 @@ const ALLERGEN_SHORTCUTS = Object.entries(ALLERGEN_LABELS)
 
 function getIngredient(id: string) {
   const ing = ingredientsStore.getById(id)
-  if (!ing) return undefined
+  if (!ing || !ing.actif) return undefined
   return { allergenes: ing.allergenes, contient: ing.contient }
 }
 
