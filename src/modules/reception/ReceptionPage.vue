@@ -7,15 +7,15 @@ import { useAuth } from '@/composables/useAuth'
 import { restCall, storageUpload } from '@/lib/rest-client'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import { createNotificationForAdmins, loadConfig } from '@/lib/create-notification'
-import type { Commande, CommandeLigne, AnomalieType } from '@/types/database'
+import type { Commande, CommandeLigne, AnomalieType, AvoirLigne } from '@/types/database'
 
 const commandesStore = useCommandesStore()
 const fournisseursStore = useFournisseursStore()
 const mercurialeStore = useMercurialeStore()
 const { user, isManagerOrAbove } = useAuth()
 
-// Steps: select → photo → compare → validate
-type Step = 'select' | 'photo' | 'compare' | 'validate'
+// Steps: select → photo → compare → (avoir if anomalies) → validate
+type Step = 'select' | 'photo' | 'compare' | 'avoir' | 'validate'
 const step = ref<Step>('select')
 const selectedCommande = ref<Commande | null>(null)
 const commandeLignes = ref<CommandeLigne[]>([])
@@ -38,6 +38,40 @@ interface ReceptionLigneEdit {
   prix_bl: number | null
 }
 const receptionLignes = ref<ReceptionLigneEdit[]>([])
+
+// Avoir (credit note) state
+const avoirComment = ref('')
+const avoirSending = ref(false)
+const avoirPhotos = ref<{ blob: Blob; preview: string }[]>([])
+
+const anomalieLines = computed(() =>
+  receptionLignes.value.filter(l => l.anomalie_type !== null)
+)
+
+const avoirLignes = computed<AvoirLigne[]>(() =>
+  anomalieLines.value.map(l => {
+    const merc = mercurialeStore.getById(l.mercuriale_id)
+    const prixBc = merc?.prix_unitaire_ht || 0
+    const prixBl = l.prix_bl || prixBc
+    const ecartQty = l.quantite_attendue - l.quantite_recue
+    const balance = ecartQty * prixBc
+    return {
+      designation: l.designation,
+      sku: merc?.ref_fournisseur || null,
+      quantite_commandee: l.quantite_attendue,
+      quantite_recue: l.quantite_recue,
+      prix_unitaire_bc: prixBc,
+      prix_unitaire_bl: prixBl,
+      anomalie_type: l.anomalie_type!,
+      anomalie_detail: l.anomalie_detail,
+      balance: Math.abs(balance),
+    }
+  })
+)
+
+const avoirTotal = computed(() =>
+  avoirLignes.value.reduce((sum, l) => sum + l.balance, 0)
+)
 
 const commandesAReceptionner = computed(() =>
   commandesStore.commandes.filter(c => c.statut === 'envoyee')
@@ -154,15 +188,26 @@ const hasAnomalies = computed(() =>
 async function handleValidate() {
   if (!selectedCommande.value || !user.value) return
 
-  const nbAnomalies = receptionLignes.value.filter(l => l.anomalie_type).length
-  const msg = nbAnomalies > 0
-    ? `Valider la réception avec ${nbAnomalies} anomalie(s) ?\nLes stocks seront mis à jour.`
-    : 'Valider la réception ?\nLes stocks seront mis à jour.'
-  if (!confirm(msg)) return
+  // If anomalies exist, go to avoir step instead of direct validation
+  if (hasAnomalies.value) {
+    step.value = 'avoir'
+    return
+  }
+
+  if (!confirm('Valider la réception ?\nLes stocks seront mis à jour.')) return
+  await performValidation(false)
+}
+
+/**
+ * Core validation logic: creates reception, updates stocks, detects prices.
+ * Called after avoir decision (send/skip) or direct validation (no anomalies).
+ */
+async function performValidation(withAvoir: boolean) {
+  if (!selectedCommande.value || !user.value) return
 
   validating.value = true
   try {
-    // Upload photo if exists
+    // Upload BL photo if exists
     let photoUrl: string | null = null
     if (photoBlob.value) {
       const fileName = `${selectedCommande.value.numero}_${Date.now()}.jpg`
@@ -203,17 +248,14 @@ async function handleValidate() {
     await restCall('POST', 'reception_lignes', lignesInsert)
 
     // Update order status
-    await commandesStore.updateStatut(
-      selectedCommande.value.id,
-      hasAnomalies.value ? 'controlee' : 'validee'
-    )
+    const newStatut = withAvoir ? 'avoir_en_cours' : (hasAnomalies.value ? 'controlee' : 'validee')
+    await commandesStore.updateStatut(selectedCommande.value.id, newStatut)
 
     // Increment stocks for accepted quantities
     for (const l of receptionLignes.value) {
       if (l.quantite_acceptee > 0) {
         const merc = mercurialeStore.getById(l.mercuriale_id)
         if (merc?.ingredient_restaurant_id) {
-          // Upsert stock via RPC
           await restCall('POST', 'rpc/increment_stock', {
             p_ingredient_id: merc.ingredient_restaurant_id,
             p_quantite: l.quantite_acceptee,
@@ -225,7 +267,32 @@ async function handleValidate() {
     // Detect price changes and create notifications
     await detectPriceChanges(receptionLignes.value)
 
-    // Reset and go back to selection
+    // Create avoir record if requested
+    if (withAvoir) {
+      // Upload anomaly photos
+      const uploadedPhotos: string[] = []
+      for (const photo of avoirPhotos.value) {
+        try {
+          const fileName = `avoir_${selectedCommande.value.numero}_${Date.now()}_${uploadedPhotos.length}.jpg`
+          const result = await storageUpload('anomalies', fileName, photo.blob, { contentType: 'image/jpeg' })
+          uploadedPhotos.push(result.path)
+        } catch {
+          console.warn('Anomaly photo upload failed, continuing...')
+        }
+      }
+
+      await restCall('POST', 'avoirs', {
+        reception_id: reception.id,
+        fournisseur_id: selectedCommande.value.fournisseur_id,
+        commande_id: selectedCommande.value.id,
+        montant_estime: avoirTotal.value,
+        statut: 'en_attente',
+        commentaire: avoirComment.value || null,
+        lignes_avoir: avoirLignes.value,
+        photos_anomalies: uploadedPhotos,
+      }, { single: true })
+    }
+
     step.value = 'validate'
   } catch (e) {
     console.error('Validation failed:', e)
@@ -233,6 +300,132 @@ async function handleValidate() {
   } finally {
     validating.value = false
   }
+}
+
+/**
+ * Send avoir email to supplier then validate reception.
+ */
+async function handleAvoirSendEmail() {
+  if (!selectedCommande.value) return
+
+  const fournisseur = fournisseursStore.getById(selectedCommande.value.fournisseur_id)
+  if (!fournisseur?.email_commande) {
+    alert('Aucun email fournisseur configure. Utilisez "Valider sans envoyer".')
+    return
+  }
+
+  avoirSending.value = true
+  try {
+    const config = await loadConfig()
+    const today = new Date().toLocaleDateString('fr-FR')
+    const commandeNum = selectedCommande.value.numero
+
+    // Build email HTML
+    const emailHtml = buildAvoirEmailHtml(commandeNum, fournisseur.nom, today)
+
+    await fetch('/.netlify/functions/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: fournisseur.email_commande,
+        cc: config?.destinataires_email_avoir || [],
+        subject: `${today} | Demande d'avoir | Phood | Begles | ${commandeNum}`,
+        html: emailHtml,
+      }),
+    })
+
+    // Perform validation with avoir
+    await performValidation(true)
+
+    // Update avoir to envoyee status with email flag
+    // Find the just-created avoir and update it
+    const avoirs = await restCall<{ id: string }[]>(
+      'GET',
+      `avoirs?commande_id=eq.${selectedCommande.value.id}&select=id&order=created_at.desc&limit=1`
+    )
+    if (avoirs.length > 0) {
+      await restCall('PATCH', `avoirs?id=eq.${avoirs[0]!.id}`, {
+        statut: 'envoyee',
+        date_envoi: new Date().toISOString(),
+        email_envoye: true,
+      })
+    }
+  } catch (e) {
+    console.error('Avoir email send failed:', e)
+    alert('Erreur lors de l\'envoi. Vous pouvez reessayer ou valider sans envoyer.')
+  } finally {
+    avoirSending.value = false
+  }
+}
+
+/**
+ * Validate avoir without sending email (internal tracking only).
+ */
+async function handleAvoirSkipEmail() {
+  if (!confirm('Valider l\'avoir sans envoyer d\'email ?\nL\'anomalie sera tracee dans l\'application.')) return
+  await performValidation(true)
+}
+
+function buildAvoirEmailHtml(commandeNum: string, _fournisseurNom: string, _date: string): string {
+  const lignesHtml = avoirLignes.value.map(l => `
+    <tr>
+      <td style="padding:8px;border:1px solid #ddd;">${l.designation}</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:center;">${l.sku || '—'}</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:center;">${l.quantite_commandee}</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:center;">${l.quantite_recue}</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:right;">${l.prix_unitaire_bc?.toFixed(2) || '—'} €</td>
+      <td style="padding:8px;border:1px solid #ddd;">${l.anomalie_type}${l.anomalie_detail ? ' — ' + l.anomalie_detail : ''}</td>
+      <td style="padding:8px;border:1px solid #ddd;text-align:right;">${l.balance.toFixed(2)} €</td>
+    </tr>
+  `).join('')
+
+  const commentHtml = avoirComment.value
+    ? `<p style="margin-top:16px;"><strong>Commentaire :</strong> ${avoirComment.value}</p>`
+    : ''
+
+  return `
+    <div style="font-family:sans-serif;max-width:750px;margin:0 auto;">
+      <h2 style="color:#E85D2C;">Demande d'avoir — ${commandeNum}</h2>
+      <p>Bonjour,</p>
+      <p>Suite a la reception de la commande <strong>${commandeNum}</strong>, nous avons constate les anomalies suivantes :</p>
+      <table style="border-collapse:collapse;width:100%;margin:16px 0;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="padding:8px;border:1px solid #ddd;text-align:left;">Produit</th>
+            <th style="padding:8px;border:1px solid #ddd;">SKU</th>
+            <th style="padding:8px;border:1px solid #ddd;">Cmd</th>
+            <th style="padding:8px;border:1px solid #ddd;">Recu</th>
+            <th style="padding:8px;border:1px solid #ddd;">Prix BC</th>
+            <th style="padding:8px;border:1px solid #ddd;">Motif</th>
+            <th style="padding:8px;border:1px solid #ddd;">Balance</th>
+          </tr>
+        </thead>
+        <tbody>${lignesHtml}</tbody>
+        <tfoot>
+          <tr style="font-weight:bold;background:#fef2f2;">
+            <td colspan="6" style="padding:8px;border:1px solid #ddd;">Total HT de l'avoir demande</td>
+            <td style="padding:8px;border:1px solid #ddd;text-align:right;">${avoirTotal.value.toFixed(2)} €</td>
+          </tr>
+        </tfoot>
+      </table>
+      ${commentHtml}
+      <p>Merci de bien vouloir traiter cette demande dans les meilleurs delais.</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+      <p style="color:#888;font-size:13px;">Phood Restaurant — Centre Commercial Rives d'Arcins — Begles<br/>team.begles@phood-restaurant.fr</p>
+    </div>
+  `
+}
+
+async function handleAnomalyPhotoCapture(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const compressed = await compressImage(file)
+  avoirPhotos.value.push({
+    blob: compressed,
+    preview: URL.createObjectURL(compressed),
+  })
+  input.value = '' // allow re-capture
 }
 
 /**
@@ -305,6 +498,8 @@ function reset() {
   photoPreview.value = null
   iaResult.value = null
   receptionLignes.value = []
+  avoirComment.value = ''
+  avoirPhotos.value = []
 }
 
 onMounted(async () => {
@@ -443,7 +638,94 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Step 4: Done -->
+    <!-- Step 4: Avoir (credit note request) -->
+    <div v-else-if="step === 'avoir'">
+      <button class="btn-back" @click="step = 'compare'">← Controle</button>
+      <h1>Demande d'avoir</h1>
+      <p class="subtitle">{{ selectedCommande?.numero }} — {{ getFournisseurNom(selectedCommande?.fournisseur_id || '') }}</p>
+
+      <!-- Anomaly summary table -->
+      <div class="avoir-table-wrap">
+        <table class="avoir-table">
+          <thead>
+            <tr>
+              <th>Produit</th>
+              <th>Cmd</th>
+              <th>Recu</th>
+              <th>Motif</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(l, idx) in avoirLignes" :key="idx">
+              <td>{{ l.designation }}</td>
+              <td class="center">{{ l.quantite_commandee }}</td>
+              <td class="center">{{ l.quantite_recue }}</td>
+              <td>{{ l.anomalie_type }}</td>
+              <td class="right">{{ l.balance.toFixed(2) }} €</td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4"><strong>Total HT avoir</strong></td>
+              <td class="right"><strong>{{ avoirTotal.toFixed(2) }} €</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- Anomaly photos -->
+      <div class="avoir-photos">
+        <h3>Photos justificatives</h3>
+        <div class="photos-grid">
+          <div v-for="(photo, idx) in avoirPhotos" :key="idx" class="photo-thumb">
+            <img :src="photo.preview" alt="Anomalie" />
+            <button class="photo-remove" @click="avoirPhotos.splice(idx, 1)">×</button>
+          </div>
+          <label class="photo-add-btn">
+            + Photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              @change="handleAnomalyPhotoCapture"
+              class="visually-hidden"
+            />
+          </label>
+        </div>
+      </div>
+
+      <!-- Comment -->
+      <div class="avoir-comment">
+        <h3>Commentaire (optionnel)</h3>
+        <textarea
+          v-model="avoirComment"
+          placeholder="Accord verbal avec le livreur, details supplementaires..."
+          rows="3"
+          class="comment-textarea"
+        ></textarea>
+      </div>
+
+      <!-- Actions -->
+      <div class="avoir-actions">
+        <button
+          class="btn-primary btn-send"
+          @click="handleAvoirSendEmail"
+          :disabled="avoirSending || validating"
+        >
+          {{ avoirSending ? 'Envoi...' : 'Envoyer au fournisseur' }}
+        </button>
+        <button
+          class="btn-secondary"
+          @click="handleAvoirSkipEmail"
+          :disabled="avoirSending || validating"
+        >
+          {{ validating ? 'Validation...' : 'Valider sans envoyer' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 5: Done -->
     <div v-else-if="step === 'validate'">
       <div class="success-screen">
         <div class="success-icon">✅</div>
@@ -602,6 +884,114 @@ h2 { font-size: 22px; margin-bottom: 16px; }
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+/* Avoir step */
+.avoir-table-wrap { overflow-x: auto; margin-bottom: 20px; }
+.avoir-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+.avoir-table th, .avoir-table td {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.avoir-table th {
+  background: var(--bg-main);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.avoir-table .center { text-align: center; }
+.avoir-table .right { text-align: right; }
+.avoir-table tfoot td { background: #fef2f2; }
+
+.avoir-photos { margin-bottom: 20px; }
+.avoir-photos h3 { font-size: 16px; margin-bottom: 10px; }
+.photos-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.photo-thumb {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.photo-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.photo-add-btn {
+  width: 80px;
+  height: 80px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--bg-surface);
+}
+
+.avoir-comment { margin-bottom: 20px; }
+.avoir-comment h3 { font-size: 16px; margin-bottom: 8px; }
+.comment-textarea {
+  width: 100%;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-size: 16px;
+  font-family: inherit;
+  resize: vertical;
+  background: var(--bg-surface);
+}
+.comment-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.avoir-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn-send { flex: 1; min-width: 200px; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }
 
 /* Success */
