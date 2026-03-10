@@ -293,10 +293,98 @@ function dayOfMonth(dateStr: string): number {
   return new Date(dateStr + 'T00:00:00').getDate()
 }
 
+// --- Helpers: past date check ---
+function isPastDate(dateStr: string): boolean {
+  return dateStr < new Date().toISOString().split('T')[0]!
+}
+
+// --- Waterfall data for factors card ---
+function getWaterfallSteps(fc: ForecastResult): { label: string; value: number; cumul: number; type: string; detail: string }[] {
+  const steps: { label: string; value: number; cumul: number; type: string; detail: string }[] = []
+  let running = fc.ca_base
+
+  // Start with base
+  steps.push({ label: 'Moyenne historique', value: fc.ca_base, cumul: fc.ca_base, type: 'base', detail: 'Moyenne des memes jours de semaine' })
+
+  for (const f of fc.factors) {
+    const impact = Math.round(running * (f.coefficient - 1))
+    running += impact
+    steps.push({
+      label: f.label,
+      value: impact,
+      cumul: running,
+      type: f.type,
+      detail: f.detail,
+    })
+  }
+
+  return steps
+}
+
 // --- Data diagnostics ---
 const ventesValidees = computed(() => store.ventes.filter(v => v.cloture_validee).length)
-const ventesTotal = computed(() => store.ventes.length)
 const meteoCount = computed(() => store.meteo.length)
+
+// --- Meteo backfill ---
+const meteoBackfillStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
+const meteoBackfillMsg = ref('')
+
+async function backfillMeteo() {
+  meteoBackfillStatus.value = 'running'
+  meteoBackfillMsg.value = 'Import meteo historique en cours...'
+  try {
+    const resp = await fetch('/.netlify/functions/backfill-meteo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const data = await resp.json()
+    if (data.success) {
+      meteoBackfillStatus.value = 'success'
+      meteoBackfillMsg.value = `${data.total_imported} jours de meteo importes (${data.date_from} a ${data.date_to})`
+      await store.fetchMeteo()
+      recalculateForecasts()
+      recalculateMonthForecasts()
+    } else {
+      meteoBackfillStatus.value = 'error'
+      meteoBackfillMsg.value = data.error || 'Erreur inconnue'
+    }
+  } catch (e: unknown) {
+    meteoBackfillStatus.value = 'error'
+    meteoBackfillMsg.value = (e as Error).message || String(e)
+  }
+}
+
+// --- CA backfill ---
+const caBackfillStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
+const caBackfillMsg = ref('')
+
+async function backfillCA() {
+  caBackfillStatus.value = 'running'
+  caBackfillMsg.value = 'Import historique CA Zelty en cours...'
+  try {
+    const resp = await fetch('/.netlify/functions/backfill-zelty-ca', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const data = await resp.json()
+    if (data.total_imported !== undefined) {
+      caBackfillStatus.value = 'success'
+      caBackfillMsg.value = `${data.total_imported} jours importes (${data.date_from} a ${data.date_to})`
+      await store.fetchVentes()
+      recalculateForecasts()
+      recalculateMonthForecasts()
+      precisionS1.value = store.calculatePrecisionS1()
+    } else {
+      caBackfillStatus.value = 'error'
+      caBackfillMsg.value = data.error || 'Erreur inconnue'
+    }
+  } catch (e: unknown) {
+    caBackfillStatus.value = 'error'
+    caBackfillMsg.value = (e as Error).message || String(e)
+  }
+}
 
 // --- Calendar sync ---
 const calendarSyncStatus = ref<string | null>(null)
@@ -396,22 +484,39 @@ watch(
     <template v-else-if="forecasts.length > 0 || monthForecasts.length > 0">
 
       <!-- Data diagnostic banner -->
-      <div v-if="ventesValidees === 0 && !store.loading" class="data-warning">
+      <div v-if="(ventesValidees === 0 || meteoCount === 0) && !store.loading" class="data-warning">
         <div class="data-warning-icon">&#9888;</div>
         <div class="data-warning-content">
-          <strong>Aucune donnee de vente validee</strong>
-          <p v-if="ventesTotal > 0">
-            {{ ventesTotal }} lignes chargees mais aucune avec cloture validee.
-            Les previsions se basent uniquement sur les clotures Zelty validees.
+          <strong>Donnees manquantes</strong>
+          <p>
+            {{ ventesValidees }} jours de CA &middot;
+            {{ meteoCount }} jours de meteo &middot;
+            {{ store.evenements.length }} evenements calendrier
           </p>
-          <p v-else>
-            Aucune donnee de vente trouvee. Lancez un import historique depuis
-            <strong>Parametres &gt; Zelty &gt; Import historique</strong>
-            pour charger vos chiffres de vente passes.
-          </p>
-          <p class="data-warning-hint">
-            {{ meteoCount }} jours de meteo charges &middot; {{ store.evenements.length }} evenements calendrier
-          </p>
+
+          <div v-if="ventesValidees === 0" class="data-warning-action">
+            <p>Aucune donnee de vente. Importez l'historique Zelty :</p>
+            <button
+              class="btn-backfill"
+              :disabled="caBackfillStatus === 'running'"
+              @click="backfillCA"
+            >
+              {{ caBackfillStatus === 'running' ? 'Import en cours...' : 'Importer le CA Zelty (18 mois)' }}
+            </button>
+            <span v-if="caBackfillMsg" class="backfill-inline-msg" :class="caBackfillStatus">{{ caBackfillMsg }}</span>
+          </div>
+
+          <div v-if="meteoCount === 0" class="data-warning-action">
+            <p>Aucune donnee meteo. Importez l'historique :</p>
+            <button
+              class="btn-backfill"
+              :disabled="meteoBackfillStatus === 'running'"
+              @click="backfillMeteo"
+            >
+              {{ meteoBackfillStatus === 'running' ? 'Import en cours...' : 'Importer la meteo (18 mois)' }}
+            </button>
+            <span v-if="meteoBackfillMsg" class="backfill-inline-msg" :class="meteoBackfillStatus">{{ meteoBackfillMsg }}</span>
+          </div>
         </div>
       </div>
 
@@ -517,7 +622,8 @@ watch(
                   <span class="month-cell-meteo">{{ weatherCodeToEmoji(fc.meteo?.code_meteo ?? null) }}</span>
                 </div>
                 <div v-if="!store.isJourFerme(fc.jour_semaine)" class="month-cell-body">
-                  <span class="month-cell-ca">{{ formatEurosCompact(fc.ca_prevision) }}</span>
+                  <span v-if="fc.ca_realise !== null" class="month-cell-ca month-cell-ca--realise">{{ formatEurosCompact(fc.ca_realise) }}</span>
+                  <span v-else class="month-cell-ca">{{ formatEurosCompact(fc.ca_prevision) }}</span>
                   <div class="month-cell-confidence">
                     <div class="mini-confidence-bar">
                       <div
@@ -665,9 +771,11 @@ watch(
                 </template>
               </div>
 
-              <!-- CA forecast -->
+              <!-- CA forecast / realise -->
               <div class="day-ca">
-                <span class="ca-value">{{ formatEuros(fc.ca_prevision) }}</span>
+                <span v-if="fc.ca_realise !== null" class="ca-value ca-value--realise">{{ formatEuros(fc.ca_realise) }}</span>
+                <span v-else class="ca-value">{{ formatEuros(fc.ca_prevision) }}</span>
+                <span v-if="fc.ca_realise !== null" class="ca-sub">prevu: {{ formatEuros(fc.ca_prevision) }}</span>
                 <span class="ca-tickets">{{ fc.nb_tickets_prevision }} tickets</span>
               </div>
 
@@ -788,7 +896,26 @@ watch(
                   {{ formatEuros(selectedForecast.ca_prevision) }}
                 </span>
               </div>
-              <div class="detail-metric">
+              <div v-if="selectedForecast.ca_realise !== null" class="detail-metric">
+                <span class="metric-label">CA realise</span>
+                <span class="metric-value metric-value--large metric-value--realise">
+                  {{ formatEuros(selectedForecast.ca_realise) }}
+                </span>
+                <span
+                  v-if="selectedForecast.ca_realise > 0"
+                  class="metric-ecart"
+                  :class="selectedForecast.ca_realise >= selectedForecast.ca_prevision ? 'evo-positive' : 'evo-negative'"
+                >
+                  Ecart : {{ selectedForecast.ca_realise >= selectedForecast.ca_prevision ? '+' : '' }}{{ ((selectedForecast.ca_realise - selectedForecast.ca_prevision) / selectedForecast.ca_prevision * 100).toFixed(0) }}%
+                  ({{ selectedForecast.ca_realise >= selectedForecast.ca_prevision ? '+' : '' }}{{ formatEuros(selectedForecast.ca_realise - selectedForecast.ca_prevision) }})
+                </span>
+              </div>
+              <div v-else-if="isPastDate(selectedForecast.date)" class="detail-metric">
+                <span class="metric-label">CA realise</span>
+                <span class="metric-value metric-value--large metric-value--missing">--</span>
+                <span class="metric-missing-hint">Pas de donnee Zelty</span>
+              </div>
+              <div v-else class="detail-metric">
                 <span class="metric-label">Tickets</span>
                 <span class="metric-value metric-value--large">
                   {{ selectedForecast.nb_tickets_prevision }}
@@ -829,10 +956,10 @@ watch(
             </div>
           </div>
 
-          <!-- Weather card -->
-          <div v-if="selectedForecast.meteo" class="detail-card detail-card--meteo">
+          <!-- Weather card (always shown, with empty state) -->
+          <div class="detail-card detail-card--meteo">
             <h3>Meteo</h3>
-            <div class="meteo-detail">
+            <div v-if="selectedForecast.meteo" class="meteo-detail">
               <span class="meteo-icon-large">
                 {{ weatherCodeToEmoji(selectedForecast.meteo.code_meteo) }}
               </span>
@@ -861,6 +988,19 @@ watch(
                 </div>
               </div>
             </div>
+            <div v-else class="meteo-empty">
+              <p>Pas de donnees meteo pour cette date.</p>
+              <button
+                v-if="meteoBackfillStatus !== 'running'"
+                class="btn-backfill"
+                @click="backfillMeteo"
+              >
+                Importer l'historique meteo
+              </button>
+              <p v-if="meteoBackfillMsg" class="backfill-msg" :class="meteoBackfillStatus">
+                {{ meteoBackfillMsg }}
+              </p>
+            </div>
           </div>
 
           <!-- Events card -->
@@ -875,39 +1015,55 @@ watch(
               class="event-detail"
             >
               <span class="event-tag" :class="'event-' + evt.type">{{ evt.nom }}</span>
-              <span class="event-coeff">Coefficient : {{ evt.coefficient.toFixed(2) }}</span>
+              <span class="event-coeff">
+                {{ evt.coefficient > 1 ? '+' : '' }}{{ ((evt.coefficient - 1) * 100).toFixed(0) }}% de frequentation
+              </span>
               <span v-if="evt.notes" class="event-notes">{{ evt.notes }}</span>
             </div>
           </div>
 
-          <!-- Factors card -->
+          <!-- Waterfall factors card (replaces the old x0.86 style) -->
           <div
             v-if="selectedForecast.factors.length > 0"
             class="detail-card detail-card--factors"
           >
-            <h3>Facteurs de prevision</h3>
-            <div
-              v-for="(factor, fIdx) in selectedForecast.factors"
-              :key="fIdx"
-              class="factor-item"
-            >
-              <div class="factor-header">
-                <span class="factor-type-badge" :class="'factor-type-' + factor.type">
-                  {{ factor.type === 'meteo' ? 'Meteo'
-                    : factor.type === 'evenement' ? 'Evenement'
-                    : factor.type === 'tendance' ? 'Tendance'
-                    : factor.type === 'rupture_meteo' ? 'Rupture'
-                    : 'Temperature' }}
-                </span>
-                <span class="factor-label">{{ factor.label }}</span>
-                <span
-                  class="factor-coeff"
-                  :class="coefficientClass(factor.coefficient)"
-                >
-                  x{{ factor.coefficient.toFixed(2) }}
-                </span>
+            <h3>Comment est calcule le CA prevu</h3>
+            <div class="waterfall">
+              <div
+                v-for="(step, sIdx) in getWaterfallSteps(selectedForecast)"
+                :key="sIdx"
+                class="waterfall-step"
+                :class="{ 'waterfall-step--base': step.type === 'base' }"
+              >
+                <div class="waterfall-step-header">
+                  <span v-if="step.type !== 'base'" class="factor-type-badge" :class="'factor-type-' + step.type">
+                    {{ step.type === 'meteo' ? 'Meteo'
+                      : step.type === 'evenement' ? 'Evenement'
+                      : step.type === 'tendance' ? 'Tendance'
+                      : step.type === 'rupture_meteo' ? 'Rupture'
+                      : step.type === 'temperature' ? 'Temperature'
+                      : '' }}
+                  </span>
+                  <span class="waterfall-label">{{ step.label }}</span>
+                  <span
+                    class="waterfall-impact"
+                    :class="step.type === 'base' ? '' : step.value >= 0 ? 'impact-positive' : 'impact-negative'"
+                  >
+                    {{ step.type === 'base' ? formatEuros(step.value) : (step.value >= 0 ? '+' : '') + formatEuros(step.value) }}
+                  </span>
+                </div>
+                <div class="waterfall-step-detail">
+                  <span class="waterfall-detail-text">{{ step.detail }}</span>
+                  <span v-if="step.type !== 'base'" class="waterfall-running">= {{ formatEuros(step.cumul) }}</span>
+                </div>
               </div>
-              <span class="factor-detail">{{ factor.detail }}</span>
+              <!-- Final result -->
+              <div class="waterfall-step waterfall-step--result">
+                <div class="waterfall-step-header">
+                  <span class="waterfall-label">CA prevu final</span>
+                  <span class="waterfall-impact waterfall-impact--final">{{ formatEuros(selectedForecast.ca_prevision) }}</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -935,7 +1091,8 @@ watch(
               </div>
             </div>
             <div v-else class="empty-repartition">
-              Pas de donnees de repartition horaire disponibles
+              <p>Pas de donnees de repartition horaire disponibles.</p>
+              <p class="empty-repartition-hint">La repartition horaire necessite l'import des tickets Zelty horodates.</p>
             </div>
           </div>
 
@@ -1345,6 +1502,10 @@ watch(
   color: var(--text-primary);
 }
 
+.month-cell-ca--realise {
+  color: var(--color-primary);
+}
+
 .mini-confidence-bar {
   height: 3px;
   background: var(--border);
@@ -1521,6 +1682,15 @@ watch(
   font-size: 20px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.ca-value--realise {
+  color: var(--color-primary);
+}
+
+.ca-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 .ca-tickets {
@@ -1706,6 +1876,187 @@ watch(
 .factor-type-tendance { background: #e5e7eb; color: #374151; }
 .factor-type-rupture_meteo { background: #fee2e2; color: #991b1b; }
 .factor-type-temperature { background: #fce7f3; color: #9d174d; }
+
+/* --- Waterfall chart --- */
+.waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.waterfall-step {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.waterfall-step:last-child {
+  border-bottom: none;
+}
+
+.waterfall-step--base {
+  background: #f8fafc;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.waterfall-step--result {
+  background: #f0fdf4;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  border-top: 2px solid var(--color-success);
+}
+
+.waterfall-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.waterfall-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.waterfall-impact {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.impact-positive {
+  color: var(--color-success);
+}
+
+.impact-negative {
+  color: var(--color-danger);
+}
+
+.waterfall-impact--final {
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.waterfall-step-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.waterfall-detail-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  flex: 1;
+}
+
+.waterfall-running {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* --- Backfill buttons --- */
+.btn-backfill {
+  padding: 8px 16px;
+  border: 1px solid var(--color-primary);
+  background: white;
+  color: var(--color-primary);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 40px;
+}
+
+.btn-backfill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-backfill:active:not(:disabled) {
+  background: #fff7ed;
+}
+
+.backfill-msg,
+.backfill-inline-msg {
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.backfill-msg.success,
+.backfill-inline-msg.success {
+  color: var(--color-success);
+}
+
+.backfill-msg.error,
+.backfill-inline-msg.error {
+  color: var(--color-danger);
+}
+
+.backfill-msg.running,
+.backfill-inline-msg.running {
+  color: #1e40af;
+}
+
+.backfill-inline-msg {
+  display: block;
+}
+
+.data-warning-action {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.data-warning-action p {
+  width: 100%;
+  margin: 0;
+}
+
+/* --- CA realise --- */
+.metric-value--realise {
+  color: var(--color-primary);
+}
+
+.metric-value--missing {
+  color: var(--text-tertiary);
+}
+
+.metric-ecart {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.metric-missing-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* --- Meteo empty state --- */
+.meteo-empty {
+  text-align: center;
+  padding: 16px 0;
+  color: var(--text-tertiary);
+}
+
+.meteo-empty p {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+}
+
+.empty-repartition-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
 
 /* ============================= */
 /* DAY VIEW                       */

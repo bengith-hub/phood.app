@@ -23,12 +23,14 @@ export interface ForecastResult {
   date: string
   jour_semaine: number
   ca_prevision: number
+  ca_base: number          // Base CA before coefficients (historical avg)
   nb_tickets_prevision: number
   confidence: number
   factors: ForecastFactor[]
   meteo: MeteoDaily | null
   evenements: Evenement[]
   ca_n1: number | null
+  ca_realise: number | null // Actual CA for past dates
 }
 
 // --- Seasonal average temperatures by month (Bordeaux area) ---
@@ -119,7 +121,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     try {
       if (navigator.onLine) {
         const since = new Date()
-        since.setMonth(since.getMonth() - 2)
+        since.setMonth(since.getMonth() - 14)
         const sinceStr = since.toISOString().split('T')[0]
 
         const until = new Date()
@@ -476,16 +478,23 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
     const n1Vente = getN1Comparison(targetDate)
 
+    // For past dates, include actual CA if available
+    const todayStr = new Date().toISOString().split('T')[0]!
+    const venteActuelle = dateStr < todayStr ? ventesParDate.value.get(dateStr) : null
+    const caRealise = venteActuelle && venteActuelle.cloture_validee ? venteActuelle.ca_ttc : null
+
     return {
       date: dateStr,
       jour_semaine: jourSemaine,
       ca_prevision: caPrevision,
+      ca_base: Math.round(baseCA),
       nb_tickets_prevision: nbTicketsPrevision,
       confidence: Math.round(confidence),
       factors,
       meteo: meteoDay,
       evenements: dayEvents,
       ca_n1: n1Vente?.ca_ttc ?? null,
+      ca_realise: caRealise,
     }
   }
 
