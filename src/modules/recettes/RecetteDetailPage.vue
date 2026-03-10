@@ -103,6 +103,27 @@ const coutParPortion = computed(() =>
   nbPortions.value > 0 ? coutMatiere.value / nbPortions.value : 0
 )
 
+// Allergen summary (recursive through sub-recipes)
+const ALLERGEN_LABELS: Record<string, string> = {
+  gluten: 'Gluten', crustaces: 'Crustacés', oeufs: 'Oeufs', poissons: 'Poissons',
+  arachides: 'Arachides', soja: 'Soja', lait: 'Lait', fruits_a_coque: 'Fruits à coque',
+  celeri: 'Céleri', moutarde: 'Moutarde', sesame: 'Sésame', sulfites: 'Sulfites',
+  lupin: 'Lupin', mollusques: 'Mollusques',
+}
+
+const recetteAllergens = computed<string[]>(() => {
+  if (isNew.value || !recetteId.value) return []
+  const allergens = recettesStore.getAllergens(
+    recetteId.value,
+    (id: string) => {
+      const ing = ingredientsStore.getById(id)
+      if (!ing) return undefined
+      return { allergenes: ing.allergenes, contient: ing.contient }
+    },
+  )
+  return [...allergens].sort()
+})
+
 const filteredIngredients = computed(() => {
   const q = ingredientSearch.value.toLowerCase()
   if (!q) return ingredientsStore.actifs.slice(0, 20)
@@ -600,6 +621,19 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           <span>Co&ucirc;t par portion ({{ nbPortions }} portions)</span>
           <strong>{{ coutParPortion.toFixed(2) }} &euro;</strong>
         </div>
+      </div>
+
+      <!-- Allergen summary -->
+      <div v-if="recetteAllergens.length > 0" class="allergen-summary">
+        <strong>Allerg&egrave;nes :</strong>
+        <div class="allergen-tags">
+          <span v-for="a in recetteAllergens" :key="a" class="allergen-tag">
+            {{ ALLERGEN_LABELS[a] || a }}
+          </span>
+        </div>
+      </div>
+      <div v-else-if="!isNew && ingredientLignes.length > 0" class="allergen-summary allergen-none">
+        Aucun allerg&egrave;ne d&eacute;tect&eacute;
       </div>
     </section>
 
@@ -1126,6 +1160,35 @@ h1 {
 .cost-row strong {
   font-size: 18px;
   color: var(--color-primary);
+}
+
+/* Allergens */
+.allergen-summary {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(239, 68, 68, 0.06);
+  border-radius: var(--radius-md);
+  border-left: 4px solid #ef4444;
+  font-size: 15px;
+}
+.allergen-summary.allergen-none {
+  background: rgba(34, 197, 94, 0.06);
+  border-left-color: var(--color-success);
+  color: var(--color-success);
+}
+.allergen-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.allergen-tag {
+  background: #ef4444;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* Tree */
