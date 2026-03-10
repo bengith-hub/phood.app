@@ -13,6 +13,8 @@ export const useRecettesStore = defineStore('recettes', () => {
   const actives = computed(() => recettes.value.filter(r => r.actif))
   const plats = computed(() => actives.value.filter(r => r.type === 'recette'))
   const sousRecettes = computed(() => actives.value.filter(r => r.type === 'sous_recette'))
+  const allPlats = computed(() => recettes.value.filter(r => r.type === 'recette'))
+  const allSousRecettes = computed(() => recettes.value.filter(r => r.type === 'sous_recette'))
 
   async function fetchAll() {
     loading.value = true
@@ -20,7 +22,7 @@ export const useRecettesStore = defineStore('recettes', () => {
     try {
       if (navigator.onLine) {
         const [recData, riData] = await Promise.all([
-          restCall<Recette[]>('GET', 'recettes?select=*&actif=eq.true&order=nom'),
+          restCall<Recette[]>('GET', 'recettes?select=*&order=nom'),
           restCall<RecetteIngredient[]>('GET', 'recette_ingredients?select=*'),
         ])
 
@@ -168,8 +170,25 @@ export const useRecettesStore = defineStore('recettes', () => {
     return results
   }
 
+  async function setActif(id: string, actif: boolean) {
+    await restCall('PATCH', `recettes?id=eq.${id}`, { actif })
+    const rec = recettes.value.find(r => r.id === id)
+    if (rec) rec.actif = actif
+  }
+
+  async function bulkSetActif(ids: string[], actif: boolean) {
+    // PostgREST bulk update via IN filter
+    const idsParam = `(${ids.join(',')})`
+    await restCall('PATCH', `recettes?id=in.${idsParam}`, { actif })
+    for (const rec of recettes.value) {
+      if (ids.includes(rec.id)) rec.actif = actif
+    }
+  }
+
   return {
-    recettes, recetteIngredients, loading, error, actives, plats, sousRecettes,
-    fetchAll, getById, getIngredients, calculateCost, getAllergens, findRecipesWithAllergen,
+    recettes, recetteIngredients, loading, error,
+    actives, plats, sousRecettes, allPlats, allSousRecettes,
+    fetchAll, getById, getIngredients, calculateCost, getAllergens,
+    findRecipesWithAllergen, setActif, bulkSetActif,
   }
 })

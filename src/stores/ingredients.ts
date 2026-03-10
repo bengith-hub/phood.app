@@ -113,5 +113,13 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     await fetchAll()
   }
 
-  return { ingredients, actifs, categories, loading, error, fetchAll, getById, search, save, uploadPhoto, remove }
+  async function bulkSetActif(ids: string[], actif: boolean) {
+    const idsParam = `(${ids.join(',')})`
+    await restCall('PATCH', `ingredients_restaurant?id=in.${idsParam}`, { actif })
+    for (const ing of ingredients.value) {
+      if (ids.includes(ing.id)) ing.actif = actif
+    }
+  }
+
+  return { ingredients, actifs, categories, loading, error, fetchAll, getById, search, save, uploadPhoto, remove, bulkSetActif }
 })
