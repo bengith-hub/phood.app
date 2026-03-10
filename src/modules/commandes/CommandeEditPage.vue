@@ -43,7 +43,11 @@ const commandeId = ref<string | null>(route.params.id as string || null)
 const isNew = !commandeId.value
 const commande = ref<Commande | null>(null)
 const selectedFournisseurId = ref<string>(route.params.fournisseurId as string || '')
+function toLocalDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const dateLivraison = ref('')
+const dateLivraisonError = ref('')
 const notes = ref('')
 const searchQuery = ref('')
 const showPdfModal = ref(false)
@@ -303,7 +307,7 @@ async function handlePdfPreview() {
     numero: commande.value?.numero || commandeId.value,
     fournisseur_id: selectedFournisseurId.value,
     statut: commande.value?.statut || 'brouillon',
-    date_commande: commande.value?.date_commande || new Date().toISOString().slice(0, 10),
+    date_commande: commande.value?.date_commande || toLocalDateStr(new Date()),
     date_livraison_prevue: dateLivraison.value || null,
     montant_total_ht: totalHT.value,
     montant_total_ttc: totalTTC.value,
@@ -403,7 +407,7 @@ async function handleEnvoyer() {
       numero: commande.value?.numero || commandeId.value,
       fournisseur_id: selectedFournisseurId.value,
       statut: commande.value?.statut || 'brouillon',
-      date_commande: commande.value?.date_commande || new Date().toISOString().slice(0, 10),
+      date_commande: commande.value?.date_commande || toLocalDateStr(new Date()),
       date_livraison_prevue: dateLivraison.value || null,
       montant_total_ht: totalHT.value,
       montant_total_ttc: totalTTC.value,
@@ -584,22 +588,36 @@ onMounted(async () => {
 // Auto-set dateFinCouverture when dateLivraison changes
 function initDateFinCouverture() {
   if (!dateLivraison.value) return
-  const d = new Date(dateLivraison.value)
-  const fin = dateFinCouverture.value ? new Date(dateFinCouverture.value) : null
+  const d = new Date(dateLivraison.value + 'T00:00:00')
+  const fin = dateFinCouverture.value ? new Date(dateFinCouverture.value + 'T00:00:00') : null
   if (!fin || fin <= d) {
     d.setDate(d.getDate() + couvertureDefautJours.value)
-    dateFinCouverture.value = d.toISOString().slice(0, 10)
+    dateFinCouverture.value = toLocalDateStr(d)
   }
 }
 
-watch(dateLivraison, () => initDateFinCouverture())
+watch(dateLivraison, (val) => {
+  // Prevent Sunday delivery
+  if (val) {
+    const d = new Date(val + 'T00:00:00')
+    if (d.getDay() === 0) {
+      dateLivraisonError.value = 'Le restaurant est ferme le dimanche. Choisissez un autre jour.'
+      // Auto-shift to Monday
+      d.setDate(d.getDate() + 1)
+      dateLivraison.value = toLocalDateStr(d)
+      return
+    }
+    dateLivraisonError.value = ''
+  }
+  initDateFinCouverture()
+})
 
 // When switching suppliers, recalc coverage from supplier default
 watch(() => fournisseur.value?.duree_couverture_defaut, () => {
   if (dateLivraison.value) {
-    const d = new Date(dateLivraison.value)
+    const d = new Date(dateLivraison.value + 'T00:00:00')
     d.setDate(d.getDate() + couvertureDefautJours.value)
-    dateFinCouverture.value = d.toISOString().slice(0, 10)
+    dateFinCouverture.value = toLocalDateStr(d)
   }
 })
 
@@ -666,6 +684,7 @@ watch(selectedFournisseurId, async (newId) => {
         <div class="info-meta">
           <label>Livraison pr&eacute;vue :
             <input v-model="dateLivraison" type="date" class="date-input" />
+            <span v-if="dateLivraisonError" class="date-error">{{ dateLivraisonError }}</span>
           </label>
           <label>Couvrir jusqu'au :
             <input v-model="dateFinCouverture" type="date" class="date-input" :min="dateLivraison || undefined" />
@@ -971,6 +990,12 @@ h1 {
   padding: 0 12px;
   font-size: 16px;
   margin-left: 8px;
+}
+.date-error {
+  display: block;
+  font-size: 13px;
+  color: var(--color-danger);
+  margin-top: 4px;
 }
 .duree-info {
   font-size: 14px;
