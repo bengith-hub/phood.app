@@ -5,6 +5,8 @@
  * Checks:
  * 1. stock_bas — stocks below tampon threshold
  * 2. avoir_sans_reponse — credit notes awaiting response past delay
+ * 3. zelty_non_associe — Zelty products without a linked recipe
+ * 4. composition_manquante — preparation ingredients missing "contient" field
  *
  * Creates notifications + sends grouped email alert.
  * Schedule configured in netlify.toml
@@ -158,7 +160,100 @@ exports.handler = async function () {
       }
     }
 
-    // ── 3. Send grouped email if alerts found ─────────────────
+    // ── 3. Zelty products not associated to a recipe ───────────
+    // Ingredients linked to Zelty products but without a recipe
+    try {
+      const zeltyProductsResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/ingredients_restaurant?select=id,nom&actif=eq.true&zelty_product_id=not.is.null`,
+        { headers },
+      );
+      const zeltyIngredients = zeltyProductsResp.ok ? await zeltyProductsResp.json() : [];
+
+      if (zeltyIngredients.length > 0) {
+        // Check which ones have recipes
+        const recetteIngsResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/recette_ingredients?select=ingredient_id`,
+          { headers },
+        );
+        const recetteIngs = recetteIngsResp.ok ? await recetteIngsResp.json() : [];
+        const linkedIds = new Set(recetteIngs.map(ri => ri.ingredient_id));
+
+        const unlinked = zeltyIngredients.filter(zi => !linkedIds.has(zi.id));
+
+        if (unlinked.length > 0) {
+          const existingResp = await fetch(
+            `${SUPABASE_URL}/rest/v1/notifications?select=id&type=eq.zelty_non_associe&lue=eq.false&created_at=gte.${todayISO()}`,
+            { headers },
+          );
+          const existing = existingResp.ok ? await existingResp.json() : [];
+
+          if (existing.length === 0) {
+            const titre = `${unlinked.length} produit(s) Zelty sans recette`;
+            const message = unlinked.slice(0, 10).map(u => u.nom).join(', ');
+
+            const notifs = admins.map(a => ({
+              type: 'zelty_non_associe',
+              titre,
+              message,
+              lue: false,
+              destinataire_id: a.id,
+            }));
+            await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(notifs),
+            });
+            alerts.push({ type: 'zelty_non_associe', titre, message });
+            console.log(`Created zelty_non_associe alert: ${unlinked.length} items`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('zelty_non_associe check failed:', e);
+    }
+
+    // ── 4. Ingredients with missing composition (contient) ─────
+    // Pre-made items that should have a "contient" list for allergen search
+    try {
+      const prepIngsResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/ingredients_restaurant?select=id,nom&actif=eq.true&type=eq.preparation&contient=is.null`,
+        { headers },
+      );
+      const missingCompo = prepIngsResp.ok ? await prepIngsResp.json() : [];
+
+      if (missingCompo.length > 0) {
+        const existingResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/notifications?select=id&type=eq.composition_manquante&lue=eq.false&created_at=gte.${todayISO()}`,
+          { headers },
+        );
+        const existing = existingResp.ok ? await existingResp.json() : [];
+
+        if (existing.length === 0) {
+          const titre = `${missingCompo.length} ingredient(s) sans composition`;
+          const message = missingCompo.slice(0, 10).map(i => i.nom).join(', ')
+            + '\nRenseignez le champ "contient" pour la recherche allergenes.';
+
+          const notifs = admins.map(a => ({
+            type: 'composition_manquante',
+            titre,
+            message,
+            lue: false,
+            destinataire_id: a.id,
+          }));
+          await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(notifs),
+          });
+          alerts.push({ type: 'composition_manquante', titre, message });
+          console.log(`Created composition_manquante alert: ${missingCompo.length} items`);
+        }
+      }
+    } catch (e) {
+      console.error('composition_manquante check failed:', e);
+    }
+
+    // ── 5. Send grouped email if alerts found ─────────────────
     if (alerts.length > 0 && emailRecipients.length > 0 && RESEND_API_KEY) {
       const htmlParts = alerts.map(a => `
         <div style="margin-bottom:20px;padding:16px;border-left:4px solid #E85D2C;background:#fef9f7;">
