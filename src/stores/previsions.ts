@@ -554,6 +554,61 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return horaire?.est_ferme ?? false
   }
 
+  /**
+   * Compute precision for the previous week (S-1).
+   * precision = 1 - avg(|CA_prevu - CA_realise| / CA_realise) per day
+   * Returns null if no realized data is available.
+   */
+  function calculatePrecisionS1(): { precision: number; caRealise: number; caPrevu: number } | null {
+    const today = new Date()
+    // Go to previous Monday
+    const dayOfWeek = today.getDay() // 0=Sun
+    const daysToLastMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1 // days since last Monday
+    const lastMonday = new Date(today)
+    lastMonday.setDate(today.getDate() - daysToLastMonday - 7) // previous week Monday
+
+    let totalRealise = 0
+    let totalPrevu = 0
+    let daysWithData = 0
+    let sumErrorPct = 0
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(lastMonday)
+      d.setDate(lastMonday.getDate() + i)
+      const dateStr = d.toISOString().split('T')[0]!
+      const vente = ventesParDate.value.get(dateStr)
+      if (!vente || !vente.cloture_validee) continue
+
+      const forecast = calculateForecast(dateStr)
+      totalRealise += vente.ca_ttc
+      totalPrevu += forecast.ca_prevision
+      if (vente.ca_ttc > 0) {
+        sumErrorPct += Math.abs(forecast.ca_prevision - vente.ca_ttc) / vente.ca_ttc
+      }
+      daysWithData++
+    }
+
+    if (daysWithData === 0) return null
+    const avgError = sumErrorPct / daysWithData
+    const precision = Math.round((1 - avgError) * 100)
+    return { precision: Math.max(0, Math.min(100, precision)), caRealise: totalRealise, caPrevu: totalPrevu }
+  }
+
+  /**
+   * Get N-1 week total CA for a given week start date.
+   */
+  function getWeekN1Total(weekForecasts: ForecastResult[]): number | null {
+    let total = 0
+    let hasData = false
+    for (const fc of weekForecasts) {
+      if (fc.ca_n1 !== null) {
+        total += fc.ca_n1
+        hasData = true
+      }
+    }
+    return hasData ? total : null
+  }
+
   return {
     ventes, meteo, evenements, horaires, repartition, loading, error,
     ventesParDate, meteoParDate,
@@ -561,5 +616,6 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     calculateForecast, calculateWeekForecast,
     getRepartitionForDay, getRepartitionCA,
     getEventsForDate, isJourFerme, weatherCodeToEmoji,
+    calculatePrecisionS1, getWeekN1Total,
   }
 })
