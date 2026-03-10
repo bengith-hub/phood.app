@@ -12,6 +12,22 @@ const search = ref('')
 const tab = ref<'recettes' | 'ingredients' | 'sous_recettes'>('recettes')
 const catFilter = ref('')
 const showInactifs = ref(false)
+const showHelp = ref(false)
+
+const TAB_HELP: Record<string, { title: string; desc: string }> = {
+  recettes: {
+    title: 'Recettes = plats vendus en caisse',
+    desc: 'Chaque recette correspond à un produit Zelty. Elle contient des ingrédients et/ou des sous-recettes, avec des variantes de taille (Normal/Grand) et des modificateurs (extras, sans). Le stock se décrémente automatiquement à la vente.',
+  },
+  sous_recettes: {
+    title: 'Sous-recettes = préparations intermédiaires',
+    desc: 'Marinades, sauces, bases... Elles ne sont jamais vendues directement et n\'ont pas de stock propre. Elles servent uniquement au calcul du coût matière et à la décrémentation récursive du stock aux ingrédients de base. Imbrication possible jusqu\'à 3 niveaux.',
+  },
+  ingredients: {
+    title: 'Ingrédients = ce que vous achetez et stockez',
+    desc: 'Liés aux produits fournisseurs (mercuriale). Le coût unitaire est calculé automatiquement depuis le fournisseur préféré. Les allergènes sont déclarés ici et remontent dans toutes les recettes qui les utilisent.',
+  },
+}
 
 // Bulk selection
 const selectionMode = ref(false)
@@ -137,6 +153,23 @@ onMounted(async () => {
       <button :class="{ active: tab === 'sous_recettes' }" @click="tab = 'sous_recettes'; exitSelectionMode()">
         Sous-recettes ({{ recettesStore.sousRecettes.length }})
       </button>
+    </div>
+
+    <!-- Contextual help banner -->
+    <button class="help-toggle" @click="showHelp = !showHelp">
+      <span class="help-icon">?</span>
+      <span>{{ showHelp ? 'Masquer l\'aide' : 'Comment ça marche ?' }}</span>
+    </button>
+    <div v-if="showHelp" class="help-banner">
+      <div class="help-title">{{ TAB_HELP[tab]?.title }}</div>
+      <div class="help-desc">{{ TAB_HELP[tab]?.desc }}</div>
+      <div v-if="tab === 'recettes'" class="help-extra">
+        <strong>Variantes</strong> = tailles (Normal x1, Grand x1.5) &mdash;
+        <strong>Modificateurs</strong> = extras (+80g poulet) ou sans (-10g coriandre)
+      </div>
+      <div class="help-schema">
+        Recette (vendue) &rarr; Sous-recette (prep) &rarr; Ingrédient (acheté &amp; stocké)
+      </div>
     </div>
 
     <input
@@ -353,6 +386,62 @@ h1 { font-size: 28px; }
   background: var(--bg-surface);
   color: var(--text-primary);
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* Help banner */
+.help-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-info, #3b82f6);
+  cursor: pointer;
+  padding: 0 0 10px;
+}
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-info, #3b82f6);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+}
+.help-banner {
+  background: color-mix(in srgb, var(--color-info, #3b82f6) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-info, #3b82f6) 25%, var(--border));
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.help-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}
+.help-desc {
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.help-extra {
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.help-schema {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-info, #3b82f6);
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--color-info, #3b82f6) 15%, var(--border));
 }
 
 .search-input {
