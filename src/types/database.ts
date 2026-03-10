@@ -18,6 +18,7 @@ export interface Config {
   delai_expiration_avoir_heures: number
   destinataires_email_avoir: string[]
   destinataires_email_alertes: string[]
+  google_calendar_id: string | null
   updated_at: string
 }
 

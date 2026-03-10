@@ -100,6 +100,7 @@ async function saveConfig() {
       delai_expiration_avoir_heures: config.value.delai_expiration_avoir_heures,
       destinataires_email_avoir: config.value.destinataires_email_avoir,
       destinataires_email_alertes: config.value.destinataires_email_alertes,
+      google_calendar_id: config.value.google_calendar_id,
     })
     saveMsg.value = 'Enregistré'
     setTimeout(() => saveMsg.value = '', 3000)
@@ -455,6 +456,15 @@ function formatDuration(ms: number | null) {
               :value="config.destinataires_email_avoir?.join(', ')"
               @change="config.destinataires_email_avoir = ($event.target as HTMLInputElement).value.split(',').map(e => e.trim()).filter(Boolean)"
             />
+          </div>
+
+          <div class="field-group">
+            <label>ID Google Calendar (livraisons & commandes)</label>
+            <input
+              v-model="config.google_calendar_id"
+              placeholder="exemple@group.calendar.google.com"
+            />
+            <span class="field-help">Calendrier dédié recommandé. Compatible Google Nest Mini.</span>
           </div>
 
           <div class="actions">
