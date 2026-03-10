@@ -66,8 +66,10 @@ async function handleSave() {
   if (!form.value.nom?.trim()) return
   saving.value = true
   try {
+    // Strip enriched fields that don't belong to the DB table
+    const { mercuriale_photo_url, mercuriale_sku, mercuriale_designation, ...cleanForm } = form.value as Record<string, unknown>
     await store.save({
-      ...form.value,
+      ...cleanForm,
       id: isNew.value ? undefined : ingredientId.value,
     } as Partial<IngredientRestaurant> & { id?: string })
     router.back()
