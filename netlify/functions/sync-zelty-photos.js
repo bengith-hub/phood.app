@@ -195,12 +195,13 @@ exports.handler = async function (event) {
           const suggestions = allZeltyNames
             .map(([zName, entry]) => ({
               zelty_name: entry.name,
+              zelty_id: entry.zeltyId,
               distance: levenshtein(normalizedRecette, zName),
-              has_photo: true,
             }))
             .sort((a, b) => a.distance - b.distance)
             .slice(0, 3);
           results.details.push({
+            recette_id: recette.id,
             recette: recette.nom,
             zelty_product_id: recette.zelty_product_id || null,
             status: 'unmatched',
