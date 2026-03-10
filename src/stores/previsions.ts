@@ -339,6 +339,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     const oneYearAgo = new Date(targetDate)
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
     const targetDow = targetDate.getDay()
+    const targetMonth = oneYearAgo.getMonth()
 
     let best: VenteHistorique | null = null
     let bestDiff = Infinity
@@ -347,6 +348,8 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       const checkDate = new Date(oneYearAgo)
       checkDate.setDate(checkDate.getDate() + offset)
       if (checkDate.getDay() !== targetDow) continue
+      // Stay within the same month to avoid cross-month comparisons
+      if (checkDate.getMonth() !== targetMonth) continue
 
       const checkStr = toLocalDateStr(checkDate)
       const vente = ventesParDate.value.get(checkStr)
