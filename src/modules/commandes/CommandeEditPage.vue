@@ -276,7 +276,7 @@ function getCondLabel(produit: Mercuriale): string {
 
 // ─── PDF preview ───
 
-function handlePdfPreview() {
+async function handlePdfPreview() {
   if (!commandeId.value || !fournisseur.value) return
 
   const lignesArray: CommandeLigne[] = []
@@ -297,25 +297,26 @@ function handlePdfPreview() {
     }
   }
 
-  const commandeData: Commande = commande.value || {
-    id: commandeId.value,
-    numero: commandeId.value,
+  // Always use current form values (commande.value may have stale DB data)
+  const commandeData: Commande = {
+    id: commande.value?.id || commandeId.value,
+    numero: commande.value?.numero || commandeId.value,
     fournisseur_id: selectedFournisseurId.value,
-    statut: 'brouillon',
-    date_commande: new Date().toISOString().slice(0, 10),
+    statut: commande.value?.statut || 'brouillon',
+    date_commande: commande.value?.date_commande || new Date().toISOString().slice(0, 10),
     date_livraison_prevue: dateLivraison.value || null,
     montant_total_ht: totalHT.value,
     montant_total_ttc: totalTTC.value,
     notes: notes.value || null,
-    pdf_url: null,
-    created_by: user.value?.id || '',
+    pdf_url: commande.value?.pdf_url || null,
+    created_by: commande.value?.created_by || user.value?.id || '',
     locked_by: null,
     locked_at: null,
-    created_at: '',
+    created_at: commande.value?.created_at || '',
     updated_at: '',
   }
 
-  const pdf = generateCommandePdf({
+  const pdf = await generateCommandePdf({
     commande: commandeData,
     lignes: lignesArray,
     fournisseur: fournisseur.value,
@@ -360,7 +361,7 @@ const sending = ref(false)
 const sendError = ref<string | null>(null)
 
 async function handleEnvoyer() {
-  if (!commandeId.value || !francoAtteint.value || !fournisseur.value) return
+  if (!commandeId.value || !francoAtteint.value || !fournisseur.value || !dateLivraison.value) return
 
   sending.value = true
   sendError.value = null
@@ -396,27 +397,27 @@ async function handleEnvoyer() {
     }
     await commandesStore.saveLignes(commandeId.value, lignesArray)
 
-    // Build commande data for PDF
-    const commandeData: Commande = commande.value || {
-      id: commandeId.value,
-      numero: commandeId.value,
+    // Always use current form values (commande.value may have stale DB data)
+    const commandeData: Commande = {
+      id: commande.value?.id || commandeId.value,
+      numero: commande.value?.numero || commandeId.value,
       fournisseur_id: selectedFournisseurId.value,
-      statut: 'brouillon',
-      date_commande: new Date().toISOString().slice(0, 10),
+      statut: commande.value?.statut || 'brouillon',
+      date_commande: commande.value?.date_commande || new Date().toISOString().slice(0, 10),
       date_livraison_prevue: dateLivraison.value || null,
       montant_total_ht: totalHT.value,
       montant_total_ttc: totalTTC.value,
       notes: notes.value || null,
-      pdf_url: null,
-      created_by: user.value?.id || '',
+      pdf_url: commande.value?.pdf_url || null,
+      created_by: commande.value?.created_by || user.value?.id || '',
       locked_by: null,
       locked_at: null,
-      created_at: '',
+      created_at: commande.value?.created_at || '',
       updated_at: '',
     }
 
     // Generate PDF
-    const pdf = generateCommandePdf({
+    const pdf = await generateCommandePdf({
       commande: commandeData,
       lignes: lignesForPdf,
       fournisseur: fournisseur.value,
@@ -779,9 +780,10 @@ watch(selectedFournisseurId, async (newId) => {
         </button>
         <button
           class="btn-primary"
-          :disabled="!francoAtteint || nbArticles === 0 || sending"
+          :disabled="!francoAtteint || !dateLivraison || nbArticles === 0 || sending"
           @click="handleEnvoyer"
           v-if="isManagerOrAbove"
+          :title="!dateLivraison ? 'Date de livraison requise' : !francoAtteint ? `Franco minimum non atteint (${francoMinimum.toFixed(2)} €)` : ''"
         >
           {{ sending ? 'Envoi en cours...' : 'Envoyer la commande' }}
         </button>

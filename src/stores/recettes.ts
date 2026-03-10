@@ -148,6 +148,10 @@ export const useRecettesStore = defineStore('recettes', () => {
     const q = allergenQuery.toLowerCase()
 
     for (const recette of plats.value) {
+      // Skip recipes with no ingredients (orphan imports)
+      const ris = getIngredients(recette.id)
+      if (ris.length === 0) continue
+
       const allergens = getAllergens(recette.id, getIngredient)
       const hasMatch = Array.from(allergens).some(a => a.includes(q))
 
