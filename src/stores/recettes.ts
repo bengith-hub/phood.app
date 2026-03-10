@@ -147,15 +147,15 @@ export const useRecettesStore = defineStore('recettes', () => {
     const results: { recette: Recette; allergens: Set<string> }[] = []
     const q = allergenQuery.toLowerCase()
 
-    for (const recette of plats.value) {
+    for (const recette of actives.value) {
       // Skip recipes with no ingredients (orphan imports)
       const ris = getIngredients(recette.id)
       if (ris.length === 0) continue
 
-      // Skip non-customer-facing recipes (Inpulse import artifacts)
+      // Skip non-food artifacts from Inpulse import
       if (/EMP\/LIV|EMP\b.*\bLIV\b/i.test(recette.nom)) continue
       const cat = recette.categorie
-      if (cat === 'Test' || cat === 'Préparation' || cat === 'Kit boitage') continue
+      if (cat === 'Test' || cat === 'Kit boitage') continue
 
       const allergens = getAllergens(recette.id, getIngredient)
       const hasMatch = Array.from(allergens).some(a => a.includes(q))
