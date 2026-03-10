@@ -123,7 +123,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
         const sinceStr = since.toISOString().split('T')[0]
 
         const until = new Date()
-        until.setDate(until.getDate() + 7)
+        until.setDate(until.getDate() + 35)
         const untilStr = until.toISOString().split('T')[0]
 
         const data = await restCall<MeteoDaily[]>(
@@ -505,6 +505,19 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return results
   }
 
+  function calculateMonthForecast(year: number, month: number): ForecastResult[] {
+    const results: ForecastResult[] = []
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(year, month, day)
+      const dateStr = d.toISOString().split('T')[0]!
+      results.push(calculateForecast(dateStr))
+    }
+
+    return results
+  }
+
   function getRepartitionForDay(
     jourSemaine: number,
     dateStr: string
@@ -613,7 +626,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     ventes, meteo, evenements, horaires, repartition, loading, error,
     ventesParDate, meteoParDate,
     fetchAll, fetchVentes, fetchMeteo, fetchEvenements, fetchHoraires, fetchRepartition,
-    calculateForecast, calculateWeekForecast,
+    calculateForecast, calculateWeekForecast, calculateMonthForecast,
     getRepartitionForDay, getRepartitionCA,
     getEventsForDate, isJourFerme, weatherCodeToEmoji,
     calculatePrecisionS1, getWeekN1Total,
