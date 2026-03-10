@@ -152,9 +152,10 @@ export const useRecettesStore = defineStore('recettes', () => {
       const ris = getIngredients(recette.id)
       if (ris.length === 0) continue
 
-      // Skip EMP/LIV variants and Test category (Inpulse import artifacts)
+      // Skip non-customer-facing recipes (Inpulse import artifacts)
       if (/EMP\/LIV|EMP\b.*\bLIV\b/i.test(recette.nom)) continue
-      if (recette.categorie === 'Test') continue
+      const cat = recette.categorie
+      if (cat === 'Test' || cat === 'Préparation' || cat === 'Kit boitage') continue
 
       const allergens = getAllergens(recette.id, getIngredient)
       const hasMatch = Array.from(allergens).some(a => a.includes(q))
