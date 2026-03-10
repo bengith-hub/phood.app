@@ -16,8 +16,8 @@ const showHelp = ref(false)
 
 const TAB_HELP: Record<string, { title: string; desc: string }> = {
   recettes: {
-    title: 'Recettes = plats vendus en caisse',
-    desc: 'Chaque recette correspond à un produit Zelty. Elle contient des ingrédients et/ou des sous-recettes, avec des variantes de taille (Normal/Grand) et des modificateurs (extras, sans). Le stock se décrémente automatiquement à la vente.',
+    title: 'Recettes = plats et produits vendus',
+    desc: 'Les plats que vous vendez, avec leur composition en ingrédients et/ou sous-recettes. Peuvent être liées à la caisse Zelty pour la décrémentation auto du stock. Supportent les variantes de taille (Normal/Grand) et les modificateurs (extras, sans).',
   },
   sous_recettes: {
     title: 'Sous-recettes = préparations intermédiaires',
