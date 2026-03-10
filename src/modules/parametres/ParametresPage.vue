@@ -261,7 +261,8 @@ async function startPhotoSync() {
 
     const r = await resp.json()
     zeltyPhotoStatus.value = 'success'
-    zeltyPhotoMsg.value = `Terminé : ${r.synced} photos synchronisées, ${r.skipped_already_has_photo} déjà présentes, ${r.skipped_no_zelty_photo} sans photo Zelty. (${r.zelty_products_total} produits Zelty, ${r.zelty_products_with_photos} avec photo)`
+    const matchDetail = r.matched_by_name ? ` (${r.matched_by_id || 0} par ID, ${r.matched_by_name} par nom)` : ''
+    zeltyPhotoMsg.value = `Terminé : ${r.synced} photos synchronisées${matchDetail}, ${r.skipped_already_has_photo} déjà présentes, ${r.skipped_no_zelty_photo} sans correspondance Zelty. (${r.zelty_products_total} produits Zelty, ${r.zelty_products_with_photos} avec photo)`
   } catch (e: unknown) {
     zeltyPhotoStatus.value = 'error'
     zeltyPhotoMsg.value = `Erreur : ${(e as Error).message || String(e)}`

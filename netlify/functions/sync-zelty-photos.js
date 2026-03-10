@@ -5,22 +5,30 @@
  * Body: { dry_run?: boolean, force_overwrite?: boolean }
  *
  * Fetches all dishes from Zelty API (GET /catalog/dishes),
- * matches them to recettes via zelty_product_id,
+ * matches them to recettes via zelty_product_id (ID or SKU)
+ * with fallback to normalized name matching,
  * and updates photo_url for recettes that don't have one.
  *
- * Zelty Dish schema (confirmed from API docs):
- *   - id: integer
- *   - name: string
- *   - image: string (URL of original image)
- *   - thumb: string (URL of thumbnail)
- *   - sku: string
- *   - price: integer (cents, TTC)
- *
- * Returns { synced, skipped, unmatched, products_with_photos, errors }
+ * Returns { synced, skipped, unmatched, products_with_photos, errors, details }
  */
 
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
-const PAGE_SIZE = 500; // Zelty default max is 2500, we use 500 for safety
+const PAGE_SIZE = 500;
+
+/**
+ * Normalize a product name for fuzzy matching:
+ * lowercase, remove accents, trim, collapse whitespace
+ */
+function normalizeName(name) {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // strip accents
+    .replace(/[^a-z0-9\s]/g, '')     // keep only alphanumeric + spaces
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
@@ -47,6 +55,8 @@ exports.handler = async function (event) {
       zelty_products_total: 0,
       zelty_products_with_photos: 0,
       recettes_matched: 0,
+      matched_by_id: 0,
+      matched_by_name: 0,
       synced: 0,
       skipped_already_has_photo: 0,
       skipped_no_zelty_photo: 0,
@@ -56,7 +66,7 @@ exports.handler = async function (event) {
       details: [],
     };
 
-    // 1. Fetch all dishes from Zelty (GET /catalog/dishes with limit/offset)
+    // 1. Fetch all dishes from Zelty (paginated)
     let allDishes = [];
     let offset = 0;
     let hasMore = true;
@@ -88,12 +98,13 @@ exports.handler = async function (event) {
 
     results.zelty_products_total = allDishes.length;
 
-    // 2. Extract dishes that have photos
-    // Zelty confirmed fields: image (string URL), thumb (string URL)
-    // Index by both dish.id and dish.sku since zelty_product_id in DB may be either
-    const zeltyPhotos = new Map();
+    // 2. Build lookup maps for Zelty dishes with photos
+    // Map by: dish.id (string), dish.sku (string), and normalized name
+    const zeltyById = new Map();      // String(dish.id) → entry
+    const zeltyBySku = new Map();     // String(dish.sku) → entry
+    const zeltyByName = new Map();    // normalizeName(dish.name) → entry
+
     for (const dish of allDishes) {
-      // Prefer full image, fallback to thumb
       const photoUrl = dish.image || dish.thumb || null;
 
       if (photoUrl && typeof photoUrl === 'string' && photoUrl.startsWith('http')) {
@@ -101,20 +112,27 @@ exports.handler = async function (event) {
           url: photoUrl,
           thumb: dish.thumb || photoUrl,
           name: dish.name || '',
+          zeltyId: String(dish.id),
         };
-        // Index by numeric ID
-        zeltyPhotos.set(String(dish.id), entry);
-        // Also index by SKU (used by inpulse migration)
+
+        zeltyById.set(String(dish.id), entry);
+
         if (dish.sku) {
-          zeltyPhotos.set(String(dish.sku), entry);
+          zeltyBySku.set(String(dish.sku), entry);
         }
+
+        const normalized = normalizeName(dish.name);
+        if (normalized) {
+          zeltyByName.set(normalized, entry);
+        }
+
         results.zelty_products_with_photos++;
       }
     }
 
-    // 3. Fetch recettes with zelty_product_id from Supabase
+    // 3. Fetch all recettes from Supabase (with or without zelty_product_id)
     const recettesResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/recettes?zelty_product_id=not.is.null&select=id,nom,zelty_product_id,photo_url`,
+      `${SUPABASE_URL}/rest/v1/recettes?select=id,nom,zelty_product_id,photo_url&actif=eq.true`,
       {
         headers: {
           'apikey': SUPABASE_KEY,
@@ -132,29 +150,51 @@ exports.handler = async function (event) {
 
     // 4. Match and sync
     for (const recette of recettes) {
-      const zeltyId = String(recette.zelty_product_id);
-      const zeltyPhoto = zeltyPhotos.get(zeltyId);
+      const zeltyId = recette.zelty_product_id ? String(recette.zelty_product_id) : null;
+      let zeltyPhoto = null;
+      let matchMethod = null;
 
-      results.recettes_matched++;
+      // Try matching by zelty_product_id first (could be ID or SKU)
+      if (zeltyId) {
+        zeltyPhoto = zeltyById.get(zeltyId) || zeltyBySku.get(zeltyId);
+        if (zeltyPhoto) matchMethod = 'id_or_sku';
+      }
+
+      // Fallback: match by normalized name
+      if (!zeltyPhoto && recette.nom) {
+        const normalizedRecette = normalizeName(recette.nom);
+        zeltyPhoto = zeltyByName.get(normalizedRecette);
+        if (zeltyPhoto) matchMethod = 'name';
+      }
 
       if (!zeltyPhoto) {
         results.skipped_no_zelty_photo++;
         continue;
       }
 
+      results.recettes_matched++;
+      if (matchMethod === 'id_or_sku') results.matched_by_id++;
+      if (matchMethod === 'name') results.matched_by_name++;
+
       // Skip if recette already has a photo (unless forceOverwrite)
       if (recette.photo_url && !forceOverwrite) {
         results.skipped_already_has_photo++;
         results.details.push({
           recette: recette.nom,
-          zelty_id: zeltyId,
+          zelty_name: zeltyPhoto.name,
+          match: matchMethod,
           status: 'skipped_has_photo',
         });
         continue;
       }
 
       if (!dryRun) {
-        // Update recette photo_url
+        // Update recette photo_url (and zelty_product_id if matched by name and not set)
+        const updateData = { photo_url: zeltyPhoto.url };
+        if (matchMethod === 'name' && !recette.zelty_product_id) {
+          updateData.zelty_product_id = zeltyPhoto.zeltyId;
+        }
+
         const updateResp = await fetch(
           `${SUPABASE_URL}/rest/v1/recettes?id=eq.${recette.id}`,
           {
@@ -165,7 +205,7 @@ exports.handler = async function (event) {
               'Authorization': `Bearer ${SUPABASE_KEY}`,
               'Prefer': 'return=minimal',
             },
-            body: JSON.stringify({ photo_url: zeltyPhoto.url }),
+            body: JSON.stringify(updateData),
           }
         );
 
@@ -173,8 +213,8 @@ exports.handler = async function (event) {
           results.synced++;
           results.details.push({
             recette: recette.nom,
-            zelty_id: zeltyId,
             zelty_name: zeltyPhoto.name,
+            match: matchMethod,
             photo_url: zeltyPhoto.url,
             status: 'synced',
           });
@@ -182,7 +222,7 @@ exports.handler = async function (event) {
           results.errors++;
           results.details.push({
             recette: recette.nom,
-            zelty_id: zeltyId,
+            match: matchMethod,
             status: 'error',
             error: await updateResp.text(),
           });
@@ -191,15 +231,15 @@ exports.handler = async function (event) {
         results.synced++;
         results.details.push({
           recette: recette.nom,
-          zelty_id: zeltyId,
           zelty_name: zeltyPhoto.name,
+          match: matchMethod,
           photo_url: zeltyPhoto.url,
           status: 'would_sync',
         });
       }
     }
 
-    results.unmatched = results.zelty_products_total - results.recettes_matched;
+    results.unmatched = recettes.length - results.recettes_matched - results.skipped_no_zelty_photo;
 
     return {
       statusCode: 200,
