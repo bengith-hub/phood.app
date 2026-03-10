@@ -88,13 +88,6 @@ const filteredIngredients = computed(() => {
   return list
 })
 
-const recetteCount = computed(() => {
-  if (tab.value === 'sous_recettes') {
-    return showInactifs.value ? recettesStore.allSousRecettes.length : recettesStore.sousRecettes.length
-  }
-  return showInactifs.value ? recettesStore.allPlats.length : recettesStore.plats.length
-})
-
 const ALLERGEN_LABELS: Record<string, string> = {
   gluten: 'Gluten', crustaces: 'Crustacés', oeufs: 'Oeufs', poissons: 'Poissons',
   arachides: 'Arachides', soja: 'Soja', lait: 'Lait', fruits_a_coque: 'Fruits à coque',
