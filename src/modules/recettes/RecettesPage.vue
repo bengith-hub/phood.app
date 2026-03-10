@@ -13,11 +13,55 @@ const tab = ref<'recettes' | 'ingredients' | 'sous_recettes'>('recettes')
 const catFilter = ref('')
 const showInactifs = ref(false)
 
+// Bulk selection
+const selectionMode = ref(false)
+const selectedIds = ref(new Set<string>())
+const bulkLoading = ref(false)
+
+function toggleSelection(id: string) {
+  const s = new Set(selectedIds.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  selectedIds.value = s
+}
+
+function selectAll() {
+  const list = tab.value === 'ingredients' ? filteredIngredients.value : filteredRecettes.value
+  selectedIds.value = new Set(list.map(i => i.id))
+}
+
+function deselectAll() {
+  selectedIds.value = new Set()
+}
+
+function exitSelectionMode() {
+  selectionMode.value = false
+  selectedIds.value = new Set()
+}
+
+async function bulkSetActif(actif: boolean) {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  bulkLoading.value = true
+  try {
+    if (tab.value === 'ingredients') {
+      await ingredientsStore.bulkSetActif(ids, actif)
+    } else {
+      await recettesStore.bulkSetActif(ids, actif)
+    }
+    exitSelectionMode()
+  } catch {
+    // Error shown via store
+  } finally {
+    bulkLoading.value = false
+  }
+}
+
 const filteredRecettes = computed(() => {
   const q = search.value.toLowerCase()
-  const list = tab.value === 'sous_recettes'
-    ? recettesStore.sousRecettes
-    : recettesStore.plats
+  let list = tab.value === 'sous_recettes'
+    ? (showInactifs.value ? recettesStore.allSousRecettes : recettesStore.sousRecettes)
+    : (showInactifs.value ? recettesStore.allPlats : recettesStore.plats)
 
   if (!q) return list
   return list.filter(r =>
@@ -42,6 +86,13 @@ const filteredIngredients = computed(() => {
     )
   }
   return list
+})
+
+const recetteCount = computed(() => {
+  if (tab.value === 'sous_recettes') {
+    return showInactifs.value ? recettesStore.allSousRecettes.length : recettesStore.sousRecettes.length
+  }
+  return showInactifs.value ? recettesStore.allPlats.length : recettesStore.plats.length
 })
 
 const ALLERGEN_LABELS: Record<string, string> = {
@@ -84,13 +135,13 @@ onMounted(async () => {
     </div>
 
     <div class="tabs">
-      <button :class="{ active: tab === 'recettes' }" @click="tab = 'recettes'">
+      <button :class="{ active: tab === 'recettes' }" @click="tab = 'recettes'; exitSelectionMode()">
         Recettes ({{ recettesStore.plats.length }})
       </button>
-      <button :class="{ active: tab === 'ingredients' }" @click="tab = 'ingredients'">
+      <button :class="{ active: tab === 'ingredients' }" @click="tab = 'ingredients'; exitSelectionMode()">
         Ingrédients ({{ ingredientsStore.actifs.length }})
       </button>
-      <button :class="{ active: tab === 'sous_recettes' }" @click="tab = 'sous_recettes'">
+      <button :class="{ active: tab === 'sous_recettes' }" @click="tab = 'sous_recettes'; exitSelectionMode()">
         Sous-recettes ({{ recettesStore.sousRecettes.length }})
       </button>
     </div>
@@ -102,50 +153,104 @@ onMounted(async () => {
       class="search-input"
     />
 
-    <!-- Ingredient filters -->
-    <div v-if="tab === 'ingredients'" class="ing-filters">
-      <select v-model="catFilter" class="filter-select">
+    <!-- Filters bar (all tabs) -->
+    <div class="filters-bar">
+      <select v-if="tab === 'ingredients'" v-model="catFilter" class="filter-select">
         <option value="">Toutes catégories</option>
         <option v-for="c in ingredientsStore.categories" :key="c" :value="c">{{ c }}</option>
       </select>
+
       <label class="toggle-label">
         <input type="checkbox" v-model="showInactifs" class="toggle-check" />
         Inclure inactifs
       </label>
-      <span class="result-count">{{ filteredIngredients.length }} résultat{{ filteredIngredients.length > 1 ? 's' : '' }}</span>
+
+      <button
+        v-if="!selectionMode"
+        class="btn-select-mode"
+        @click="selectionMode = true"
+      >
+        Sélectionner
+      </button>
+
+      <template v-if="selectionMode">
+        <button class="btn-select-all" @click="selectAll()">Tout</button>
+        <button class="btn-select-all" @click="deselectAll()">Aucun</button>
+        <button class="btn-cancel-select" @click="exitSelectionMode()">Annuler</button>
+      </template>
+
+      <span class="result-count">
+        {{ tab === 'ingredients' ? filteredIngredients.length : filteredRecettes.length }}
+        résultat{{ (tab === 'ingredients' ? filteredIngredients.length : filteredRecettes.length) > 1 ? 's' : '' }}
+      </span>
+    </div>
+
+    <!-- Bulk action bar -->
+    <div v-if="selectionMode && selectedIds.size > 0" class="bulk-bar">
+      <span class="bulk-count">{{ selectedIds.size }} sélectionné{{ selectedIds.size > 1 ? 's' : '' }}</span>
+      <button class="bulk-btn bulk-deactivate" :disabled="bulkLoading" @click="bulkSetActif(false)">
+        Désactiver
+      </button>
+      <button class="bulk-btn bulk-activate" :disabled="bulkLoading" @click="bulkSetActif(true)">
+        Activer
+      </button>
     </div>
 
     <div v-if="recettesStore.loading || ingredientsStore.loading" class="loading">Chargement...</div>
 
+    <!-- Recipes / Sous-recettes list -->
     <div v-else-if="tab !== 'ingredients'" class="item-list">
       <div v-if="filteredRecettes.length === 0" class="empty">Aucun résultat</div>
       <div
         v-for="r in filteredRecettes"
         :key="r.id"
         class="item-card clickable"
-        @click="router.push(`/recettes/${r.id}`)"
+        :class="{ inactive: !r.actif, selected: selectedIds.has(r.id) }"
+        @click="selectionMode ? toggleSelection(r.id) : router.push(`/recettes/${r.id}`)"
       >
-        <div class="item-main">
-          <span class="item-name">{{ r.nom }}</span>
-          <span v-if="r.categorie" class="item-cat">{{ r.categorie }}</span>
-        </div>
-        <div class="item-meta">
-          <span v-if="r.cout_matiere > 0" class="item-cost">{{ r.cout_matiere.toFixed(2) }} €</span>
-          <span v-if="r.zelty_product_id" class="badge-zelty">Zelty</span>
+        <div class="item-row">
+          <div v-if="selectionMode" class="checkbox-col">
+            <input
+              type="checkbox"
+              :checked="selectedIds.has(r.id)"
+              class="item-checkbox"
+              @click.stop="toggleSelection(r.id)"
+            />
+          </div>
+          <div class="item-body">
+            <div class="item-main">
+              <span class="item-name">{{ r.nom }}</span>
+              <span v-if="r.categorie" class="item-cat">{{ r.categorie }}</span>
+            </div>
+            <div class="item-meta">
+              <span v-if="r.cout_matiere > 0" class="item-cost">{{ r.cout_matiere.toFixed(2) }} €</span>
+              <span v-if="r.zelty_product_id" class="badge-zelty">Zelty</span>
+              <span v-if="!r.actif" class="badge-inactif">Inactif</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
+    <!-- Ingredients list -->
     <div v-else class="item-list">
       <div v-if="filteredIngredients.length === 0" class="empty">Aucun résultat</div>
       <div
         v-for="ing in filteredIngredients"
         :key="ing.id"
         class="item-card clickable"
-        :class="{ inactive: !ing.actif }"
-        @click="router.push(`/recettes/ingredient/${ing.id}`)"
+        :class="{ inactive: !ing.actif, selected: selectedIds.has(ing.id) }"
+        @click="selectionMode ? toggleSelection(ing.id) : router.push(`/recettes/ingredient/${ing.id}`)"
       >
         <div class="ing-row">
+          <div v-if="selectionMode" class="checkbox-col">
+            <input
+              type="checkbox"
+              :checked="selectedIds.has(ing.id)"
+              class="item-checkbox"
+              @click.stop="toggleSelection(ing.id)"
+            />
+          </div>
           <div class="ing-photo">
             <img v-if="ing.photo_url || ing.mercuriale_photo_url" :src="(ing.photo_url || ing.mercuriale_photo_url)!" :alt="ing.nom" />
             <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -284,6 +389,17 @@ h1 { font-size: 28px; }
 .item-card.clickable:active {
   box-shadow: 0 0 0 2px var(--color-primary);
 }
+.item-card.selected {
+  box-shadow: 0 0 0 2px var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--bg-surface));
+}
+
+.item-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.item-body { flex: 1; min-width: 0; }
 .item-main { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
 .item-name { font-size: 16px; font-weight: 600; }
 .item-cat { font-size: 13px; color: var(--text-tertiary); }
@@ -301,8 +417,8 @@ h1 { font-size: 28px; }
   font-size: 12px; font-weight: 600;
 }
 
-/* Ingredient filters */
-.ing-filters {
+/* Filters bar */
+.filters-bar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -339,6 +455,86 @@ h1 { font-size: 28px; }
   color: var(--text-tertiary);
   white-space: nowrap;
 }
+
+/* Selection mode */
+.btn-select-mode {
+  height: 40px;
+  padding: 0 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.btn-select-mode:active { border-color: var(--color-primary); color: var(--color-primary); }
+.btn-select-all {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.btn-cancel-select {
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--color-danger, #ef4444);
+}
+.checkbox-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+}
+.item-checkbox {
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+/* Bulk action bar */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+}
+.bulk-count {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-right: auto;
+}
+.bulk-btn {
+  height: 44px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  color: white;
+}
+.bulk-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bulk-deactivate { background: var(--color-danger, #ef4444); }
+.bulk-activate { background: var(--color-success, #22c55e); }
 
 /* Ingredient row with photo */
 .ing-row {
