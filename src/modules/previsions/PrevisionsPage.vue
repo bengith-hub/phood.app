@@ -126,10 +126,6 @@ const monthTotalCA = computed(() => {
   return monthForecasts.value.reduce((sum, f) => sum + f.ca_prevision, 0)
 })
 
-const monthTotalTickets = computed(() => {
-  return monthForecasts.value.reduce((sum, f) => sum + f.nb_tickets_prevision, 0)
-})
-
 const monthN1Total = computed(() => {
   let total = 0
   let hasData = false
@@ -187,10 +183,6 @@ const weekTotalCA = computed(() => {
   return forecasts.value.reduce((sum, f) => sum + f.ca_prevision, 0)
 })
 
-const weekTotalTickets = computed(() => {
-  return forecasts.value.reduce((sum, f) => sum + f.nb_tickets_prevision, 0)
-})
-
 const weekN1Total = computed(() => {
   return store.getWeekN1Total(forecasts.value)
 })
@@ -214,13 +206,6 @@ function formatHeure(h: number): string {
 
 function formatEuros(val: number): string {
   return val.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' \u20AC'
-}
-
-function formatEurosCompact(val: number): string {
-  if (val >= 1000) {
-    return (val / 1000).toFixed(1).replace('.0', '') + 'k'
-  }
-  return val.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 }
 
 function isFutureDate(dateStr: string): boolean {
@@ -423,6 +408,114 @@ async function syncCalendars() {
   } finally {
     calendarSyncing.value = false
   }
+}
+
+// --- Event modal ---
+const showEventModal = ref(false)
+const eventForm = ref({
+  nom: '',
+  description: '',
+  date_debut: '',
+  date_fin: '',
+  coefficient: 1.0,
+  notes: '',
+})
+const eventEstimating = ref(false)
+const eventEstimation = ref<{ coefficient: number; explication: string; confiance: number } | null>(null)
+const eventSaving = ref(false)
+const editingEventId = ref<string | null>(null)
+
+function openEventModal(dateStr?: string) {
+  editingEventId.value = null
+  eventForm.value = {
+    nom: '',
+    description: '',
+    date_debut: dateStr || new Date().toISOString().split('T')[0]!,
+    date_fin: dateStr || new Date().toISOString().split('T')[0]!,
+    coefficient: 1.0,
+    notes: '',
+  }
+  eventEstimation.value = null
+  showEventModal.value = true
+}
+
+function editEvent(evt: import('@/types/database').Evenement) {
+  editingEventId.value = evt.id
+  eventForm.value = {
+    nom: evt.nom,
+    description: '',
+    date_debut: evt.date_debut,
+    date_fin: evt.date_fin,
+    coefficient: evt.coefficient,
+    notes: evt.notes || '',
+  }
+  eventEstimation.value = null
+  showEventModal.value = true
+}
+
+async function estimateCoefficient() {
+  if (!eventForm.value.nom) return
+  eventEstimating.value = true
+  eventEstimation.value = null
+  try {
+    const resp = await fetch('/api/estimate-event-coefficient', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nom: eventForm.value.nom,
+        description: eventForm.value.description,
+        date_debut: eventForm.value.date_debut,
+        date_fin: eventForm.value.date_fin,
+      }),
+    })
+    if (resp.ok) {
+      const data = await resp.json()
+      eventEstimation.value = data
+      eventForm.value.coefficient = data.coefficient
+    }
+  } catch {
+    // silently fail, user can set manually
+  } finally {
+    eventEstimating.value = false
+  }
+}
+
+async function saveEvent() {
+  eventSaving.value = true
+  try {
+    if (editingEventId.value) {
+      await store.updateEvenement(editingEventId.value, {
+        nom: eventForm.value.nom,
+        date_debut: eventForm.value.date_debut,
+        date_fin: eventForm.value.date_fin,
+        coefficient: eventForm.value.coefficient,
+        notes: eventForm.value.notes || null,
+      })
+    } else {
+      await store.createEvenement({
+        nom: eventForm.value.nom,
+        type: 'custom',
+        date_debut: eventForm.value.date_debut,
+        date_fin: eventForm.value.date_fin,
+        coefficient: eventForm.value.coefficient,
+        recurrent: false,
+        notes: eventForm.value.notes || null,
+      })
+    }
+    showEventModal.value = false
+    recalculateForecasts()
+    recalculateMonthForecasts()
+  } catch {
+    // error handled by store
+  } finally {
+    eventSaving.value = false
+  }
+}
+
+async function removeEvent(id: string) {
+  await store.deleteEvenement(id)
+  recalculateForecasts()
+  recalculateMonthForecasts()
 }
 
 // --- Lifecycle ---
@@ -1030,21 +1123,30 @@ watch(
           </div>
 
           <!-- Events card -->
-          <div
-            v-if="selectedForecast.evenements.length > 0"
-            class="detail-card detail-card--events"
-          >
-            <h3>Evenements</h3>
+          <div class="detail-card detail-card--events">
+            <div class="events-header">
+              <h3>Evenements</h3>
+              <button class="btn-add-event" @click="openEventModal(selectedForecast.date)">+ Ajouter</button>
+            </div>
             <div
               v-for="evt in selectedForecast.evenements"
               :key="evt.id"
               class="event-detail"
             >
-              <span class="event-tag" :class="'event-' + evt.type">{{ evt.nom }}</span>
+              <div class="event-detail-row">
+                <span class="event-tag" :class="'event-' + evt.type">{{ evt.nom }}</span>
+                <div v-if="evt.type === 'custom'" class="event-actions">
+                  <button class="btn-event-action" @click="editEvent(evt)">Modifier</button>
+                  <button class="btn-event-action btn-event-delete" @click="removeEvent(evt.id)">Suppr.</button>
+                </div>
+              </div>
               <span class="event-coeff">
                 {{ evt.coefficient > 1 ? '+' : '' }}{{ ((evt.coefficient - 1) * 100).toFixed(0) }}% de frequentation
               </span>
               <span v-if="evt.notes" class="event-notes">{{ evt.notes }}</span>
+            </div>
+            <div v-if="selectedForecast.evenements.length === 0" class="event-empty">
+              Aucun evenement pour cette date.
             </div>
           </div>
 
@@ -1139,6 +1241,82 @@ watch(
       <p class="empty-hint">Verifiez que la synchronisation quotidienne Zelty fonctionne dans Parametres &gt; Zelty.</p>
     </div>
   </div>
+
+  <!-- Event creation/edit modal -->
+  <Teleport to="body">
+    <div v-if="showEventModal" class="modal-overlay" @click.self="showEventModal = false">
+      <div class="modal-content">
+        <h2>{{ editingEventId ? 'Modifier' : 'Ajouter' }} un evenement</h2>
+
+        <label class="modal-label">
+          Nom de l'evenement
+          <input v-model="eventForm.nom" type="text" class="modal-input" placeholder="Ex: Travaux centre commercial" />
+        </label>
+
+        <label class="modal-label">
+          Description (optionnel, aide l'IA)
+          <textarea v-model="eventForm.description" class="modal-textarea" rows="2" placeholder="Ex: Fermeture de l'entree principale pour travaux"></textarea>
+        </label>
+
+        <div class="modal-row">
+          <label class="modal-label modal-label--half">
+            Date debut
+            <input v-model="eventForm.date_debut" type="date" class="modal-input" />
+          </label>
+          <label class="modal-label modal-label--half">
+            Date fin
+            <input v-model="eventForm.date_fin" type="date" class="modal-input" />
+          </label>
+        </div>
+
+        <div class="modal-coeff-section">
+          <div class="modal-coeff-header">
+            <label class="modal-label modal-label--inline">
+              Coefficient d'impact
+              <input
+                v-model.number="eventForm.coefficient"
+                type="number"
+                step="0.05"
+                min="0"
+                max="3"
+                class="modal-input modal-input--coeff"
+              />
+            </label>
+            <button
+              class="btn-estimate"
+              :disabled="!eventForm.nom || eventEstimating"
+              @click="estimateCoefficient"
+            >
+              {{ eventEstimating ? 'Estimation...' : 'Estimer par IA' }}
+            </button>
+          </div>
+          <div class="coeff-preview">
+            {{ eventForm.coefficient === 1 ? 'Aucun impact' : eventForm.coefficient > 1 ? `+${((eventForm.coefficient - 1) * 100).toFixed(0)}% de frequentation` : `${((eventForm.coefficient - 1) * 100).toFixed(0)}% de frequentation` }}
+          </div>
+          <div v-if="eventEstimation" class="ai-estimation">
+            <strong>Suggestion IA :</strong> {{ eventEstimation.explication }}
+            <span class="ai-confidence">(confiance : {{ (eventEstimation.confiance * 100).toFixed(0) }}%)</span>
+          </div>
+        </div>
+
+        <label class="modal-label">
+          Notes (optionnel)
+          <input v-model="eventForm.notes" type="text" class="modal-input" placeholder="Notes internes" />
+        </label>
+
+        <div class="modal-actions">
+          <button class="btn-modal btn-modal--cancel" @click="showEventModal = false">Annuler</button>
+          <button
+            class="btn-modal btn-modal--save"
+            :disabled="!eventForm.nom || !eventForm.date_debut || eventSaving"
+            @click="saveEvent"
+          >
+            {{ eventSaving ? 'Enregistrement...' : editingEventId ? 'Modifier' : 'Ajouter' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -1729,11 +1907,6 @@ watch(
 .ca-sub {
   font-size: 11px;
   color: var(--text-tertiary);
-}
-
-.ca-tickets {
-  font-size: 13px;
-  color: var(--text-secondary);
 }
 
 /* --- N-1 comparison --- */
@@ -2346,6 +2519,228 @@ watch(
   font-size: 14px;
   color: var(--text-tertiary);
   margin-top: 8px;
+}
+
+/* --- Event management --- */
+.events-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.events-header h3 {
+  margin: 0;
+}
+
+.btn-add-event {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.event-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.event-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-event-action {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.btn-event-delete {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.event-empty {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* --- Event Modal --- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.modal-content {
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content h2 {
+  font-size: 20px;
+  margin: 0 0 20px;
+  color: var(--text-primary);
+}
+
+.modal-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
+.modal-label--half {
+  flex: 1;
+  min-width: 0;
+}
+
+.modal-label--inline {
+  margin-bottom: 0;
+}
+
+.modal-input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 16px;
+  margin-top: 4px;
+  box-sizing: border-box;
+}
+
+.modal-input--coeff {
+  width: 90px;
+  display: inline-block;
+  text-align: center;
+}
+
+.modal-textarea {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 16px;
+  margin-top: 4px;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.modal-row {
+  display: flex;
+  gap: 12px;
+}
+
+.modal-coeff-section {
+  margin-bottom: 14px;
+}
+
+.modal-coeff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.btn-estimate {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-estimate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.coeff-preview {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 4px 0;
+}
+
+.ai-estimation {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #166534;
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.ai-confidence {
+  color: #4ade80;
+  font-size: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.btn-modal {
+  padding: 12px 24px;
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-modal--cancel {
+  background: #f3f4f6;
+  color: var(--text-secondary);
+}
+
+.btn-modal--save {
+  background: var(--color-primary);
+  color: white;
+}
+
+.btn-modal--save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* --- Responsive: iPad landscape --- */

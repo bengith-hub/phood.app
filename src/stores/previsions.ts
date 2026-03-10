@@ -729,6 +729,28 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return hasData ? total : null
   }
 
+  async function createEvenement(evt: Omit<Evenement, 'id' | 'created_at'>): Promise<Evenement> {
+    const [created] = await restCall<Evenement[]>('POST', 'evenements', evt)
+    evenements.value.unshift(created!)
+    await db.evenements.put(created!)
+    return created!
+  }
+
+  async function updateEvenement(id: string, updates: Partial<Evenement>): Promise<void> {
+    await restCall('PATCH', `evenements?id=eq.${id}`, updates)
+    const idx = evenements.value.findIndex(e => e.id === id)
+    if (idx >= 0) {
+      evenements.value[idx] = { ...evenements.value[idx]!, ...updates }
+      await db.evenements.put(evenements.value[idx]!)
+    }
+  }
+
+  async function deleteEvenement(id: string): Promise<void> {
+    await restCall('DELETE', `evenements?id=eq.${id}`)
+    evenements.value = evenements.value.filter(e => e.id !== id)
+    await db.evenements.delete(id)
+  }
+
   return {
     ventes, meteo, evenements, horaires, repartition, loading, error,
     ventesParDate, meteoParDate,
@@ -737,5 +759,6 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     getRepartitionForDay, getRepartitionCA,
     getEventsForDate, isJourFerme, weatherCodeToEmoji,
     calculatePrecisionS1, getWeekN1Total,
+    createEvenement, updateEvenement, deleteEvenement,
   }
 })
