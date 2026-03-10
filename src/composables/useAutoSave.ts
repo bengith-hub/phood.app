@@ -1,6 +1,7 @@
 import { ref, watch, onUnmounted, type Ref } from 'vue'
 import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
+import { queueMutation } from '@/lib/sync-queue'
 
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error'
 
@@ -52,6 +53,8 @@ export function useAutoSave<T extends Record<string, unknown>>(
         status.value = 'error'
       }
     } else {
+      // Queue mutation for later sync
+      await queueMutation('PATCH', `${options.table}?id=eq.${options.id.value}`, { ...data.value })
       status.value = 'offline'
     }
   }

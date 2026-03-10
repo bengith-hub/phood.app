@@ -44,6 +44,7 @@ const navItems = computed(() => [
 const plusMenuItems = computed(() => [
   { name: 'Fournisseurs', icon: icons.fournisseurs, route: '/fournisseurs' },
   { name: 'Produits fourn.', icon: icons.mercuriale, route: '/mercuriale' },
+  { name: 'Avoirs', icon: icons.coutMatiere, route: '/avoirs' },
   { name: 'Stocks', icon: icons.stocks, route: '/stocks' },
   { name: 'Coût matière', icon: icons.coutMatiere, route: '/recettes/cout-matiere' },
   { name: 'Inventaire', icon: icons.inventaire, route: '/inventaire' },

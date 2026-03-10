@@ -47,6 +47,11 @@ const router = createRouter({
           name: 'reception',
           component: () => import('@/modules/reception/ReceptionPage.vue'),
         },
+        {
+          path: 'avoirs',
+          name: 'avoirs',
+          component: () => import('@/modules/reception/AvoirsPage.vue'),
+        },
         // Recettes & Ingrédients
         {
           path: 'recettes',

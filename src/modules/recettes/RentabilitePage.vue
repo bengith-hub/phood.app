@@ -9,9 +9,27 @@ const router = useRouter()
 const recettesStore = useRecettesStore()
 const ingredientsStore = useIngredientsStore()
 
-// --- Commission rates ---
-// Sur place: 0%, Emporter: 0%, Livraison: 33% of TTC (worst case Uber Eats)
-const COMMISSION_LIVRAISON_PCT = 0.33
+// --- Uber Eats commission tiers ---
+interface CommissionTier {
+  label: string
+  standard: number
+  uberOne: number
+}
+
+const UBER_TIERS: Record<string, CommissionTier> = {
+  marketplace: { label: 'Marketplace', standard: 0.30, uberOne: 0.33 },
+  aggregateur: { label: 'Agregateur', standard: 0.15, uberOne: 0.18 },
+  click_collect: { label: 'Click & Collect', standard: 0.15, uberOne: 0.18 },
+  preferentiel: { label: 'Preferentiel', standard: 0.26, uberOne: 0.28 },
+}
+
+const selectedTier = ref<string>('marketplace')
+const useUberOneRate = ref(true) // Worst-case by default
+
+const COMMISSION_LIVRAISON_PCT = computed(() => {
+  const tier = UBER_TIERS[selectedTier.value]!
+  return useUberOneRate.value ? tier.uberOne : tier.standard
+})
 
 // --- Sort and filter ---
 type SortKey = 'nom' | 'marge_pct_sp' | 'marge_pct_emp' | 'marge_pct_liv' | 'cout_matiere'
@@ -89,7 +107,7 @@ function computeChannel(
   // Commission: livraison only, on TTC
   let commissionPct = 0
   if (canal === 'livraison') {
-    commissionPct = COMMISSION_LIVRAISON_PCT
+    commissionPct = COMMISSION_LIVRAISON_PCT.value
   }
   const commission = prixTTC * commissionPct
 
@@ -317,9 +335,21 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Commission info -->
-    <div class="commission-info">
-      Commission livraison : {{ (COMMISSION_LIVRAISON_PCT * 100).toFixed(0) }}% sur TTC (Uber Eats worst-case)
+    <!-- Commission tier selector -->
+    <div class="commission-selector">
+      <label>Commission Uber Eats :</label>
+      <select v-model="selectedTier" class="tier-select">
+        <option v-for="(tier, key) in UBER_TIERS" :key="key" :value="key">
+          {{ tier.label }} ({{ (tier.standard * 100).toFixed(0) }}% / {{ (tier.uberOne * 100).toFixed(0) }}%)
+        </option>
+      </select>
+      <label class="uber-one-toggle">
+        <input type="checkbox" v-model="useUberOneRate" />
+        Uber One (pire cas)
+      </label>
+      <span class="commission-rate">
+        {{ (COMMISSION_LIVRAISON_PCT * 100).toFixed(0) }}% sur TTC
+      </span>
     </div>
 
     <!-- Price cap alert -->
@@ -659,15 +689,40 @@ h1 {
   color: var(--text-primary);
 }
 
-/* Commission info */
-.commission-info {
-  font-size: 13px;
-  color: var(--text-tertiary);
+/* Commission selector */
+.commission-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: var(--text-secondary);
   background: #fef3c7;
   padding: 8px 14px;
   border-radius: var(--radius-sm);
   margin-bottom: 16px;
   font-weight: 600;
+}
+.tier-select {
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  background: white;
+}
+.uber-one-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.uber-one-toggle input { cursor: pointer; }
+.commission-rate {
+  font-weight: 700;
+  color: var(--color-primary);
 }
 
 /* Price cap alert */

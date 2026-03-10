@@ -75,6 +75,63 @@ export const useCommandesStore = defineStore('commandes', () => {
     }
     await restCall('PATCH', `commandes?id=eq.${id}`, updates)
     await fetchAll()
+
+    // Fire-and-forget Google Calendar sync
+    if (statut === 'envoyee' || statut === 'receptionnee') {
+      syncCalendarEvent(id, statut).catch(() => {})
+    }
+  }
+
+  /**
+   * Sync delivery event to Google Calendar (fire-and-forget).
+   * Creates event on 'envoyee', updates on 'receptionnee'.
+   */
+  async function syncCalendarEvent(id: string, statut: StatutCommande) {
+    try {
+      // Load config to get calendar ID
+      const configs = await restCall<{ google_calendar_id: string | null }[]>(
+        'GET', 'config?select=google_calendar_id&limit=1'
+      )
+      const calendarId = configs[0]?.google_calendar_id
+      if (!calendarId) return // Calendar not configured
+
+      const cmd = commandes.value.find(c => c.id === id)
+      if (!cmd) return
+
+      if (statut === 'envoyee') {
+        // Fetch order lines for the event description
+        const lignes = await fetchLignes(id)
+        const lignesDesc = lignes.map(l => `\u2022 ${l.mercuriale_id} \u00d7 ${l.quantite}`).join('\n')
+
+        await fetch('/.netlify/functions/google-calendar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create-delivery',
+            calendarId,
+            commandeNumero: cmd.numero,
+            fournisseurNom: cmd.fournisseur_id, // Will be resolved by caller if needed
+            dateLivraison: cmd.date_livraison_prevue || cmd.date_commande,
+            nbReferences: lignes.length,
+            lignesDescription: lignesDesc,
+          }),
+        })
+      } else if (statut === 'receptionnee') {
+        await fetch('/.netlify/functions/google-calendar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update-delivery',
+            calendarId,
+            commandeNumero: cmd.numero,
+            newStatus: 'received',
+            fournisseurNom: cmd.fournisseur_id,
+          }),
+        })
+      }
+    } catch (e) {
+      console.error('Calendar sync failed:', e)
+    }
   }
 
   async function updateCommande(id: string, updates: Partial<Commande>) {

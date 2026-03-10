@@ -18,6 +18,7 @@ export interface Config {
   delai_expiration_avoir_heures: number
   destinataires_email_avoir: string[]
   destinataires_email_alertes: string[]
+  google_calendar_id: string | null
   updated_at: string
 }
 
@@ -262,16 +263,33 @@ export interface ReceptionLigne {
 
 export type StatutAvoir = 'en_attente' | 'envoyee' | 'relancee' | 'acceptee' | 'refusee' | 'expiree'
 
+export interface AvoirLigne {
+  designation: string
+  sku: string | null
+  quantite_commandee: number
+  quantite_recue: number
+  prix_unitaire_bc: number | null
+  prix_unitaire_bl: number | null
+  anomalie_type: AnomalieType
+  anomalie_detail: string
+  balance: number
+}
+
 export interface Avoir {
   id: string
   reception_id: string
   fournisseur_id: string
+  commande_id: string | null
   montant_estime: number
   statut: StatutAvoir
   date_envoi: string | null
   date_relance: string | null
   date_reponse: string | null
   notes: string | null
+  commentaire: string | null
+  email_envoye: boolean
+  lignes_avoir: AvoirLigne[]
+  photos_anomalies: string[]
   created_at: string
 }
 

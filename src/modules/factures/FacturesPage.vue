@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useFacturesStore, type StatutRapprochement, type EcartFacture } from '@/stores/factures'
+import { useFacturesStore, type StatutRapprochement, type EcartFacture, type EcartLigne } from '@/stores/factures'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useCommandesStore } from '@/stores/commandes'
 import { restCall } from '@/lib/rest-client'
@@ -24,6 +24,12 @@ const rapprochementLoading = ref(false)
 // --- Ecarts detail ---
 const ecartsDetail = ref<EcartFacture[]>([])
 const ecartsLoaded = ref(false)
+
+// --- Line-by-line detail ---
+const showLignesDetail = ref(false)
+const lignesDetailFacture = ref<FacturePennylane | null>(null)
+const lignesDetail = ref<EcartLigne[]>([])
+const lignesLoading = ref(false)
 
 // --- Depannage detection ---
 const detectingDepannage = ref(false)
@@ -198,6 +204,28 @@ async function runDetectionDepannage() {
   }
 }
 
+// --- Line-by-line detail ---
+async function openLignesDetail(facture: FacturePennylane) {
+  if (!facture.reception_id) return
+  lignesDetailFacture.value = facture
+  showLignesDetail.value = true
+  lignesLoading.value = true
+  try {
+    lignesDetail.value = await facturesStore.getEcartsLignes(facture.id)
+  } catch (e) {
+    console.error('Failed to load line detail:', e)
+    lignesDetail.value = []
+  } finally {
+    lignesLoading.value = false
+  }
+}
+
+function closeLignesDetail() {
+  showLignesDetail.value = false
+  lignesDetailFacture.value = null
+  lignesDetail.value = []
+}
+
 // --- Tab change handler ---
 function switchTab(tab: TabFilter) {
   activeTab.value = tab
@@ -330,8 +358,8 @@ onMounted(async () => {
         v-for="f in filtered"
         :key="f.id"
         class="facture-card"
-        @click="f.statut_rapprochement === 'non_rapprochee' ? openRapprochement(f) : undefined"
-        :class="{ clickable: f.statut_rapprochement === 'non_rapprochee' }"
+        @click="f.statut_rapprochement === 'non_rapprochee' ? openRapprochement(f) : (f.reception_id ? openLignesDetail(f) : undefined)"
+        :class="{ clickable: f.statut_rapprochement === 'non_rapprochee' || f.reception_id }"
       >
         <div class="card-top">
           <span class="card-numero">{{ f.numero || f.pennylane_id }}</span>
@@ -458,6 +486,92 @@ onMounted(async () => {
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Line-by-line detail modal -->
+    <Teleport to="body">
+      <div v-if="showLignesDetail" class="modal-overlay" @click.self="closeLignesDetail">
+        <div class="modal-content modal-wide">
+          <div class="modal-header">
+            <h2>Detail ligne par ligne</h2>
+            <button class="btn-close" @click="closeLignesDetail">X</button>
+          </div>
+
+          <div v-if="lignesDetailFacture" class="modal-facture-info">
+            <p><strong>Facture :</strong> {{ lignesDetailFacture.numero || lignesDetailFacture.pennylane_id }}</p>
+            <p><strong>Fournisseur :</strong> {{ getFournisseurNom(lignesDetailFacture.fournisseur_id) }}</p>
+            <p><strong>Montant facture :</strong> {{ formatMontant(lignesDetailFacture.montant_ht) }} HT</p>
+          </div>
+
+          <div v-if="lignesLoading" class="modal-loading">Chargement des lignes...</div>
+
+          <div v-else-if="lignesDetail.length === 0" class="modal-empty">
+            Aucune ligne de comparaison disponible.
+          </div>
+
+          <div v-else class="lignes-table-wrap">
+            <table class="lignes-table">
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>Qte BC</th>
+                  <th>Prix BC</th>
+                  <th>Montant BC</th>
+                  <th>Qte Recu</th>
+                  <th>Prix BL</th>
+                  <th>Montant BL</th>
+                  <th>Ecart</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(l, idx) in lignesDetail"
+                  :key="idx"
+                  :class="{
+                    'ligne-ecart': l.statut === 'ecart',
+                    'ligne-manquant': l.statut === 'manquant_bc' || l.statut === 'manquant_facture',
+                  }"
+                >
+                  <td class="col-designation">{{ l.designation }}</td>
+                  <td class="center">{{ l.quantite_bc }}</td>
+                  <td class="right">{{ l.prix_bc.toFixed(2) }}</td>
+                  <td class="right">{{ l.montant_bc.toFixed(2) }}</td>
+                  <td class="center">{{ l.quantite_facture ?? '—' }}</td>
+                  <td class="right">{{ l.prix_facture != null ? l.prix_facture.toFixed(2) : '—' }}</td>
+                  <td class="right">{{ l.montant_facture != null ? l.montant_facture.toFixed(2) : '—' }}</td>
+                  <td
+                    class="right col-ecart-val"
+                    :class="{
+                      'ecart-positif': l.ecart_ht > 0.01,
+                      'ecart-negatif': l.ecart_ht < -0.01,
+                      'ecart-ok': Math.abs(l.ecart_ht) <= 0.01,
+                    }"
+                  >
+                    {{ l.ecart_ht > 0 ? '+' : '' }}{{ l.ecart_ht.toFixed(2) }} €
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3"><strong>Total</strong></td>
+                  <td class="right"><strong>{{ lignesDetail.reduce((s, l) => s + l.montant_bc, 0).toFixed(2) }} €</strong></td>
+                  <td colspan="2"></td>
+                  <td class="right"><strong>{{ lignesDetail.reduce((s, l) => s + (l.montant_facture || 0), 0).toFixed(2) }} €</strong></td>
+                  <td
+                    class="right"
+                    :class="{
+                      'ecart-positif': lignesDetail.reduce((s, l) => s + l.ecart_ht, 0) > 0.01,
+                      'ecart-negatif': lignesDetail.reduce((s, l) => s + l.ecart_ht, 0) < -0.01,
+                    }"
+                  >
+                    <strong>{{ lignesDetail.reduce((s, l) => s + l.ecart_ht, 0).toFixed(2) }} €</strong>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </div>
       </div>
@@ -976,4 +1090,47 @@ onMounted(async () => {
     align-items: flex-end;
   }
 }
+
+/* Line-by-line detail */
+.modal-wide { max-width: 900px; }
+
+.lignes-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+
+.lignes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.lignes-table th, .lignes-table td {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.lignes-table th {
+  background: var(--bg-main);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.lignes-table .center { text-align: center; }
+.lignes-table .right { text-align: right; }
+.lignes-table .col-designation { min-width: 150px; font-weight: 500; }
+.lignes-table .col-ecart-val { font-weight: 700; }
+
+.lignes-table tfoot td {
+  background: var(--bg-main);
+  border-top: 2px solid var(--border);
+}
+
+tr.ligne-ecart { background: #fef3c7; }
+tr.ligne-manquant { background: #fee2e2; }
+
+.ecart-positif { color: #dc2626; }
+.ecart-negatif { color: #dc2626; }
+.ecart-ok { color: #15803d; }
 </style>
