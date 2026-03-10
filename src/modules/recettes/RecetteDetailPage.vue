@@ -443,7 +443,14 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       <div class="form-grid">
         <div class="field full">
           <label>Nom</label>
-          <input v-model="nom" type="text" placeholder="Nom de la recette" class="input" />
+          <input
+            v-model="nom"
+            type="text"
+            placeholder="Nom de la recette"
+            class="input"
+            :disabled="!!zeltyProductId"
+          />
+          <span v-if="zeltyProductId" class="field-hint">Synchronisé depuis Zelty — nom non modifiable</span>
         </div>
         <div class="field">
           <label>Type</label>
@@ -913,6 +920,11 @@ h1 {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
+}
+.field-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
 }
 
 .input {
