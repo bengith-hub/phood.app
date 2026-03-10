@@ -1,31 +1,197 @@
-// Backup Supabase tables to Google Drive as JSON
-// Triggered daily at 04:00 via pg_cron → pg_net
-// Uses Google Service Account (same as Gmail/Calendar)
-// Backs up: fournisseurs, mercuriale, ingredients_restaurant, recettes,
-//   recette_ingredients, commandes, commande_lignes, avoirs, stocks, config
+// Backup Supabase data → Google Drive
+// Triggered daily via pg_cron → pg_net
+// Exports all key tables as JSON and uploads to a shared Drive folder
+// Uses Google Service Account with Drive API v3
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { decode as base64Decode } from 'https://deno.land/std@0.208.0/encoding/base64.ts'
 
+// Tables to backup (ordered by importance)
 const TABLES_TO_BACKUP = [
+  'profiles',
+  'config',
   'fournisseurs',
-  'mercuriale',
+  'categories',
   'ingredients_restaurant',
+  'mercuriale',
+  'historique_prix',
   'recettes',
   'recette_ingredients',
   'commandes',
   'commande_lignes',
-  'avoirs',
-  'stocks',
-  'config',
-  'profiles',
   'receptions',
   'reception_lignes',
-  'historique_prix',
+  'avoirs',
+  'stocks',
+  'modeles_inventaires',
+  'inventaires',
+  'inventaire_lignes',
+  'ventes_historique',
+  'meteo_daily',
+  'evenements',
+  'factures_pennylane',
+  'achats_hors_commande',
+  'horaires_ouverture',
+  'repartition_horaire',
+  'zones_stockage',
+  'notifications',
+  'cron_logs',
 ]
 
-// Google Drive folder ID for backups (set via env)
-const DRIVE_FOLDER_ID = Deno.env.get('GOOGLE_DRIVE_BACKUP_FOLDER_ID') || ''
+interface GoogleServiceAccount {
+  client_email: string
+  private_key: string
+  token_uri: string
+}
+
+/** Create a JWT and exchange it for a Google access token */
+async function getGoogleAccessToken(sa: GoogleServiceAccount): Promise<string> {
+  const now = Math.floor(Date.now() / 1000)
+  const header = { alg: 'RS256', typ: 'JWT' }
+  const payload = {
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    aud: sa.token_uri,
+    iat: now,
+    exp: now + 3600,
+  }
+
+  const encoder = new TextEncoder()
+  const headerB64 = btoa(JSON.stringify(header)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+  const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+  const unsignedToken = `${headerB64}.${payloadB64}`
+
+  // Import RSA private key
+  const pemContents = sa.private_key
+    .replace(/-----BEGIN PRIVATE KEY-----/, '')
+    .replace(/-----END PRIVATE KEY-----/, '')
+    .replace(/\n/g, '')
+  const binaryKey = base64Decode(pemContents)
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8',
+    binaryKey,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  )
+
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    cryptoKey,
+    encoder.encode(unsignedToken)
+  )
+
+  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+
+  const jwt = `${unsignedToken}.${signatureB64}`
+
+  // Exchange JWT for access token
+  const tokenResponse = await fetch(sa.token_uri, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+  })
+
+  if (!tokenResponse.ok) {
+    const err = await tokenResponse.text()
+    throw new Error(`Google token exchange failed: ${tokenResponse.status} ${err}`)
+  }
+
+  const tokenData = await tokenResponse.json()
+  return tokenData.access_token
+}
+
+/** Upload a file to Google Drive (create or update) */
+async function uploadToDrive(
+  accessToken: string,
+  fileName: string,
+  content: string,
+  folderId?: string
+): Promise<string> {
+  // Check if file already exists in the folder
+  let existingFileId: string | null = null
+  const query = folderId
+    ? `name='${fileName}' and '${folderId}' in parents and trashed=false`
+    : `name='${fileName}' and trashed=false`
+
+  const searchResponse = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` } }
+  )
+
+  if (searchResponse.ok) {
+    const searchData = await searchResponse.json()
+    if (searchData.files?.length > 0) {
+      existingFileId = searchData.files[0].id
+    }
+  }
+
+  if (existingFileId) {
+    // Update existing file
+    const updateResponse = await fetch(
+      `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=media`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: content,
+      }
+    )
+    if (!updateResponse.ok) {
+      throw new Error(`Drive update failed: ${updateResponse.status}`)
+    }
+    return existingFileId
+  } else {
+    // Create new file with multipart upload
+    const metadata: Record<string, unknown> = {
+      name: fileName,
+      mimeType: 'application/json',
+    }
+    if (folderId) {
+      metadata.parents = [folderId]
+    }
+
+    const boundary = 'backup_boundary_' + Date.now()
+    const body = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      'Content-Type: application/json',
+      '',
+      content,
+      `--${boundary}--`,
+    ].join('\r\n')
+
+    const createResponse = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+        },
+        body,
+      }
+    )
+
+    if (!createResponse.ok) {
+      const err = await createResponse.text()
+      throw new Error(`Drive create failed: ${createResponse.status} ${err}`)
+    }
+
+    const createData = await createResponse.json()
+    return createData.id
+  }
+}
 
 serve(async (req) => {
   try {
@@ -34,265 +200,114 @@ serve(async (req) => {
       return new Response('Unauthorized', { status: 401 })
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const serviceAccountB64 = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_BASE64')
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
 
-    if (!serviceAccountB64 || !DRIVE_FOLDER_ID) {
-      await logResult(supabaseUrl, supabaseKey, 'backup_drive', false, 0,
-        'Missing GOOGLE_SERVICE_ACCOUNT_BASE64 or GOOGLE_DRIVE_BACKUP_FOLDER_ID')
-      return new Response(JSON.stringify({ error: 'Google Drive not configured' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    // Log job start
+    const { data: log } = await supabase
+      .from('cron_logs')
+      .insert({ job_name: 'backup-drive', status: 'running' })
+      .select('id')
+      .single()
+
+    const startTime = Date.now()
+
+    // Parse Google Service Account credentials
+    const saBase64 = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_BASE64')
+    if (!saBase64) {
+      throw new Error('GOOGLE_SERVICE_ACCOUNT_BASE64 not configured')
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey)
+    const saJson = new TextDecoder().decode(base64Decode(saBase64))
+    const serviceAccount: GoogleServiceAccount = JSON.parse(saJson)
 
-    // Export all tables
+    const driveFolderId = Deno.env.get('GOOGLE_DRIVE_BACKUP_FOLDER_ID') || undefined
+
+    // Get Google access token
+    const accessToken = await getGoogleAccessToken(serviceAccount)
+
+    // Export each table
+    const today = new Date().toISOString().split('T')[0]
     const backupData: Record<string, unknown[]> = {}
-    let totalRows = 0
+    const errors: string[] = []
 
     for (const table of TABLES_TO_BACKUP) {
-      const { data, error } = await supabase
-        .from(table)
-        .select('*')
-        .limit(10000)
+      try {
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .limit(50000) // Safety limit
 
-      if (error) {
-        console.error(`Failed to export ${table}:`, error.message)
-        backupData[table] = []
-      } else {
+        if (error) {
+          errors.push(`${table}: ${error.message}`)
+          continue
+        }
+
         backupData[table] = data || []
-        totalRows += (data || []).length
+      } catch (e) {
+        errors.push(`${table}: ${(e as Error).message}`)
       }
     }
 
-    // Create backup JSON
-    const backupJson = JSON.stringify({
-      created_at: new Date().toISOString(),
-      tables: Object.keys(backupData),
-      total_rows: totalRows,
+    // Build backup JSON
+    const backup = {
+      exported_at: new Date().toISOString(),
+      project: 'phood-app',
+      tables: Object.keys(backupData).length,
+      total_rows: Object.values(backupData).reduce((sum, rows) => sum + rows.length, 0),
       data: backupData,
-    }, null, 2)
+    }
 
-    // Get Google access token via service account JWT
-    const credentials = JSON.parse(atob(serviceAccountB64))
-    const accessToken = await getGoogleAccessToken(credentials)
+    const backupJson = JSON.stringify(backup, null, 2)
+    const fileName = `phood-backup-${today}.json`
 
     // Upload to Google Drive
-    const dateStr = new Date().toISOString().split('T')[0]
-    const fileName = `phood_backup_${dateStr}.json`
+    const fileId = await uploadToDrive(accessToken, fileName, backupJson, driveFolderId)
 
-    // Delete old backup with same name if exists (keep daily uniqueness)
-    await deleteExistingFile(accessToken, fileName, DRIVE_FOLDER_ID)
+    // Log job success
+    const durationMs = Date.now() - startTime
+    if (log?.id) {
+      await supabase
+        .from('cron_logs')
+        .update({
+          status: 'success',
+          finished_at: new Date().toISOString(),
+          duration_ms: durationMs,
+        })
+        .eq('id', log.id)
+    }
 
-    // Upload new backup
-    const uploadResult = await uploadToDrive(accessToken, fileName, backupJson, DRIVE_FOLDER_ID)
+    return new Response(
+      JSON.stringify({
+        success: true,
+        file_name: fileName,
+        drive_file_id: fileId,
+        tables: Object.keys(backupData).length,
+        total_rows: backup.total_rows,
+        errors: errors.length > 0 ? errors : undefined,
+        duration_ms: durationMs,
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    )
+  } catch (error) {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+    await supabase
+      .from('cron_logs')
+      .insert({
+        job_name: 'backup-drive',
+        status: 'error',
+        finished_at: new Date().toISOString(),
+        error_message: (error as Error).message,
+      })
 
-    // Clean up old backups (keep last 30 days)
-    await cleanOldBackups(accessToken, DRIVE_FOLDER_ID, 30)
-
-    await logResult(supabaseUrl, supabaseKey, 'backup_drive', true, totalRows, null)
-
-    return new Response(JSON.stringify({
-      success: true,
-      fileName,
-      totalRows,
-      fileId: uploadResult.id,
-      sizeKb: Math.round(backupJson.length / 1024),
-    }), {
-      headers: { 'Content-Type': 'application/json' },
-    })
-  } catch (err) {
-    console.error('Backup error:', err)
-    return new Response(JSON.stringify({ error: (err as Error).message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return new Response(
+      JSON.stringify({ error: (error as Error).message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
   }
 })
-
-/**
- * Get Google access token using service account JWT (no external deps).
- */
-async function getGoogleAccessToken(credentials: {
-  client_email: string
-  private_key: string
-}): Promise<string> {
-  const now = Math.floor(Date.now() / 1000)
-  const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
-  const claim = btoa(JSON.stringify({
-    iss: credentials.client_email,
-    scope: 'https://www.googleapis.com/auth/drive.file',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now,
-  }))
-
-  const unsignedJwt = `${header}.${claim}`
-
-  // Sign with RSA private key
-  const pemContent = credentials.private_key
-    .replace(/-----BEGIN PRIVATE KEY-----/, '')
-    .replace(/-----END PRIVATE KEY-----/, '')
-    .replace(/\n/g, '')
-
-  const binaryKey = Uint8Array.from(atob(pemContent), c => c.charCodeAt(0))
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    binaryKey,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-
-  const encoder = new TextEncoder()
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    cryptoKey,
-    encoder.encode(unsignedJwt),
-  )
-
-  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-
-  const jwt = `${unsignedJwt}.${signatureB64}`
-
-  // Exchange JWT for access token
-  const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
-  })
-
-  if (!tokenResp.ok) {
-    throw new Error(`Token exchange failed: ${await tokenResp.text()}`)
-  }
-
-  const tokenData = await tokenResp.json()
-  return tokenData.access_token
-}
-
-async function uploadToDrive(
-  accessToken: string,
-  fileName: string,
-  content: string,
-  folderId: string,
-): Promise<{ id: string }> {
-  const metadata = {
-    name: fileName,
-    mimeType: 'application/json',
-    parents: [folderId],
-  }
-
-  const boundary = 'phood_backup_boundary'
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    'Content-Type: application/json',
-    '',
-    content,
-    `--${boundary}--`,
-  ].join('\r\n')
-
-  const resp = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': `multipart/related; boundary=${boundary}`,
-      },
-      body,
-    },
-  )
-
-  if (!resp.ok) {
-    throw new Error(`Drive upload failed: ${await resp.text()}`)
-  }
-
-  return await resp.json()
-}
-
-async function deleteExistingFile(
-  accessToken: string,
-  fileName: string,
-  folderId: string,
-) {
-  const resp = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=name='${fileName}'+and+'${folderId}'+in+parents+and+trashed=false&fields=files(id)`,
-    {
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    },
-  )
-
-  if (!resp.ok) return
-
-  const data = await resp.json()
-  for (const file of data.files || []) {
-    await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    })
-  }
-}
-
-async function cleanOldBackups(
-  accessToken: string,
-  folderId: string,
-  keepDays: number,
-) {
-  const cutoff = new Date(Date.now() - keepDays * 86400000).toISOString()
-  const resp = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+name+contains+'phood_backup_'+and+createdTime<'${cutoff}'+and+trashed=false&fields=files(id,name)`,
-    {
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    },
-  )
-
-  if (!resp.ok) return
-
-  const data = await resp.json()
-  for (const file of data.files || []) {
-    await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    })
-    console.log(`Deleted old backup: ${file.name}`)
-  }
-}
-
-async function logResult(
-  supabaseUrl: string,
-  supabaseKey: string,
-  jobName: string,
-  success: boolean,
-  rowCount: number,
-  errorMessage: string | null,
-) {
-  try {
-    await fetch(`${supabaseUrl}/rest/v1/cron_logs`, {
-      method: 'POST',
-      headers: {
-        'apikey': supabaseKey,
-        'Authorization': `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal',
-      },
-      body: JSON.stringify({
-        job_name: jobName,
-        success,
-        rows_affected: rowCount,
-        error_message: errorMessage,
-      }),
-    })
-  } catch {
-    // Logging is best-effort
-  }
-}
