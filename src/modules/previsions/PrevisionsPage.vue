@@ -636,11 +636,14 @@ watch(
               <template v-if="fc">
                 <div class="month-cell-header">
                   <span class="month-cell-day">{{ dayOfMonth(fc.date) }}</span>
-                  <span class="month-cell-meteo">{{ weatherCodeToEmoji(fc.meteo?.code_meteo ?? null) }}</span>
+                  <span class="month-cell-weather">
+                    <span class="month-cell-meteo">{{ weatherCodeToEmoji(fc.meteo?.code_meteo ?? null) }}</span>
+                    <span v-if="fc.meteo?.temperature_max != null" class="month-cell-temp">{{ fc.meteo.temperature_max.toFixed(0) }}&#176;</span>
+                  </span>
                 </div>
                 <div v-if="!store.isJourFerme(fc.jour_semaine)" class="month-cell-body">
-                  <span v-if="fc.ca_realise !== null" class="month-cell-ca month-cell-ca--realise">{{ formatEurosCompact(fc.ca_realise) }}</span>
-                  <span v-else class="month-cell-ca">{{ formatEurosCompact(fc.ca_prevision) }}</span>
+                  <span v-if="fc.ca_realise !== null" class="month-cell-ca month-cell-ca--realise">{{ formatEuros(fc.ca_realise) }}</span>
+                  <span v-else class="month-cell-ca">{{ formatEuros(fc.ca_prevision) }}</span>
                   <div class="month-cell-confidence">
                     <div class="mini-confidence-bar">
                       <div
@@ -677,7 +680,7 @@ watch(
 
             <!-- Week total -->
             <div class="month-cell month-cell--total">
-              <span class="month-week-total">{{ formatEurosCompact(weekSubtotal(week)) }}</span>
+              <span class="month-week-total">{{ formatEuros(weekSubtotal(week)) }}</span>
             </div>
           </div>
         </div>
@@ -1518,8 +1521,20 @@ watch(
   color: var(--color-primary);
 }
 
+.month-cell-weather {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .month-cell-meteo {
   font-size: 14px;
+}
+
+.month-cell-temp {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .month-cell-body {

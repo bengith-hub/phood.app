@@ -67,6 +67,22 @@ const SEASONAL_AVG_SUN: Record<number, number> = {
   6: 32400, 7: 30600, 8: 25200, 9: 18000, 10: 12600, 11: 10800,
 }
 
+// Typical WMO weather code by month (Bordeaux seasonal averages)
+const SEASONAL_AVG_CODE: Record<number, number> = {
+  0: 3,  // Jan: overcast
+  1: 3,  // Feb: overcast
+  2: 2,  // Mar: partly cloudy
+  3: 2,  // Apr: partly cloudy
+  4: 1,  // May: mainly clear
+  5: 0,  // Jun: clear sky
+  6: 0,  // Jul: clear sky
+  7: 1,  // Aug: mainly clear
+  8: 2,  // Sep: partly cloudy
+  9: 3,  // Oct: overcast
+  10: 3, // Nov: overcast
+  11: 3, // Dec: overcast
+}
+
 /**
  * Generate a synthetic MeteoDaily from seasonal averages.
  * Used for dates beyond the 16-day Open-Meteo forecast (J+17 to J+30).
@@ -83,7 +99,7 @@ function buildSeasonalMeteo(dateStr: string): MeteoDaily {
     precipitation_mm: SEASONAL_AVG_PRECIP[month] ?? 2.5,
     ensoleillement_secondes: SEASONAL_AVG_SUN[month] ?? 18000,
     couverture_nuageuse_pct: SEASONAL_AVG_CLOUD[month] ?? 55,
-    code_meteo: null, // no WMO code for seasonal average
+    code_meteo: SEASONAL_AVG_CODE[month] ?? 2,
     created_at: '',
   }
 }
