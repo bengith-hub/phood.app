@@ -49,6 +49,8 @@ const zeltyBackfillMsg = ref('')
 const zeltyPhotoStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
 const zeltyPhotoMsg = ref('')
 const zeltyPhotoForce = ref(false)
+const zeltyDiagStatus = ref<'idle' | 'running' | 'done'>('idle')
+const zeltyDiagResults = ref<Array<{ recette: string; suggestions?: Array<{ zelty_name: string; distance: number }> }>>([])
 const ventesCount = ref(0)
 const lastVenteDate = ref<string | null>(null)
 
@@ -266,6 +268,24 @@ async function startPhotoSync() {
   } catch (e: unknown) {
     zeltyPhotoStatus.value = 'error'
     zeltyPhotoMsg.value = `Erreur : ${(e as Error).message || String(e)}`
+  }
+}
+
+async function startPhotoDiag() {
+  zeltyDiagStatus.value = 'running'
+  zeltyDiagResults.value = []
+  try {
+    const resp = await fetch('/.netlify/functions/sync-zelty-photos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry_run: true, diagnostic: true }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const r = await resp.json()
+    zeltyDiagResults.value = (r.details || []).filter((d: Record<string, unknown>) => d.status === 'unmatched')
+    zeltyDiagStatus.value = 'done'
+  } catch {
+    zeltyDiagStatus.value = 'idle'
   }
 }
 
@@ -700,6 +720,38 @@ function formatDuration(ms: number | null) {
           <p v-if="zeltyPhotoMsg" class="backfill-msg" :class="zeltyPhotoStatus">
             {{ zeltyPhotoMsg }}
           </p>
+          <button
+            v-if="zeltyPhotoStatus === 'success'"
+            class="btn-outline"
+            :disabled="zeltyDiagStatus === 'running'"
+            @click="startPhotoDiag"
+          >
+            {{ zeltyDiagStatus === 'running' ? 'Analyse en cours...' : 'Diagnostic : voir les recettes non matchées' }}
+          </button>
+          <div v-if="zeltyDiagResults.length > 0" class="diag-results">
+            <h4>Recettes sans correspondance Zelty ({{ zeltyDiagResults.length }})</h4>
+            <div class="cron-table-wrap">
+              <table class="cron-table">
+                <thead>
+                  <tr>
+                    <th>Recette</th>
+                    <th>Suggestion Zelty 1</th>
+                    <th>Suggestion 2</th>
+                    <th>Suggestion 3</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(d, i) in zeltyDiagResults" :key="i">
+                    <td><strong>{{ d.recette }}</strong></td>
+                    <td v-for="(s, si) in (d.suggestions || [])" :key="si" :class="{ 'diag-close': s.distance <= 5 }">
+                      {{ s.zelty_name }} <span class="diag-dist">({{ s.distance }})</span>
+                    </td>
+                    <td v-for="n in Math.max(0, 3 - (d.suggestions?.length || 0))" :key="'empty-' + n">—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
         <!-- Cron history -->
@@ -1363,5 +1415,31 @@ function formatDuration(ms: number | null) {
 .btn-apply-enrichments:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.btn-outline {
+  margin-top: 12px;
+  padding: 8px 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+.btn-outline:hover { background: var(--bg); }
+.diag-results {
+  margin-top: 16px;
+}
+.diag-results h4 {
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+.diag-close {
+  color: var(--color-success);
+  font-weight: 600;
+}
+.diag-dist {
+  font-size: 12px;
+  color: #999;
 }
 </style>

@@ -30,6 +30,24 @@ function normalizeName(name) {
     .trim();
 }
 
+/**
+ * Simple Levenshtein distance for fuzzy name suggestions
+ */
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
@@ -50,6 +68,7 @@ exports.handler = async function (event) {
     const body = JSON.parse(event.body || '{}');
     const dryRun = body.dry_run === true;
     const forceOverwrite = body.force_overwrite === true;
+    const diagnostic = body.diagnostic === true;
 
     const results = {
       zelty_products_total: 0,
@@ -169,6 +188,25 @@ exports.handler = async function (event) {
 
       if (!zeltyPhoto) {
         results.skipped_no_zelty_photo++;
+        // In diagnostic mode, find closest Zelty name suggestions
+        if (diagnostic && recette.nom) {
+          const normalizedRecette = normalizeName(recette.nom);
+          const allZeltyNames = [...zeltyByName.entries()];
+          const suggestions = allZeltyNames
+            .map(([zName, entry]) => ({
+              zelty_name: entry.name,
+              distance: levenshtein(normalizedRecette, zName),
+              has_photo: true,
+            }))
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 3);
+          results.details.push({
+            recette: recette.nom,
+            zelty_product_id: recette.zelty_product_id || null,
+            status: 'unmatched',
+            suggestions,
+          });
+        }
         continue;
       }
 
