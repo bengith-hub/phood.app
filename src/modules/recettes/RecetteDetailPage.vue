@@ -131,7 +131,6 @@ const coutMatiereEMP = computed<number>(() =>
   ingredientLignes.value
     .filter(l => l.emporter)
     .reduce((sum, l) => sum + ligneCost(l), 0)
-  + (coutEmballage.value || 0)
 )
 
 const coutParPortion = computed(() =>
@@ -521,6 +520,9 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <!-- SECTION: Info de base -->
     <section class="form-section">
       <h2>Informations</h2>
+      <div v-if="photoUrl" class="recette-photo-container">
+        <img :src="photoUrl" :alt="nom" class="recette-photo" />
+      </div>
       <div class="form-grid">
         <div class="field full">
           <label>Nom</label>
@@ -568,10 +570,6 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           <label>Nb portions</label>
           <input v-model.number="nbPortions" type="number" min="1" inputmode="numeric" class="input" />
         </div>
-        <div class="field">
-          <label>Co&ucirc;t emballage (&euro;)</label>
-          <input v-model.number="coutEmballage" type="number" min="0" step="0.01" inputmode="decimal" class="input" />
-        </div>
         <div class="field full">
           <label>Description</label>
           <textarea v-model="description" rows="2" placeholder="Description courte..." class="input textarea" />
@@ -609,7 +607,17 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           <span class="ing-badge" :class="{ 'is-sr': ligne.sous_recette_id }">
             {{ ligne.sous_recette_id ? 'SR' : 'ING' }}
           </span>
-          <span class="ing-name">{{ ligne.label }}</span>
+          <router-link
+            v-if="ligne.ingredient_id"
+            :to="{ name: 'ingredient-detail', params: { id: ligne.ingredient_id } }"
+            class="ing-name ing-link"
+          >{{ ligne.label }}</router-link>
+          <router-link
+            v-else-if="ligne.sous_recette_id"
+            :to="{ name: 'recette-detail', params: { id: ligne.sous_recette_id } }"
+            class="ing-name ing-link"
+          >{{ ligne.label }}</router-link>
+          <span v-else class="ing-name">{{ ligne.label }}</span>
           <input
             v-model.number="ligne.quantite"
             type="number"
@@ -721,7 +729,7 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           <strong>{{ coutMatiereSP.toFixed(2) }} €</strong>
         </div>
         <div class="cost-row cost-row-canal">
-          <span>Emporter / Livraison (EMP){{ coutEmballage ? ` dont ${coutEmballage.toFixed(2)} € emballage` : '' }}</span>
+          <span>Emporter / Livraison (EMP)</span>
           <strong>{{ coutMatiereEMP.toFixed(2) }} €</strong>
         </div>
         <div class="cost-row" style="border-top: 1px solid var(--color-border); margin-top: 4px; padding-top: 10px;">
@@ -1123,6 +1131,27 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ing-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.ing-link:hover {
+  text-decoration: underline;
+}
+
+.recette-photo-container {
+  margin-bottom: 16px;
+  text-align: center;
+}
+.recette-photo {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .ing-qty {
