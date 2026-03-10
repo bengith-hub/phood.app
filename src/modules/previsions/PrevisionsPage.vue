@@ -575,10 +575,6 @@ watch(
             <span class="summary-card-value">{{ monthN1Total !== null ? formatEuros(monthN1Total) : '--' }}</span>
           </div>
           <div class="summary-card">
-            <span class="summary-card-label">Tickets</span>
-            <span class="summary-card-value">{{ monthTotalTickets }}</span>
-          </div>
-          <div class="summary-card">
             <span class="summary-card-label">Confiance moy.</span>
             <span
               class="summary-card-value"
@@ -735,10 +731,6 @@ watch(
             <span class="summary-card-label">N-1 semaine</span>
             <span class="summary-card-value">{{ weekN1Total !== null ? formatEuros(weekN1Total) : '--' }}</span>
           </div>
-          <div class="summary-card">
-            <span class="summary-card-label">Tickets semaine</span>
-            <span class="summary-card-value">{{ weekTotalTickets }}</span>
-          </div>
           <div v-if="precisionS1" class="summary-card">
             <span class="summary-card-label">Precision S-1</span>
             <span
@@ -796,7 +788,6 @@ watch(
                 <span v-if="fc.ca_realise !== null" class="ca-value ca-value--realise">{{ formatEuros(fc.ca_realise) }}</span>
                 <span v-else class="ca-value">{{ formatEuros(fc.ca_prevision) }}</span>
                 <span v-if="fc.ca_realise !== null" class="ca-sub">prevu: {{ formatEuros(fc.ca_prevision) }}</span>
-                <span class="ca-tickets">{{ fc.nb_tickets_prevision }} tickets</span>
               </div>
 
               <!-- N-1 comparison -->

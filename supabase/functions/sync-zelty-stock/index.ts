@@ -371,6 +371,23 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ========================================
+    // PART 3: Update nb_tickets in ventes_historique
+    // ========================================
+    // Count orders with positive amount as "tickets" (actual sales)
+    const nbTickets = orders.filter(o => (o.price?.final_amount_inc_tax || 0) > 0).length
+
+    if (nbTickets > 0) {
+      const { error: ticketError } = await supabase
+        .from('ventes_historique')
+        .update({ nb_tickets: nbTickets })
+        .eq('date', dateStr)
+
+      if (ticketError) {
+        console.error('Error updating nb_tickets:', ticketError)
+      }
+    }
+
     // Log success
     const duration = Date.now() - startTime
     if (logId) {
@@ -393,6 +410,7 @@ Deno.serve(async (req) => {
         productsProcessed,
         productsUnmatched,
         ingredientsDecremented: decrementCount,
+        nbTickets,
         repartition: { contexte, updated: repartitionUpdated, dayTotalCA: Math.round(dayTotalCA) },
         duration_ms: duration,
       }),

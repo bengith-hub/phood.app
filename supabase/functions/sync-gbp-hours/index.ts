@@ -98,37 +98,33 @@ serve(async (req) => {
       }
     }
 
-    // Upsert all 7 days
-    let upsertCount = 0
-    for (const [dayStr, hours] of Object.entries(hoursMap)) {
-      const jourSemaine = parseInt(dayStr)
+    // Replace all 7 days: delete all existing rows, then insert fresh
+    // (No UNIQUE constraint on jour_semaine, so upsert doesn't work)
+    const { error: deleteError } = await supabase
+      .from('horaires_ouverture')
+      .delete()
+      .gte('jour_semaine', 0) // delete all rows
 
-      // Delete existing places-sourced rows for this day, then insert
-      await supabase
-        .from('horaires_ouverture')
-        .delete()
-        .eq('jour_semaine', jourSemaine)
-        .eq('source', 'places')
+    if (deleteError) {
+      console.error('Error deleting existing hours:', deleteError)
+    }
 
-      const { error } = await supabase
-        .from('horaires_ouverture')
-        .upsert(
-          {
-            jour_semaine: jourSemaine,
-            heure_ouverture: hours.ouverture,
-            heure_fermeture: hours.fermeture,
-            est_ferme: hours.ferme,
-            source: 'places',
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'jour_semaine' }
-        )
+    const rows = Object.entries(hoursMap).map(([dayStr, hours]) => ({
+      jour_semaine: parseInt(dayStr),
+      heure_ouverture: hours.ouverture,
+      heure_fermeture: hours.fermeture,
+      est_ferme: hours.ferme,
+      source: 'places' as const,
+      updated_at: new Date().toISOString(),
+    }))
 
-      if (error) {
-        console.error(`Error upserting hours for day ${jourSemaine}:`, error)
-      } else {
-        upsertCount++
-      }
+    const { error: insertError } = await supabase
+      .from('horaires_ouverture')
+      .insert(rows)
+
+    const upsertCount = insertError ? 0 : rows.length
+    if (insertError) {
+      console.error('Error inserting hours:', insertError)
     }
 
     // Log job success
