@@ -140,7 +140,7 @@ supabase/functions/                # 6 Edge Functions (Deno)
   sync-meteo/                      # Open-Meteo -> meteo_daily
   sync-pennylane/                  # Supplier invoices -> factures_pennylane
   sync-gbp-hours/                  # Places API -> horaires_ouverture
-  backup-drive/                    # Daily Supabase data backup to Google Drive
+  backup-drive/                    # Daily Supabase data backup to Google Drive (28 tables → JSON → Drive API v3)
 
 supabase/migrations/               # 15 migration files (001 through 014 + timestamp)
 ```
@@ -164,7 +164,7 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 ### 3. Recettes & Stocks (IMPLEMENTE)
 - 3 niveaux sous-recettes, cout recursif automatique
 - Variantes taille (coefficient multiplicateur) + modificateurs extra/sans
-- Recherche rapide allergenes (page dediee, tous roles) + resume allergenes dans detail recette
+- Recherche rapide allergenes (page dediee, tous roles) + resume allergenes dans detail recette (tags rouges par allergene collecte recursivement)
 - Creation rapide recette IA (coller texte -> parsing auto ingredients)
 - Upload massif photos etiquettes -> extraction IA composition + allergenes batch
 - Analyse rentabilite multi-canal : sur place / emporter / livraison avec simulateur prix
@@ -181,7 +181,11 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 ### 5. Previsions (IMPLEMENTE)
 - Meteo inversee (centre commercial : pluie = +clients)
 - Coefficients : meteo, evenements mobiles, rupture meteo (acclimatation), temperatures extremes non-lineaires
-- Comparaison N-1 par jour de semaine (pas par date calendaire)
+- Comparaison N-1 par jour de semaine (pas par date calendaire) — affichee sur chaque carte jour + total semaine
+- Navigation semaine par semaine (fleches + bouton "Aujourd'hui") avec recalcul previsions
+- Precision S-1 : `1 - avg(|CA_prevu - CA_realise| / CA_realise)` affichee en carte resumee
+- Temperatures min/max affichees sur chaque carte jour
+- Evolution N-1 en pourcentage sur le total semaine
 - Repartition horaire CA via tickets Zelty horodates
 - Score de confiance 0-100% par jour
 - Sources : Open-Meteo + Zelty ventes + calendriers auto + Google Places horaires
@@ -275,10 +279,33 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 | Sync factures PennyLane | 06:30 | PennyLane `/changelogs/supplier_invoices` | `factures_pennylane` |
 | Previsions meteo | 07:00 | Open-Meteo `/v1/meteofrance` | `meteo_daily` |
 | Sync horaires Places | 07:30 | Places API `/v1/places/{id}` | `horaires_ouverture` |
-| Backup Google Drive | quotidien | Supabase data | Google Drive |
+| Backup Google Drive | quotidien | Supabase data (28 tables JSON) | Google Drive |
 | Check alerts | quotidien | Internal | `notifications` |
 
 Architecture : `pg_cron` -> `pg_net` (HTTP call) -> Edge Function (Deno). Monitoring via table `cron_logs`.
+
+### Deploiement des Edge Functions
+Les 6 Edge Functions doivent etre deployees via le CLI Supabase :
+```bash
+npx supabase login --token <ACCESS_TOKEN>
+npx supabase link --project-ref pfcvtpavwjchwdarhixc
+npx supabase functions deploy sync-zelty-ca
+npx supabase functions deploy sync-pennylane
+npx supabase functions deploy sync-meteo
+npx supabase functions deploy sync-gbp-hours
+npx supabase functions deploy sync-zelty-stock
+npx supabase functions deploy backup-drive
+```
+
+Secrets requis (en plus de SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY qui sont auto-injectes) :
+```bash
+npx supabase secrets set PENNYLANE_API_TOKEN="..."
+npx supabase secrets set ZELTY_API_KEY="..."
+npx supabase secrets set GOOGLE_SERVICE_ACCOUNT_BASE64="..."
+npx supabase secrets set GOOGLE_PLACES_API_KEY="..."
+npx supabase secrets set PHOOD_BEGLES_PLACE_ID="ChIJRRTmT5gmVQ0Rk4sBmRERCLI"
+npx supabase secrets set GOOGLE_DRIVE_BACKUP_FOLDER_ID="..."  # optionnel
+```
 
 ## 7.5 Aide a la commande (IMPLEMENTE)
 
@@ -357,7 +384,7 @@ duree_rotation = conditionnement_en_unite_stock / consommation_moyenne_journalie
 | Recettes | 98% | `RecetteDetailPage.vue`, `recettes.ts`, `AllergeneSearchPage.vue` |
 | Stocks | 95% | `StocksPage.vue`, `stocks.ts`, `sync-zelty-stock/` |
 | Inventaire | 100% | `InventairePage.vue`, `inventaire.ts` |
-| Previsions | 90% | `PrevisionsPage.vue`, `previsions.ts`, `sync-meteo/` |
+| Previsions | 95% | `PrevisionsPage.vue`, `previsions.ts`, `sync-meteo/` |
 | Factures | 95% | `FacturesPage.vue`, `factures.ts`, `sync-pennylane/` |
 | Reporting | 95% | `ReportingPage.vue`, `reporting.ts` |
 | Fournisseurs | 100% | `FournisseursPage.vue`, `fournisseurs.ts` (tous champs CDC presents) |
