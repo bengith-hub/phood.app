@@ -293,6 +293,11 @@ function dayOfMonth(dateStr: string): number {
   return new Date(dateStr + 'T00:00:00').getDate()
 }
 
+// --- Data diagnostics ---
+const ventesValidees = computed(() => store.ventes.filter(v => v.cloture_validee).length)
+const ventesTotal = computed(() => store.ventes.length)
+const meteoCount = computed(() => store.meteo.length)
+
 // --- Calendar sync ---
 const calendarSyncStatus = ref<string | null>(null)
 const calendarSyncing = ref(false)
@@ -389,6 +394,26 @@ watch(
 
     <!-- Content -->
     <template v-else-if="forecasts.length > 0 || monthForecasts.length > 0">
+
+      <!-- Data diagnostic banner -->
+      <div v-if="ventesValidees === 0 && !store.loading" class="data-warning">
+        <div class="data-warning-icon">&#9888;</div>
+        <div class="data-warning-content">
+          <strong>Aucune donnee de vente validee</strong>
+          <p v-if="ventesTotal > 0">
+            {{ ventesTotal }} lignes chargees mais aucune avec cloture validee.
+            Les previsions se basent uniquement sur les clotures Zelty validees.
+          </p>
+          <p v-else>
+            Aucune donnee de vente trouvee. Lancez un import historique depuis
+            <strong>Parametres &gt; Zelty &gt; Import historique</strong>
+            pour charger vos chiffres de vente passes.
+          </p>
+          <p class="data-warning-hint">
+            {{ meteoCount }} jours de meteo charges &middot; {{ store.evenements.length }} evenements calendrier
+          </p>
+        </div>
+      </div>
 
       <!-- === MONTH VIEW === -->
       <div v-if="viewMode === 'mois'" class="month-view">
@@ -956,6 +981,48 @@ watch(
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* --- Data warning --- */
+.data-warning {
+  display: flex;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  align-items: flex-start;
+}
+
+.data-warning-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.data-warning-content {
+  flex: 1;
+}
+
+.data-warning-content strong {
+  display: block;
+  font-size: 15px;
+  color: #92400e;
+  margin-bottom: 4px;
+}
+
+.data-warning-content p {
+  font-size: 13px;
+  color: #78350f;
+  margin: 0 0 4px 0;
+  line-height: 1.4;
+}
+
+.data-warning-hint {
+  font-size: 12px;
+  color: #a16207;
+  margin-top: 6px;
 }
 
 .sync-status {
