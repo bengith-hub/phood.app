@@ -490,6 +490,27 @@ export const usePrevisionsStore = defineStore('previsions', () => {
   function calculateForecast(dateStr: string): ForecastResult {
     const targetDate = new Date(dateStr + 'T00:00:00')
     const jourSemaine = targetDate.getDay()
+
+    // If the restaurant is closed on this day of week, return 0
+    if (isJourFerme(jourSemaine)) {
+      const n1Vente = getN1Comparison(targetDate)
+      const todayStr = new Date().toISOString().split('T')[0]!
+      const venteActuelle = dateStr < todayStr ? ventesParDate.value.get(dateStr) : null
+      return {
+        date: dateStr,
+        jour_semaine: jourSemaine,
+        ca_prevision: 0,
+        ca_base: 0,
+        nb_tickets_prevision: 0,
+        confidence: 100,
+        factors: [],
+        meteo: meteoParDate.value.get(dateStr) || null,
+        evenements: getEventsForDate(dateStr),
+        ca_n1: n1Vente?.ca_ttc ?? null,
+        ca_realise: venteActuelle && venteActuelle.cloture_validee ? venteActuelle.ca_ttc : null,
+      }
+    }
+
     const factors: ForecastFactor[] = []
 
     const history = getSameDayHistory(targetDate, 8)

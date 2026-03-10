@@ -989,7 +989,15 @@ watch(
         </div>
 
         <!-- Day detail cards -->
-        <div class="detail-cards">
+        <div v-if="store.isJourFerme(selectedForecast.jour_semaine)" class="detail-cards">
+          <div class="detail-card detail-card--main">
+            <div class="day-closed-detail">
+              <span class="day-closed-label">Ferme</span>
+              <span class="day-closed-hint">Le restaurant est ferme ce jour de la semaine</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="detail-cards">
 
           <!-- Main forecast card -->
           <div class="detail-card detail-card--main">
@@ -2519,6 +2527,26 @@ watch(
   font-size: 14px;
   color: var(--text-tertiary);
   margin-top: 8px;
+}
+
+/* --- Day closed detail --- */
+.day-closed-detail {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.day-closed-label {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+
+.day-closed-hint {
+  display: block;
+  font-size: 14px;
+  color: var(--text-tertiary);
 }
 
 /* --- Event management --- */
