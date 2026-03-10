@@ -50,7 +50,12 @@ const zeltyPhotoStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
 const zeltyPhotoMsg = ref('')
 const zeltyPhotoForce = ref(false)
 const zeltyDiagStatus = ref<'idle' | 'running' | 'done'>('idle')
-const zeltyDiagResults = ref<Array<{ recette: string; suggestions?: Array<{ zelty_name: string; distance: number }> }>>([])
+interface DiagSuggestion { zelty_name: string; zelty_id: string; distance: number }
+interface DiagEntry { recette_id: string; recette: string; zelty_product_id?: string | null; suggestions?: DiagSuggestion[] }
+const zeltyDiagResults = ref<DiagEntry[]>([])
+const diagSelected = ref<Map<string, DiagSuggestion>>(new Map()) // recette_id → selected suggestion
+const diagLinked = ref<Set<string>>(new Set()) // recette_ids already linked
+const diagLinking = ref(false)
 const ventesCount = ref(0)
 const lastVenteDate = ref<string | null>(null)
 
@@ -283,9 +288,86 @@ async function startPhotoDiag() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const r = await resp.json()
     zeltyDiagResults.value = (r.details || []).filter((d: Record<string, unknown>) => d.status === 'unmatched')
+    diagSelected.value = new Map()
+    diagLinked.value = new Set()
     zeltyDiagStatus.value = 'done'
   } catch {
     zeltyDiagStatus.value = 'idle'
+  }
+}
+
+function selectDiagSuggestion(d: DiagEntry, s: DiagSuggestion) {
+  const map = new Map(diagSelected.value)
+  if (map.get(d.recette_id)?.zelty_id === s.zelty_id) {
+    map.delete(d.recette_id) // toggle off
+  } else {
+    map.set(d.recette_id, s)
+  }
+  diagSelected.value = map
+}
+
+function toggleDiagSelect(d: DiagEntry) {
+  const map = new Map(diagSelected.value)
+  if (map.has(d.recette_id)) {
+    map.delete(d.recette_id)
+  } else if (d.suggestions?.length) {
+    map.set(d.recette_id, d.suggestions[0]) // default to best suggestion
+  }
+  diagSelected.value = map
+}
+
+function diagSelectAllClose() {
+  const map = new Map(diagSelected.value)
+  for (const d of zeltyDiagResults.value) {
+    if (diagLinked.value.has(d.recette_id)) continue
+    const best = d.suggestions?.[0]
+    if (best && best.distance <= 5) {
+      map.set(d.recette_id, best)
+    }
+  }
+  diagSelected.value = map
+}
+
+async function linkSelectedDiag() {
+  if (diagSelected.value.size === 0) return
+  diagLinking.value = true
+  const linked = new Set(diagLinked.value)
+  const errors: string[] = []
+
+  for (const [recetteId, suggestion] of diagSelected.value) {
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/recettes?id=eq.${recetteId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({ zelty_product_id: suggestion.zelty_id }),
+        }
+      )
+      if (resp.ok) {
+        linked.add(recetteId)
+      } else {
+        errors.push(`${recetteId}: ${resp.status}`)
+      }
+    } catch (e) {
+      errors.push(`${recetteId}: ${(e as Error).message}`)
+    }
+  }
+
+  diagLinked.value = linked
+  // Clear linked items from selection
+  const map = new Map(diagSelected.value)
+  for (const id of linked) map.delete(id)
+  diagSelected.value = map
+  diagLinking.value = false
+
+  if (errors.length > 0) {
+    zeltyPhotoMsg.value = `Liaison partielle : ${linked.size - diagLinked.value.size} OK, ${errors.length} erreurs`
   }
 }
 
@@ -729,11 +811,27 @@ function formatDuration(ms: number | null) {
             {{ zeltyDiagStatus === 'running' ? 'Analyse en cours...' : 'Diagnostic : voir les recettes non matchées' }}
           </button>
           <div v-if="zeltyDiagResults.length > 0" class="diag-results">
-            <h4>Recettes sans correspondance Zelty ({{ zeltyDiagResults.length }})</h4>
+            <div class="diag-header">
+              <h4>Recettes sans correspondance Zelty ({{ zeltyDiagResults.length }})</h4>
+              <div class="diag-actions">
+                <button
+                  v-if="diagSelected.size > 0"
+                  class="btn-sync btn-sm"
+                  :disabled="diagLinking"
+                  @click="linkSelectedDiag"
+                >
+                  {{ diagLinking ? 'Liaison en cours...' : `Lier les ${diagSelected.size} sélectionnées` }}
+                </button>
+                <button class="btn-outline btn-sm" @click="diagSelectAllClose">
+                  Sélectionner les proches (distance ≤ 5)
+                </button>
+              </div>
+            </div>
             <div class="cron-table-wrap">
-              <table class="cron-table">
+              <table class="cron-table diag-table">
                 <thead>
                   <tr>
+                    <th class="diag-check-col"></th>
                     <th>Recette</th>
                     <th>Suggestion Zelty 1</th>
                     <th>Suggestion 2</th>
@@ -741,10 +839,30 @@ function formatDuration(ms: number | null) {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(d, i) in zeltyDiagResults" :key="i">
+                  <tr v-for="(d, i) in zeltyDiagResults" :key="i" :class="{ 'diag-linked': diagLinked.has(d.recette_id) }">
+                    <td class="diag-check-col">
+                      <input
+                        v-if="!diagLinked.has(d.recette_id) && d.suggestions?.length"
+                        type="checkbox"
+                        :checked="diagSelected.has(d.recette_id)"
+                        @change="toggleDiagSelect(d)"
+                      />
+                      <span v-if="diagLinked.has(d.recette_id)" class="diag-linked-icon" title="Lié">&#10003;</span>
+                    </td>
                     <td><strong>{{ d.recette }}</strong></td>
                     <td v-for="(s, si) in (d.suggestions || [])" :key="si" :class="{ 'diag-close': s.distance <= 5 }">
-                      {{ s.zelty_name }} <span class="diag-dist">({{ s.distance }})</span>
+                      <button
+                        v-if="!diagLinked.has(d.recette_id)"
+                        class="diag-suggest-btn"
+                        :class="{ 'diag-suggest-selected': diagSelected.get(d.recette_id)?.zelty_id === s.zelty_id }"
+                        @click="selectDiagSuggestion(d, s)"
+                        :title="`Lier à ${s.zelty_name}`"
+                      >
+                        {{ s.zelty_name }} <span class="diag-dist">({{ s.distance }})</span>
+                      </button>
+                      <span v-else>
+                        {{ s.zelty_name }} <span class="diag-dist">({{ s.distance }})</span>
+                      </span>
                     </td>
                     <td v-for="n in Math.max(0, 3 - (d.suggestions?.length || 0))" :key="'empty-' + n">—</td>
                   </tr>
@@ -1434,12 +1552,63 @@ function formatDuration(ms: number | null) {
   margin-bottom: 8px;
   font-size: 15px;
 }
-.diag-close {
-  color: var(--color-success);
+.diag-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.diag-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn-sm {
+  padding: 6px 12px !important;
+  font-size: 13px !important;
+}
+.diag-check-col {
+  width: 36px;
+  text-align: center;
+}
+.diag-suggest-btn {
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  transition: all 0.15s;
+  width: 100%;
+}
+.diag-suggest-btn:hover {
+  background: var(--bg);
+  border-color: var(--border);
+}
+.diag-suggest-selected {
+  background: #e8f5e9 !important;
+  border-color: var(--color-success) !important;
   font-weight: 600;
 }
+.diag-close .diag-suggest-btn {
+  color: var(--color-success);
+}
 .diag-dist {
-  font-size: 12px;
+  font-size: 11px;
   color: #999;
+}
+.diag-linked {
+  opacity: 0.5;
+}
+.diag-linked-icon {
+  color: var(--color-success);
+  font-weight: bold;
+  font-size: 16px;
+}
+.diag-table td {
+  vertical-align: middle;
 }
 </style>
