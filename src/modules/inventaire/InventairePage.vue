@@ -30,6 +30,8 @@ const ingredientSearch = ref('')
 
 const activeInventaire = ref<Inventaire | null>(null)
 const activeZoneId = ref<string | null>(null)
+const countingSearch = ref('')
+const hideTheorique = ref(false)
 
 interface LigneComptage {
   ingredient_id: string
@@ -113,16 +115,26 @@ const lignesByZone = computed(() => {
   return groups
 })
 
-/** Lines for the currently selected zone tab */
+/** Lines for the currently selected zone tab, filtered by search */
 const activeLignes = computed(() => {
+  let lignes: LigneComptage[]
   if (!activeZoneId.value) {
-    // Show all if no zone selected
-    return [...lignesComptage.value.values()].sort((a, b) =>
+    lignes = [...lignesComptage.value.values()].sort((a, b) =>
       a.ingredient.nom.localeCompare(b.ingredient.nom, 'fr')
     )
+  } else {
+    const group = lignesByZone.value.find(g => g.zoneId === activeZoneId.value)
+    lignes = group?.lignes ?? []
   }
-  const group = lignesByZone.value.find(g => g.zoneId === activeZoneId.value)
-  return group?.lignes ?? []
+  // Filter by search query
+  const q = countingSearch.value.trim().toLowerCase()
+  if (q) {
+    lignes = lignes.filter(l =>
+      l.ingredient.nom.toLowerCase().includes(q) ||
+      l.ingredient.categorie?.toLowerCase().includes(q)
+    )
+  }
+  return lignes
 })
 
 // ── Summary computations ───────────────────────────────────────────────
@@ -622,9 +634,26 @@ onMounted(async () => {
         </button>
       </div>
 
+      <!-- Search + options bar -->
+      <div class="counting-toolbar">
+        <input
+          v-model="countingSearch"
+          type="search"
+          placeholder="Rechercher un ingrédient..."
+          class="counting-search"
+        />
+        <button
+          :class="['toolbar-toggle', { active: hideTheorique }]"
+          @click="hideTheorique = !hideTheorique"
+          title="Masquer le stock théorique pour un comptage à l'aveugle"
+        >
+          {{ hideTheorique ? '👁️‍🗨️ Montrer théo' : '🙈 Masquer théo' }}
+        </button>
+      </div>
+
       <!-- Counting cards -->
       <div v-if="activeLignes.length === 0" class="empty">
-        Aucun ingrédient dans cette zone.
+        {{ countingSearch ? 'Aucun résultat pour "' + countingSearch + '"' : 'Aucun ingrédient dans cette zone.' }}
       </div>
 
       <div class="counting-list">
@@ -634,7 +663,7 @@ onMounted(async () => {
               <span class="counting-name">{{ ligne.ingredient.nom }}</span>
               <span class="counting-cat">{{ ligne.ingredient.categorie || '' }}</span>
             </div>
-            <div class="counting-theo">
+            <div class="counting-theo" v-if="!hideTheorique">
               <span class="theo-label">Théorique</span>
               <span class="theo-value">{{ ligne.quantite_theorique.toFixed(2) }} {{ ligne.ingredient.unite_stock }}</span>
             </div>
@@ -666,7 +695,7 @@ onMounted(async () => {
               <span class="result-label">Compté :</span>
               <span class="result-value">{{ ligne.quantite_comptee.toFixed(2) }} {{ ligne.ingredient.unite_stock }}</span>
             </div>
-            <div :class="['result-ecart', ecartClass(ligne)]">
+            <div v-if="!hideTheorique" :class="['result-ecart', ecartClass(ligne)]">
               <span class="ecart-value">{{ ligne.ecart >= 0 ? '+' : '' }}{{ ligne.ecart.toFixed(2) }}</span>
               <span class="ecart-pct">{{ ecartPct(ligne) }}</span>
             </div>
@@ -1193,6 +1222,50 @@ onMounted(async () => {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: white;
+}
+
+.counting-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.counting-search {
+  flex: 1;
+  height: 48px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 16px;
+  font-size: 16px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-sizing: border-box;
+}
+
+.counting-search:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.toolbar-toggle {
+  flex-shrink: 0;
+  height: 48px;
+  padding: 0 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.toolbar-toggle.active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  color: #4338ca;
 }
 
 .counting-list {

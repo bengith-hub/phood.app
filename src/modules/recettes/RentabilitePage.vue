@@ -192,6 +192,30 @@ const avgMargeSurPlace = computed(() => avgMarge(a => a.surPlace))
 const avgMargeEmporter = computed(() => avgMarge(a => a.emporter))
 const avgMargeLivraison = computed(() => avgMarge(a => a.livraison))
 
+// Price cap alert: Uber Eats rule — livraison price cannot exceed sur_place × 1.15
+const PRICE_CAP_FACTOR = 1.15
+const priceCapAlerts = computed(() => {
+  return filteredAnalyses.value.filter(a => {
+    if (!a.livraison || !a.surPlace) return false
+    const livTtc = getSimulatedPrice(a.recette.id, 'livraison', a.livraison.prixTTC)
+    const spTtc = getSimulatedPrice(a.recette.id, 'sur_place', a.surPlace.prixTTC)
+    return livTtc > spTtc * PRICE_CAP_FACTOR
+  })
+})
+
+function isPriceCapped(a: RecetteAnalysis): boolean {
+  if (!a.livraison || !a.surPlace) return false
+  const livTtc = getSimulatedPrice(a.recette.id, 'livraison', a.livraison.prixTTC)
+  const spTtc = getSimulatedPrice(a.recette.id, 'sur_place', a.surPlace.prixTTC)
+  return livTtc > spTtc * PRICE_CAP_FACTOR
+}
+
+function priceCapMax(a: RecetteAnalysis): string {
+  if (!a.surPlace) return '-'
+  const spTtc = getSimulatedPrice(a.recette.id, 'sur_place', a.surPlace.prixTTC)
+  return (spTtc * PRICE_CAP_FACTOR).toFixed(2) + ' €'
+}
+
 function toggleSort(key: SortKey) {
   if (sortBy.value === key) {
     sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
@@ -296,6 +320,17 @@ onMounted(async () => {
     <!-- Commission info -->
     <div class="commission-info">
       Commission livraison : {{ (COMMISSION_LIVRAISON_PCT * 100).toFixed(0) }}% sur TTC (Uber Eats worst-case)
+    </div>
+
+    <!-- Price cap alert -->
+    <div v-if="priceCapAlerts.length > 0" class="price-cap-alert">
+      ⚠️ <strong>{{ priceCapAlerts.length }} recette{{ priceCapAlerts.length > 1 ? 's' : '' }}</strong>
+      d&eacute;passe{{ priceCapAlerts.length > 1 ? 'nt' : '' }} le price cap Uber Eats (+{{ ((PRICE_CAP_FACTOR - 1) * 100).toFixed(0) }}% vs sur place)
+      <div class="price-cap-list">
+        <span v-for="a in priceCapAlerts" :key="a.recette.id" class="price-cap-item">
+          {{ a.recette.nom }} (max {{ priceCapMax(a) }})
+        </span>
+      </div>
     </div>
 
     <!-- Loading -->
@@ -469,7 +504,7 @@ onMounted(async () => {
               <td v-if="a.livraison" class="td-num td-commission">
                 {{ formatEuro(a.livraison.commission) }}
               </td>
-              <td v-if="a.livraison" class="td-marge" :class="margeClass(a.livraison.margePct)">
+              <td v-if="a.livraison" class="td-marge" :class="[margeClass(a.livraison.margePct), { 'price-capped': isPriceCapped(a) }]">
                 <span class="marge-value">{{ formatPct(a.livraison.margePct) }}</span>
                 <span class="marge-eur">{{ formatEuro(a.livraison.margeBrute) }}</span>
               </td>
@@ -633,6 +668,44 @@ h1 {
   border-radius: var(--radius-sm);
   margin-bottom: 16px;
   font-weight: 600;
+}
+
+/* Price cap alert */
+.price-cap-alert {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #991b1b;
+}
+
+.price-cap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.price-cap-item {
+  background: #fee2e2;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.price-capped {
+  position: relative;
+}
+
+.price-capped::after {
+  content: '⚠️';
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 12px;
 }
 
 /* Loading & empty */
