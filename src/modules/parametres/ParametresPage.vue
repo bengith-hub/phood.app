@@ -311,8 +311,9 @@ function toggleDiagSelect(d: DiagEntry) {
   const map = new Map(diagSelected.value)
   if (map.has(d.recette_id)) {
     map.delete(d.recette_id)
-  } else if (d.suggestions?.length) {
-    map.set(d.recette_id, d.suggestions[0]) // default to best suggestion
+  } else {
+    const first = d.suggestions?.[0]
+    if (first) map.set(d.recette_id, first) // default to best suggestion
   }
   diagSelected.value = map
 }
