@@ -1,12 +1,13 @@
 // Sync Open-Meteo weather forecast → meteo_daily
 // Triggered daily at 07:00 via pg_cron → pg_net
-// Fetches 16-day forecast from Meteo-France models via Open-Meteo (free, no API key)
+// Fetches 16-day forecast from Open-Meteo (free, no API key)
+// Uses /v1/forecast (GFS+ICON blend) — meteofrance model only covers ~4 days
 // Coordinates: Begles (44.83, -0.57)
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/meteofrance'
+const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast'
 const LATITUDE = 44.83
 const LONGITUDE = -0.57
 
@@ -72,8 +73,13 @@ serve(async (req) => {
 
     let upsertCount = 0
 
-    // Upsert each day's forecast
+    // Upsert each day's forecast (skip days with null data)
     for (let i = 0; i < daily.time.length; i++) {
+      // Skip days where the model returned no data
+      if (daily.temperature_2m_max[i] === null && daily.weather_code[i] === null) {
+        continue
+      }
+
       const { error } = await supabase
         .from('meteo_daily')
         .upsert(
