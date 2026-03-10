@@ -108,14 +108,18 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   const boxRight = margin + boxWidth + gap
   const boxTop = y
 
-  // Calculate dynamic height based on content
+  // Calculate dynamic height based on content of BOTH columns
   const fournisseurLines: string[] = []
   if (fournisseur.telephone) fournisseurLines.push(`Téléphone : ${fournisseur.telephone}`)
   if (fournisseur.email_commande) fournisseurLines.push(`Email : ${fournisseur.email_commande}`)
   if (fournisseur.email_commande_bcc) fournisseurLines.push(`Email : ${fournisseur.email_commande_bcc}`)
   if (fournisseur.contact_nom) fournisseurLines.push(`Contact : ${fournisseur.contact_nom}`)
 
-  const boxH = Math.max(32, 18 + fournisseurLines.length * 5)
+  // Left box: label(6) + name(7) + lines(5 each) + padding(5) = 18 + lines*5
+  const leftH = 18 + fournisseurLines.length * 5
+  // Right box: label(6) + name(7) + address(5) + city(5) + phone(5) + gap(3) + date1(5) + date2(5) + padding(4) = 45
+  const rightH = 45
+  const boxH = Math.max(leftH, rightH)
 
   // Fournisseur box (left)
   doc.setFillColor(248, 248, 248)
@@ -167,15 +171,15 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   doc.text(`${RESTAURANT.codePostal} ${RESTAURANT.ville}, FR`, boxRight + 5, boxTop + 24)
   doc.text(`Téléphone : ${RESTAURANT.telephone}`, boxRight + 5, boxTop + 29)
 
-  // Dates inside the right box
+  // Dates inside the right box (below phone, with a small gap)
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(...PHOOD_ORANGE)
   if (commande.date_commande) {
-    doc.text(`Date de commande (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_commande)}`, boxRight + 5, boxTop + boxH - 7)
+    doc.text(`Date de commande (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_commande)}`, boxRight + 5, boxTop + 35)
   }
   if (commande.date_livraison_prevue) {
-    doc.text(`Date de livraison (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_livraison_prevue)}`, boxRight + 5, boxTop + boxH - 2)
+    doc.text(`Date de livraison (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_livraison_prevue)}`, boxRight + 5, boxTop + 40)
   }
 
   y = boxTop + boxH + 8
