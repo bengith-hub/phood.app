@@ -16,6 +16,14 @@ export const useRecettesStore = defineStore('recettes', () => {
   const allPlats = computed(() => recettes.value.filter(r => r.type === 'recette'))
   const allSousRecettes = computed(() => recettes.value.filter(r => r.type === 'sous_recette'))
 
+  const categories = computed(() => {
+    const cats = new Set<string>()
+    for (const r of recettes.value) {
+      if (r.categorie) cats.add(r.categorie)
+    }
+    return [...cats].sort((a, b) => a.localeCompare(b, 'fr'))
+  })
+
   async function fetchAll() {
     loading.value = true
     error.value = null
@@ -187,7 +195,7 @@ export const useRecettesStore = defineStore('recettes', () => {
 
   return {
     recettes, recetteIngredients, loading, error,
-    actives, plats, sousRecettes, allPlats, allSousRecettes,
+    actives, plats, sousRecettes, allPlats, allSousRecettes, categories,
     fetchAll, getById, getIngredients, calculateCost, getAllergens,
     findRecipesWithAllergen, setActif, bulkSetActif,
   }

@@ -67,6 +67,7 @@ const ingredientSearch = ref('')
 const sousRecetteSearch = ref('')
 const showIngredientDropdown = ref(false)
 const showSousRecetteDropdown = ref(false)
+const showCategorieDropdown = ref(false)
 const newIngQty = ref<number>(0)
 const newIngUnite = ref('kg')
 const newSrQty = ref<number>(0)
@@ -102,22 +103,36 @@ function getIngredientCost(id: string): number {
   return ing?.cout_unitaire ?? 0
 }
 
-const coutMatiere = computed<number>(() => {
-  let total = 0
-  for (const ligne of ingredientLignes.value) {
-    if (ligne.ingredient_id) {
-      total += ligne.quantite * getIngredientCost(ligne.ingredient_id)
-    } else if (ligne.sous_recette_id) {
-      const sr = recettesStore.getById(ligne.sous_recette_id)
-      if (sr) {
-        const srCost = recettesStore.calculateCost(ligne.sous_recette_id, getIngredientCost)
-        const costPerPortion = sr.nb_portions > 0 ? srCost / sr.nb_portions : srCost
-        total += ligne.quantite * costPerPortion
-      }
+function ligneCost(ligne: IngredientLigne): number {
+  if (ligne.ingredient_id) {
+    return ligne.quantite * getIngredientCost(ligne.ingredient_id)
+  } else if (ligne.sous_recette_id) {
+    const sr = recettesStore.getById(ligne.sous_recette_id)
+    if (sr) {
+      const srCost = recettesStore.calculateCost(ligne.sous_recette_id, getIngredientCost)
+      const costPerPortion = sr.nb_portions > 0 ? srCost / sr.nb_portions : srCost
+      return ligne.quantite * costPerPortion
     }
   }
-  return total
-})
+  return 0
+}
+
+const coutMatiere = computed<number>(() =>
+  ingredientLignes.value.reduce((sum, l) => sum + ligneCost(l), 0)
+)
+
+const coutMatiereSP = computed<number>(() =>
+  ingredientLignes.value
+    .filter(l => l.sur_place)
+    .reduce((sum, l) => sum + ligneCost(l), 0)
+)
+
+const coutMatiereEMP = computed<number>(() =>
+  ingredientLignes.value
+    .filter(l => l.emporter)
+    .reduce((sum, l) => sum + ligneCost(l), 0)
+  + (coutEmballage.value || 0)
+)
 
 const coutParPortion = computed(() =>
   nbPortions.value > 0 ? coutMatiere.value / nbPortions.value : 0
@@ -139,6 +154,23 @@ const filteredSousRecettes = computed(() => {
     .filter(sr => sr.nom.toLowerCase().includes(q))
     .slice(0, 20)
 })
+
+const filteredCategories = computed(() => {
+  const q = categorie.value.toLowerCase().trim()
+  const all = recettesStore.categories
+  if (!q) return all
+  return all.filter(c => c.toLowerCase().includes(q))
+})
+
+function selectCategorie(cat: string) {
+  categorie.value = cat
+  showCategorieDropdown.value = false
+}
+
+function closeCategorieDropdown() {
+  // Small delay so mousedown on dropdown-item fires first
+  setTimeout(() => { showCategorieDropdown.value = false }, 150)
+}
 
 // Sub-recipe hierarchy tree (up to 3 levels)
 interface TreeNode {
@@ -198,11 +230,11 @@ const hasSubRecipes = computed(() =>
 // --- Actions ---
 
 function addIngredient(ing: IngredientRestaurant) {
-  if (newIngQty.value <= 0) return
+  const qty = newIngQty.value > 0 ? newIngQty.value : 1
   ingredientLignes.value.push({
     ingredient_id: ing.id,
     sous_recette_id: null,
-    quantite: newIngQty.value,
+    quantite: qty,
     unite: newIngUnite.value || ing.unite_stock,
     label: ing.nom,
     sur_place: true,
@@ -510,8 +542,27 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           </select>
         </div>
         <div class="field">
-          <label>Cat&eacute;gorie</label>
-          <input v-model="categorie" type="text" placeholder="Ex: Bowls, Desserts..." class="input" />
+          <label>Catégorie</label>
+          <div class="search-dropdown" @click.stop>
+            <input
+              v-model="categorie"
+              type="text"
+              placeholder="Ex: Bowls, Desserts..."
+              class="input"
+              @focus="showCategorieDropdown = true"
+              @blur="closeCategorieDropdown"
+            />
+            <div v-if="showCategorieDropdown && filteredCategories.length > 0" class="dropdown-list">
+              <button
+                v-for="cat in filteredCategories"
+                :key="cat"
+                class="dropdown-item"
+                @mousedown.prevent="selectCategorie(cat)"
+              >
+                {{ cat }}
+              </button>
+            </div>
+          </div>
         </div>
         <div class="field">
           <label>Nb portions</label>
@@ -662,12 +713,20 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       <!-- Cost summary -->
       <div class="cost-summary">
         <div class="cost-row">
-          <span>Co&ucirc;t mati&egrave;re total</span>
-          <strong>{{ coutMatiere.toFixed(2) }} &euro;</strong>
+          <span>Coût matière total</span>
+          <strong>{{ coutMatiere.toFixed(2) }} €</strong>
         </div>
-        <div class="cost-row">
-          <span>Co&ucirc;t par portion ({{ nbPortions }} portions)</span>
-          <strong>{{ coutParPortion.toFixed(2) }} &euro;</strong>
+        <div class="cost-row cost-row-canal">
+          <span>Sur place (SP)</span>
+          <strong>{{ coutMatiereSP.toFixed(2) }} €</strong>
+        </div>
+        <div class="cost-row cost-row-canal">
+          <span>Emporter / Livraison (EMP){{ coutEmballage ? ` dont ${coutEmballage.toFixed(2)} € emballage` : '' }}</span>
+          <strong>{{ coutMatiereEMP.toFixed(2) }} €</strong>
+        </div>
+        <div class="cost-row" style="border-top: 1px solid var(--color-border); margin-top: 4px; padding-top: 10px;">
+          <span>Coût par portion ({{ nbPortions }} portions)</span>
+          <strong>{{ coutParPortion.toFixed(2) }} €</strong>
         </div>
       </div>
     </section>
@@ -1264,6 +1323,16 @@ h1 {
 .cost-row strong {
   font-size: 18px;
   color: var(--color-primary);
+}
+
+.cost-row-canal {
+  font-size: 14px;
+  padding: 3px 0 3px 16px;
+  opacity: 0.85;
+}
+
+.cost-row-canal strong {
+  font-size: 15px;
 }
 
 /* Tree */
