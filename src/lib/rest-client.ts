@@ -250,3 +250,59 @@ export async function restCall<T = unknown>(
     clearTimeout(timer)
   }
 }
+
+/**
+ * Fetch all rows from a PostgREST endpoint, paginating automatically
+ * to bypass the default 1000-row limit. Uses Range headers.
+ */
+export async function restFetchAll<T>(path: string, pageSize = 1000): Promise<T[]> {
+  const all: T[] = []
+  let offset = 0
+
+  while (true) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
+
+    try {
+      const headers: Record<string, string> = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${getAccessToken()}`,
+        'Range-Unit': 'items',
+        'Range': `${offset}-${offset + pageSize - 1}`,
+        'Prefer': 'count=exact',
+      }
+
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      })
+
+      if (!resp.ok) {
+        if (resp.status === 401) {
+          const refreshed = await refreshSession()
+          if (refreshed) continue
+        }
+        if (resp.status === 416) break // Range not satisfiable = no more rows
+        const text = await resp.text().catch(() => '')
+        throw new Error(`Erreur ${resp.status}: ${text.slice(0, 300)}`)
+      }
+
+      const ct = resp.headers.get('content-type') || ''
+      const rows: T[] = ct.includes('json') ? await resp.json() : []
+      all.push(...rows)
+
+      if (rows.length < pageSize) break // Last page
+      offset += pageSize
+    } catch (e: unknown) {
+      if ((e as Error).name === 'AbortError') {
+        throw new Error('Timeout : le serveur ne répond pas. Essayez de rafraîchir la page.')
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  return all
+}

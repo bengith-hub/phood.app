@@ -90,18 +90,24 @@ exports.handler = async function (event) {
 
     // 2. Extract dishes that have photos
     // Zelty confirmed fields: image (string URL), thumb (string URL)
+    // Index by both dish.id and dish.sku since zelty_product_id in DB may be either
     const zeltyPhotos = new Map();
     for (const dish of allDishes) {
       // Prefer full image, fallback to thumb
       const photoUrl = dish.image || dish.thumb || null;
-      const productId = String(dish.id);
 
       if (photoUrl && typeof photoUrl === 'string' && photoUrl.startsWith('http')) {
-        zeltyPhotos.set(productId, {
+        const entry = {
           url: photoUrl,
           thumb: dish.thumb || photoUrl,
           name: dish.name || '',
-        });
+        };
+        // Index by numeric ID
+        zeltyPhotos.set(String(dish.id), entry);
+        // Also index by SKU (used by inpulse migration)
+        if (dish.sku) {
+          zeltyPhotos.set(String(dish.sku), entry);
+        }
         results.zelty_products_with_photos++;
       }
     }

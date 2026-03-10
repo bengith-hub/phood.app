@@ -51,6 +51,8 @@ interface IngredientLigne {
   quantite: number
   unite: string
   label: string // display name
+  sur_place: boolean
+  emporter: boolean
 }
 const ingredientLignes = ref<IngredientLigne[]>([])
 
@@ -65,6 +67,7 @@ const ingredientSearch = ref('')
 const sousRecetteSearch = ref('')
 const showIngredientDropdown = ref(false)
 const showSousRecetteDropdown = ref(false)
+const showCategorieDropdown = ref(false)
 const newIngQty = ref<number>(0)
 const newIngUnite = ref('kg')
 const newSrQty = ref<number>(0)
@@ -74,6 +77,24 @@ const saving = ref(false)
 const saveError = ref<string | null>(null)
 const deleting = ref(false)
 const showDeleteConfirm = ref(false)
+const sousRecetteParents = ref<string[]>([])
+
+/** Check and show delete confirmation, warning if used as sous-recette elsewhere */
+async function confirmDelete() {
+  sousRecetteParents.value = []
+  if (recetteId.value) {
+    try {
+      const refs = await restCall<{ recette_id: string }[]>(
+        'GET',
+        `recette_ingredients?sous_recette_id=eq.${recetteId.value}&select=recette_id`,
+      )
+      sousRecetteParents.value = refs
+        .map((r) => recettesStore.getById(r.recette_id)?.nom || 'Recette inconnue')
+        .filter((v, i, a) => a.indexOf(v) === i)
+    } catch { /* proceed anyway */ }
+  }
+  showDeleteConfirm.value = true
+}
 
 // --- Computed ---
 
@@ -82,22 +103,35 @@ function getIngredientCost(id: string): number {
   return ing?.cout_unitaire ?? 0
 }
 
-const coutMatiere = computed<number>(() => {
-  let total = 0
-  for (const ligne of ingredientLignes.value) {
-    if (ligne.ingredient_id) {
-      total += ligne.quantite * getIngredientCost(ligne.ingredient_id)
-    } else if (ligne.sous_recette_id) {
-      const sr = recettesStore.getById(ligne.sous_recette_id)
-      if (sr) {
-        const srCost = recettesStore.calculateCost(ligne.sous_recette_id, getIngredientCost)
-        const costPerPortion = sr.nb_portions > 0 ? srCost / sr.nb_portions : srCost
-        total += ligne.quantite * costPerPortion
-      }
+function ligneCost(ligne: IngredientLigne): number {
+  if (ligne.ingredient_id) {
+    return ligne.quantite * getIngredientCost(ligne.ingredient_id)
+  } else if (ligne.sous_recette_id) {
+    const sr = recettesStore.getById(ligne.sous_recette_id)
+    if (sr) {
+      const srCost = recettesStore.calculateCost(ligne.sous_recette_id, getIngredientCost)
+      const costPerPortion = sr.nb_portions > 0 ? srCost / sr.nb_portions : srCost
+      return ligne.quantite * costPerPortion
     }
   }
-  return total
-})
+  return 0
+}
+
+const coutMatiere = computed<number>(() =>
+  ingredientLignes.value.reduce((sum, l) => sum + ligneCost(l), 0)
+)
+
+const coutMatiereSP = computed<number>(() =>
+  ingredientLignes.value
+    .filter(l => l.sur_place)
+    .reduce((sum, l) => sum + ligneCost(l), 0)
+)
+
+const coutMatiereEMP = computed<number>(() =>
+  ingredientLignes.value
+    .filter(l => l.emporter)
+    .reduce((sum, l) => sum + ligneCost(l), 0)
+)
 
 const coutParPortion = computed(() =>
   nbPortions.value > 0 ? coutMatiere.value / nbPortions.value : 0
@@ -140,6 +174,23 @@ const filteredSousRecettes = computed(() => {
     .filter(sr => sr.nom.toLowerCase().includes(q))
     .slice(0, 20)
 })
+
+const filteredCategories = computed(() => {
+  const q = categorie.value.toLowerCase().trim()
+  const all = recettesStore.categories
+  if (!q) return all
+  return all.filter(c => c.toLowerCase().includes(q))
+})
+
+function selectCategorie(cat: string) {
+  categorie.value = cat
+  showCategorieDropdown.value = false
+}
+
+function closeCategorieDropdown() {
+  // Small delay so mousedown on dropdown-item fires first
+  setTimeout(() => { showCategorieDropdown.value = false }, 150)
+}
 
 // Sub-recipe hierarchy tree (up to 3 levels)
 interface TreeNode {
@@ -199,13 +250,15 @@ const hasSubRecipes = computed(() =>
 // --- Actions ---
 
 function addIngredient(ing: IngredientRestaurant) {
-  if (newIngQty.value <= 0) return
+  const qty = newIngQty.value > 0 ? newIngQty.value : 1
   ingredientLignes.value.push({
     ingredient_id: ing.id,
     sous_recette_id: null,
-    quantite: newIngQty.value,
+    quantite: qty,
     unite: newIngUnite.value || ing.unite_stock,
     label: ing.nom,
+    sur_place: true,
+    emporter: true,
   })
   ingredientSearch.value = ''
   newIngQty.value = 0
@@ -214,13 +267,15 @@ function addIngredient(ing: IngredientRestaurant) {
 }
 
 function addSousRecette(sr: Recette) {
-  if (newSrQty.value <= 0) return
+  const qty = newSrQty.value > 0 ? newSrQty.value : 1
   ingredientLignes.value.push({
     ingredient_id: null,
     sous_recette_id: sr.id,
-    quantite: newSrQty.value,
+    quantite: qty,
     unite: 'portion(s)',
     label: sr.nom,
+    sur_place: true,
+    emporter: true,
   })
   sousRecetteSearch.value = ''
   newSrQty.value = 0
@@ -310,6 +365,8 @@ async function handleSave() {
         sous_recette_id: l.sous_recette_id,
         quantite: l.quantite,
         unite: l.unite,
+        sur_place: l.sur_place,
+        emporter: l.emporter,
       }))
       await restCall('POST', 'recette_ingredients', lignesInsert)
     }
@@ -330,9 +387,27 @@ async function handleSave() {
 async function handleDelete() {
   if (!recetteId.value) return
   deleting.value = true
+  saveError.value = null
   try {
+    // Clean up any sous-recette references in other recipes before deleting
+    await restCall('DELETE', `recette_ingredients?sous_recette_id=eq.${recetteId.value}`)
+
+    // Delete child rows: ingredients of this recipe
     await restCall('DELETE', `recette_ingredients?recette_id=eq.${recetteId.value}`)
+
+    // Delete the recipe itself
     await restCall('DELETE', `recettes?id=eq.${recetteId.value}`)
+
+    // Verify the deletion actually happened (RLS can silently block)
+    const check = await restCall<{ id: string }[]>(
+      'GET',
+      `recettes?id=eq.${recetteId.value}&select=id`,
+    )
+    if (check.length > 0) {
+      saveError.value = 'La suppression a échoué. Vérifiez vos permissions ou contactez un administrateur.'
+      return
+    }
+
     await recettesStore.fetchAll()
     router.replace('/recettes')
   } catch (e: unknown) {
@@ -402,6 +477,8 @@ onMounted(async () => {
         quantite: ri.quantite,
         unite: ri.unite,
         label,
+        sur_place: ri.sur_place ?? true,
+        emporter: ri.emporter ?? true,
       }
     })
   }
@@ -434,7 +511,7 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       <div v-if="!isNew && isAdmin" class="header-actions">
         <button
           class="btn-delete"
-          @click.stop="showDeleteConfirm = true"
+          @click.stop="confirmDelete"
         >
           Supprimer
         </button>
@@ -445,6 +522,9 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <div v-if="showDeleteConfirm" class="confirm-overlay" @click.self="showDeleteConfirm = false">
       <div class="confirm-dialog">
         <p>Supprimer la recette <strong>{{ nom }}</strong> ?</p>
+        <p v-if="sousRecetteParents.length > 0" class="confirm-warning">
+          Cette recette est r&eacute;f&eacute;renc&eacute;e comme sous-recette dans : <strong>{{ sousRecetteParents.join(', ') }}</strong>. Ces r&eacute;f&eacute;rences seront retir&eacute;es automatiquement.
+        </p>
         <p class="confirm-sub">Cette action est irr&eacute;versible.</p>
         <div class="confirm-actions">
           <button class="btn-secondary" @click="showDeleteConfirm = false">Annuler</button>
@@ -461,6 +541,9 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <!-- SECTION: Info de base -->
     <section class="form-section">
       <h2>Informations</h2>
+      <div v-if="photoUrl" class="recette-photo-container">
+        <img :src="photoUrl" :alt="nom" class="recette-photo" />
+      </div>
       <div class="form-grid">
         <div class="field full">
           <label>Nom</label>
@@ -482,16 +565,31 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           </select>
         </div>
         <div class="field">
-          <label>Cat&eacute;gorie</label>
-          <input v-model="categorie" type="text" placeholder="Ex: Bowls, Desserts..." class="input" />
+          <label>Catégorie</label>
+          <div class="search-dropdown" @click.stop>
+            <input
+              v-model="categorie"
+              type="text"
+              placeholder="Ex: Bowls, Desserts..."
+              class="input"
+              @focus="showCategorieDropdown = true"
+              @blur="closeCategorieDropdown"
+            />
+            <div v-if="showCategorieDropdown && filteredCategories.length > 0" class="dropdown-list">
+              <button
+                v-for="cat in filteredCategories"
+                :key="cat"
+                class="dropdown-item"
+                @mousedown.prevent="selectCategorie(cat)"
+              >
+                {{ cat }}
+              </button>
+            </div>
+          </div>
         </div>
         <div class="field">
           <label>Nb portions</label>
           <input v-model.number="nbPortions" type="number" min="1" inputmode="numeric" class="input" />
-        </div>
-        <div class="field">
-          <label>Co&ucirc;t emballage (&euro;)</label>
-          <input v-model.number="coutEmballage" type="number" min="0" step="0.01" inputmode="decimal" class="input" />
         </div>
         <div class="field full">
           <label>Description</label>
@@ -508,6 +606,18 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
     <section class="form-section">
       <h2>Ingr&eacute;dients</h2>
 
+      <!-- Column headers -->
+      <div v-if="ingredientLignes.length > 0" class="ingredient-header">
+        <span class="ih-spacer"></span>
+        <span class="ih-name"></span>
+        <span class="ih-qty"></span>
+        <span class="ih-unite"></span>
+        <span class="ih-cost"></span>
+        <span class="ih-canal" title="Sur place">SP</span>
+        <span class="ih-canal" title="Emporter / Livraison">EMP</span>
+        <span class="ih-remove"></span>
+      </div>
+
       <!-- Current ingredients list -->
       <div class="ingredient-list">
         <div
@@ -518,7 +628,17 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           <span class="ing-badge" :class="{ 'is-sr': ligne.sous_recette_id }">
             {{ ligne.sous_recette_id ? 'SR' : 'ING' }}
           </span>
-          <span class="ing-name">{{ ligne.label }}</span>
+          <router-link
+            v-if="ligne.ingredient_id"
+            :to="{ name: 'ingredient-detail', params: { id: ligne.ingredient_id } }"
+            class="ing-name ing-link"
+          >{{ ligne.label }}</router-link>
+          <router-link
+            v-else-if="ligne.sous_recette_id"
+            :to="{ name: 'recette-detail', params: { id: ligne.sous_recette_id } }"
+            class="ing-name ing-link"
+          >{{ ligne.label }}</router-link>
+          <span v-else class="ing-name">{{ ligne.label }}</span>
           <input
             v-model.number="ligne.quantite"
             type="number"
@@ -535,6 +655,14 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
                 : '--'
             }} &euro;
           </span>
+          <label class="canal-toggle" title="Sur place">
+            <input type="checkbox" v-model="ligne.sur_place" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <label class="canal-toggle" title="Emporter / Livraison">
+            <input type="checkbox" v-model="ligne.emporter" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
           <button class="btn-remove" @click="removeLigne(idx)">&times;</button>
         </div>
         <div v-if="ingredientLignes.length === 0" class="empty-small">
@@ -614,12 +742,20 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       <!-- Cost summary -->
       <div class="cost-summary">
         <div class="cost-row">
-          <span>Co&ucirc;t mati&egrave;re total</span>
-          <strong>{{ coutMatiere.toFixed(2) }} &euro;</strong>
+          <span>Coût matière total</span>
+          <strong>{{ coutMatiere.toFixed(2) }} €</strong>
         </div>
-        <div class="cost-row">
-          <span>Co&ucirc;t par portion ({{ nbPortions }} portions)</span>
-          <strong>{{ coutParPortion.toFixed(2) }} &euro;</strong>
+        <div class="cost-row cost-row-canal">
+          <span>Sur place (SP)</span>
+          <strong>{{ coutMatiereSP.toFixed(2) }} €</strong>
+        </div>
+        <div class="cost-row cost-row-canal">
+          <span>Emporter / Livraison (EMP)</span>
+          <strong>{{ coutMatiereEMP.toFixed(2) }} €</strong>
+        </div>
+        <div class="cost-row" style="border-top: 1px solid var(--color-border); margin-top: 4px; padding-top: 10px;">
+          <span>Coût par portion ({{ nbPortions }} portions)</span>
+          <strong>{{ coutParPortion.toFixed(2) }} €</strong>
         </div>
       </div>
 
@@ -1031,6 +1167,27 @@ h1 {
   white-space: nowrap;
 }
 
+.ing-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.ing-link:hover {
+  text-decoration: underline;
+}
+
+.recette-photo-container {
+  margin-bottom: 16px;
+  text-align: center;
+}
+.recette-photo {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 .ing-qty {
   width: 80px;
   height: 40px;
@@ -1063,6 +1220,75 @@ h1 {
   width: 70px;
   text-align: right;
   flex-shrink: 0;
+}
+
+/* Canal toggles */
+.ingredient-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 4px;
+}
+
+.ih-spacer { width: 36px; flex-shrink: 0; }
+.ih-name { flex: 1; }
+.ih-qty { width: 80px; flex-shrink: 0; }
+.ih-unite { width: 50px; flex-shrink: 0; }
+.ih-cost { width: 70px; flex-shrink: 0; }
+.ih-canal {
+  width: 42px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+.ih-remove { width: 36px; flex-shrink: 0; }
+
+.canal-toggle {
+  width: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.canal-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  width: 36px;
+  height: 20px;
+  background: #d1d5db;
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.2s;
+}
+
+.canal-toggle input:checked + .toggle-track {
+  background: var(--color-primary);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.canal-toggle input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(16px);
 }
 
 .btn-remove {
@@ -1189,6 +1415,16 @@ h1 {
   border-radius: 12px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.cost-row-canal {
+  font-size: 14px;
+  padding: 3px 0 3px 16px;
+  opacity: 0.85;
+}
+
+.cost-row-canal strong {
+  font-size: 15px;
 }
 
 /* Tree */
@@ -1404,6 +1640,14 @@ h1 {
   margin-bottom: 8px;
 }
 
+.confirm-warning {
+  font-size: 14px;
+  color: var(--warning, #e67e22);
+  background: #fef3e2;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
 .confirm-sub {
   font-size: 14px !important;
   color: var(--text-tertiary);

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { restCall } from '@/lib/rest-client'
+import { restCall, restFetchAll } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Recette, RecetteIngredient } from '@/types/database'
 
@@ -16,14 +16,22 @@ export const useRecettesStore = defineStore('recettes', () => {
   const allPlats = computed(() => recettes.value.filter(r => r.type === 'recette'))
   const allSousRecettes = computed(() => recettes.value.filter(r => r.type === 'sous_recette'))
 
+  const categories = computed(() => {
+    const cats = new Set<string>()
+    for (const r of recettes.value) {
+      if (r.categorie) cats.add(r.categorie)
+    }
+    return [...cats].sort((a, b) => a.localeCompare(b, 'fr'))
+  })
+
   async function fetchAll() {
     loading.value = true
     error.value = null
     try {
       if (navigator.onLine) {
         const [recData, riData] = await Promise.all([
-          restCall<Recette[]>('GET', 'recettes?select=*&order=nom'),
-          restCall<RecetteIngredient[]>('GET', 'recette_ingredients?select=*'),
+          restFetchAll<Recette>('recettes?select=*&order=nom'),
+          restFetchAll<RecetteIngredient>('recette_ingredients?select=*'),
         ])
 
         recettes.value = recData
@@ -187,7 +195,7 @@ export const useRecettesStore = defineStore('recettes', () => {
 
   return {
     recettes, recetteIngredients, loading, error,
-    actives, plats, sousRecettes, allPlats, allSousRecettes,
+    actives, plats, sousRecettes, allPlats, allSousRecettes, categories,
     fetchAll, getById, getIngredients, calculateCost, getAllergens,
     findRecipesWithAllergen, setActif, bulkSetActif,
   }

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { restCall } from '@/lib/rest-client'
+import { restCall, restFetchAll } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import type { IngredientRestaurant } from '@/types/database'
@@ -32,8 +32,7 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const data = await restCall<Record<string, unknown>[]>(
-          'GET',
+        const data = await restFetchAll<Record<string, unknown>>(
           'ingredients_restaurant?select=*,mercuriale_pref:fournisseur_prefere_id(ref_fournisseur,photo_url,designation)&order=nom',
         )
         // Flatten mercuriale join data onto each ingredient
