@@ -7,13 +7,15 @@ import { syncCalendriers } from '@/lib/calendriers'
 const store = usePrevisionsStore()
 
 // --- State ---
-const viewMode = ref<'semaine' | 'jour'>('semaine')
+const viewMode = ref<'semaine' | 'mois' | 'jour'>('mois')
 const selectedDayIndex = ref(0)
 const expandedFactorsIndex = ref<number | null>(null)
 const weekOffset = ref(0) // 0 = current week, -1 = prev, +1 = next
+const monthOffset = ref(0) // 0 = current month
 
 // --- Data ---
 const forecasts = ref<ForecastResult[]>([])
+const monthForecasts = ref<ForecastResult[]>([])
 const precisionS1 = ref<{ precision: number; caRealise: number; caPrevu: number } | null>(null)
 
 // --- Week navigation ---
@@ -45,6 +47,114 @@ function recalculateForecasts() {
   const startDate = getWeekStartDate(weekOffset.value)
   forecasts.value = store.calculateWeekForecast(startDate)
   expandedFactorsIndex.value = null
+}
+
+// --- Month navigation ---
+function getMonthDate(offset: number): { year: number; month: number } {
+  const today = new Date()
+  const d = new Date(today.getFullYear(), today.getMonth() + offset, 1)
+  return { year: d.getFullYear(), month: d.getMonth() }
+}
+
+function goToPrevMonth() {
+  monthOffset.value--
+  recalculateMonthForecasts()
+}
+
+function goToNextMonth() {
+  monthOffset.value++
+  recalculateMonthForecasts()
+}
+
+function goToCurrentMonth() {
+  monthOffset.value = 0
+  recalculateMonthForecasts()
+}
+
+function recalculateMonthForecasts() {
+  const { year, month } = getMonthDate(monthOffset.value)
+  monthForecasts.value = store.calculateMonthForecast(year, month)
+}
+
+const monthLabel = computed(() => {
+  const { year, month } = getMonthDate(monthOffset.value)
+  const d = new Date(year, month, 1)
+  const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+  return label.charAt(0).toUpperCase() + label.slice(1)
+})
+
+const isCurrentMonth = computed(() => monthOffset.value === 0)
+
+// Group month forecasts by week (Mon-Sun rows)
+const monthWeeks = computed(() => {
+  if (monthForecasts.value.length === 0) return []
+
+  const { year, month } = getMonthDate(monthOffset.value)
+  const firstDay = new Date(year, month, 1)
+  const firstDow = firstDay.getDay() // 0=Sun
+  // Offset to fill from Monday: how many days before the 1st to reach Monday
+  const padBefore = firstDow === 0 ? 6 : firstDow - 1
+
+  const weeks: (ForecastResult | null)[][] = []
+  let currentWeek: (ForecastResult | null)[] = []
+
+  // Pad start
+  for (let i = 0; i < padBefore; i++) {
+    currentWeek.push(null)
+  }
+
+  for (const fc of monthForecasts.value) {
+    currentWeek.push(fc)
+    if (currentWeek.length === 7) {
+      weeks.push(currentWeek)
+      currentWeek = []
+    }
+  }
+
+  // Pad end
+  if (currentWeek.length > 0) {
+    while (currentWeek.length < 7) {
+      currentWeek.push(null)
+    }
+    weeks.push(currentWeek)
+  }
+
+  return weeks
+})
+
+const monthTotalCA = computed(() => {
+  return monthForecasts.value.reduce((sum, f) => sum + f.ca_prevision, 0)
+})
+
+const monthTotalTickets = computed(() => {
+  return monthForecasts.value.reduce((sum, f) => sum + f.nb_tickets_prevision, 0)
+})
+
+const monthN1Total = computed(() => {
+  let total = 0
+  let hasData = false
+  for (const fc of monthForecasts.value) {
+    if (fc.ca_n1 !== null) {
+      total += fc.ca_n1
+      hasData = true
+    }
+  }
+  return hasData ? total : null
+})
+
+const monthN1Evolution = computed(() => {
+  if (monthN1Total.value === null || monthN1Total.value === 0) return null
+  return ((monthTotalCA.value - monthN1Total.value) / monthN1Total.value) * 100
+})
+
+const monthAvgConfidence = computed(() => {
+  if (monthForecasts.value.length === 0) return 0
+  return Math.round(monthForecasts.value.reduce((s, f) => s + f.confidence, 0) / monthForecasts.value.length)
+})
+
+// Per-week subtotals for month view
+function weekSubtotal(week: (ForecastResult | null)[]): number {
+  return week.reduce((s, fc) => s + (fc?.ca_prevision ?? 0), 0)
 }
 
 const weekLabel = computed(() => {
@@ -93,7 +203,6 @@ const weekN1Evolution = computed(() => {
 // --- Helpers ---
 const JOURS_COURTS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
 const JOURS_LONGS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi']
-
 function formatDateFr(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
   return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
@@ -105,6 +214,13 @@ function formatHeure(h: number): string {
 
 function formatEuros(val: number): string {
   return val.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' \u20AC'
+}
+
+function formatEurosCompact(val: number): string {
+  if (val >= 1000) {
+    return (val / 1000).toFixed(1).replace('.0', '') + 'k'
+  }
+  return val.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 }
 
 function confidenceColor(confidence: number): string {
@@ -145,24 +261,57 @@ function selectDay(index: number): void {
   }
 }
 
+function selectDayFromMonth(fc: ForecastResult): void {
+  // Switch to week view centered on that day's week, then open day view
+  const targetDate = new Date(fc.date + 'T00:00:00')
+  const today = new Date()
+  const todayDow = today.getDay()
+  const daysToMonday = todayDow === 0 ? 6 : todayDow - 1
+  const currentMonday = new Date(today)
+  currentMonday.setDate(today.getDate() - daysToMonday)
+
+  const targetDow = targetDate.getDay()
+  const daysToTargetMonday = targetDow === 0 ? 6 : targetDow - 1
+  const targetMonday = new Date(targetDate)
+  targetMonday.setDate(targetDate.getDate() - daysToTargetMonday)
+
+  const diffWeeks = Math.round((targetMonday.getTime() - currentMonday.getTime()) / (7 * 24 * 60 * 60 * 1000))
+  weekOffset.value = diffWeeks
+  recalculateForecasts()
+
+  // Find index of clicked day in the week
+  const dayIdx = targetDow === 0 ? 6 : targetDow - 1
+  selectedDayIndex.value = dayIdx
+  viewMode.value = 'jour'
+}
+
 function isToday(dateStr: string): boolean {
   return dateStr === new Date().toISOString().split('T')[0]
 }
 
+function dayOfMonth(dateStr: string): number {
+  return new Date(dateStr + 'T00:00:00').getDate()
+}
+
+// --- Calendar sync ---
 const calendarSyncStatus = ref<string | null>(null)
+const calendarSyncing = ref(false)
 
 async function syncCalendars() {
-  calendarSyncStatus.value = 'Synchronisation calendriers...'
+  calendarSyncing.value = true
+  calendarSyncStatus.value = 'Synchronisation des calendriers (feries, vacances, soldes)...'
   try {
     const stats = await syncCalendriers()
-    calendarSyncStatus.value = `Calendriers synchro : ${stats.joursFeries} feries, ${stats.vacances} vacances, ${stats.soldes} soldes`
-    // Reload events after sync
+    calendarSyncStatus.value = `Calendriers mis a jour : ${stats.joursFeries} feries, ${stats.vacances} vacances, ${stats.soldes} soldes`
     await store.fetchEvenements()
-    forecasts.value = store.calculateWeekForecast()
+    recalculateForecasts()
+    recalculateMonthForecasts()
     setTimeout(() => { calendarSyncStatus.value = null }, 5000)
   } catch {
-    calendarSyncStatus.value = 'Erreur sync calendriers'
+    calendarSyncStatus.value = 'Erreur lors de la synchronisation des calendriers'
     setTimeout(() => { calendarSyncStatus.value = null }, 5000)
+  } finally {
+    calendarSyncing.value = false
   }
 }
 
@@ -170,6 +319,7 @@ async function syncCalendars() {
 onMounted(async () => {
   await store.fetchAll()
   recalculateForecasts()
+  recalculateMonthForecasts()
   precisionS1.value = store.calculatePrecisionS1()
   // Auto-sync calendars if no events exist
   if (store.evenements.length === 0) {
@@ -183,6 +333,7 @@ watch(
   () => {
     if (store.ventes.length > 0) {
       recalculateForecasts()
+      recalculateMonthForecasts()
       precisionS1.value = store.calculatePrecisionS1()
     }
   }
@@ -195,8 +346,14 @@ watch(
     <div class="page-header">
       <h1>Previsions</h1>
       <div class="header-right">
-        <button class="btn-sync" @click="syncCalendars" title="Sync calendriers">&#x1F4C5; Sync</button>
         <div class="view-toggle">
+          <button
+            class="toggle-btn"
+            :class="{ active: viewMode === 'mois' }"
+            @click="viewMode = 'mois'"
+          >
+            Mois
+          </button>
           <button
             class="toggle-btn"
             :class="{ active: viewMode === 'semaine' }"
@@ -231,16 +388,173 @@ watch(
     </div>
 
     <!-- Content -->
-    <template v-else-if="forecasts.length > 0">
+    <template v-else-if="forecasts.length > 0 || monthForecasts.length > 0">
+
+      <!-- === MONTH VIEW === -->
+      <div v-if="viewMode === 'mois'" class="month-view">
+
+        <!-- Month navigation -->
+        <div class="month-nav">
+          <button class="nav-arrow-btn" @click="goToPrevMonth">&larr;</button>
+          <div class="nav-center">
+            <span class="nav-label">{{ monthLabel }}</span>
+            <button
+              v-if="!isCurrentMonth"
+              class="btn-today-link"
+              @click="goToCurrentMonth"
+            >
+              Mois actuel
+            </button>
+          </div>
+          <button class="nav-arrow-btn" @click="goToNextMonth">&rarr;</button>
+        </div>
+
+        <!-- Month summary cards -->
+        <div class="summary-row">
+          <div class="summary-card summary-card--primary">
+            <span class="summary-card-label">CA prevu</span>
+            <span class="summary-card-value">{{ formatEuros(monthTotalCA) }}</span>
+            <div v-if="monthN1Evolution !== null" class="summary-card-sub">
+              <span
+                class="evo-badge"
+                :class="monthN1Evolution > 2 ? 'evo-positive' : monthN1Evolution < -2 ? 'evo-negative' : 'evo-neutral'"
+              >
+                {{ monthN1Evolution >= 0 ? '+' : '' }}{{ monthN1Evolution.toFixed(0) }}% vs N-1
+              </span>
+            </div>
+          </div>
+          <div class="summary-card">
+            <span class="summary-card-label">N-1</span>
+            <span class="summary-card-value">{{ monthN1Total !== null ? formatEuros(monthN1Total) : '--' }}</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-card-label">Tickets</span>
+            <span class="summary-card-value">{{ monthTotalTickets }}</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-card-label">Confiance moy.</span>
+            <span
+              class="summary-card-value"
+              :style="{ color: confidenceColor(monthAvgConfidence) }"
+            >
+              {{ monthAvgConfidence }}%
+            </span>
+          </div>
+          <div v-if="precisionS1" class="summary-card">
+            <span class="summary-card-label">Precision S-1</span>
+            <span
+              class="summary-card-value"
+              :style="{ color: precisionS1.precision >= 85 ? 'var(--color-success)' : precisionS1.precision >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }"
+            >
+              {{ precisionS1.precision }}%
+            </span>
+            <div class="summary-card-sub">
+              <span class="summary-sub-text">{{ formatEuros(precisionS1.caPrevu) }} prevu / {{ formatEuros(precisionS1.caRealise) }} realise</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calendar grid -->
+        <div class="month-calendar">
+          <!-- Day-of-week headers -->
+          <div class="month-header-row">
+            <div class="month-header-cell">Lun</div>
+            <div class="month-header-cell">Mar</div>
+            <div class="month-header-cell">Mer</div>
+            <div class="month-header-cell">Jeu</div>
+            <div class="month-header-cell">Ven</div>
+            <div class="month-header-cell">Sam</div>
+            <div class="month-header-cell">Dim</div>
+            <div class="month-header-cell month-header-total">Total</div>
+          </div>
+
+          <!-- Week rows -->
+          <div
+            v-for="(week, wIdx) in monthWeeks"
+            :key="wIdx"
+            class="month-week-row"
+          >
+            <div
+              v-for="(fc, dIdx) in week"
+              :key="dIdx"
+              class="month-cell"
+              :class="{
+                'month-cell--empty': !fc,
+                'month-cell--today': fc && isToday(fc.date),
+                'month-cell--ferme': fc && store.isJourFerme(fc.jour_semaine),
+                'month-cell--weekend': dIdx >= 5,
+              }"
+              @click="fc && selectDayFromMonth(fc)"
+            >
+              <template v-if="fc">
+                <div class="month-cell-header">
+                  <span class="month-cell-day">{{ dayOfMonth(fc.date) }}</span>
+                  <span class="month-cell-meteo">{{ weatherCodeToEmoji(fc.meteo?.code_meteo ?? null) }}</span>
+                </div>
+                <div v-if="!store.isJourFerme(fc.jour_semaine)" class="month-cell-body">
+                  <span class="month-cell-ca">{{ formatEurosCompact(fc.ca_prevision) }}</span>
+                  <div class="month-cell-confidence">
+                    <div class="mini-confidence-bar">
+                      <div
+                        class="mini-confidence-fill"
+                        :style="{
+                          width: fc.confidence + '%',
+                          background: confidenceColor(fc.confidence)
+                        }"
+                      ></div>
+                    </div>
+                  </div>
+                  <div v-if="fc.evenements.length > 0" class="month-cell-events">
+                    <span
+                      v-for="evt in fc.evenements.slice(0, 1)"
+                      :key="evt.id"
+                      class="mini-event-tag"
+                      :class="'event-' + evt.type"
+                    >
+                      {{ evt.nom.length > 8 ? evt.nom.slice(0, 8) + '..' : evt.nom }}
+                    </span>
+                  </div>
+                  <div v-if="fc.ca_n1 !== null" class="month-cell-n1">
+                    <span
+                      class="mini-evo"
+                      :class="evolutionN1Class(fc)"
+                    >
+                      {{ evolutionN1(fc) }}
+                    </span>
+                  </div>
+                </div>
+                <div v-else class="month-cell-ferme">Ferme</div>
+              </template>
+            </div>
+
+            <!-- Week total -->
+            <div class="month-cell month-cell--total">
+              <span class="month-week-total">{{ formatEurosCompact(weekSubtotal(week)) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sync info -->
+        <div class="sync-section">
+          <button
+            class="btn-sync-calendars"
+            :disabled="calendarSyncing"
+            @click="syncCalendars"
+          >
+            {{ calendarSyncing ? 'Synchronisation...' : 'Mettre a jour les calendriers' }}
+          </button>
+          <span class="sync-hint">Jours feries, vacances scolaires et soldes</span>
+        </div>
+      </div>
 
       <!-- === WEEK VIEW === -->
       <div v-if="viewMode === 'semaine'" class="week-view">
 
         <!-- Week navigation -->
         <div class="week-nav">
-          <button class="week-nav-arrow" @click="goToPrevWeek">&larr;</button>
-          <div class="week-nav-center">
-            <span class="week-nav-label">{{ weekLabel }}</span>
+          <button class="nav-arrow-btn" @click="goToPrevWeek">&larr;</button>
+          <div class="nav-center">
+            <span class="nav-label">{{ weekLabel }}</span>
             <button
               v-if="!isCurrentWeek"
               class="btn-today-link"
@@ -249,41 +563,41 @@ watch(
               Semaine actuelle
             </button>
           </div>
-          <button class="week-nav-arrow" @click="goToNextWeek">&rarr;</button>
+          <button class="nav-arrow-btn" @click="goToNextWeek">&rarr;</button>
         </div>
 
         <!-- Week summary -->
-        <div class="week-summary">
-          <div class="summary-item">
-            <span class="summary-label">CA semaine (prevu)</span>
-            <span class="summary-value">{{ formatEuros(weekTotalCA) }}</span>
-            <div v-if="weekN1Evolution !== null" class="summary-sub">
+        <div class="summary-row">
+          <div class="summary-card summary-card--primary">
+            <span class="summary-card-label">CA semaine (prevu)</span>
+            <span class="summary-card-value">{{ formatEuros(weekTotalCA) }}</span>
+            <div v-if="weekN1Evolution !== null" class="summary-card-sub">
               <span
-                class="summary-evo"
+                class="evo-badge"
                 :class="weekN1Evolution > 2 ? 'evo-positive' : weekN1Evolution < -2 ? 'evo-negative' : 'evo-neutral'"
               >
                 {{ weekN1Evolution >= 0 ? '+' : '' }}{{ weekN1Evolution.toFixed(0) }}% vs N-1
               </span>
             </div>
           </div>
-          <div class="summary-item">
-            <span class="summary-label">N-1 semaine</span>
-            <span class="summary-value">{{ weekN1Total !== null ? formatEuros(weekN1Total) : '--' }}</span>
+          <div class="summary-card">
+            <span class="summary-card-label">N-1 semaine</span>
+            <span class="summary-card-value">{{ weekN1Total !== null ? formatEuros(weekN1Total) : '--' }}</span>
           </div>
-          <div class="summary-item">
-            <span class="summary-label">Tickets semaine</span>
-            <span class="summary-value">{{ weekTotalTickets }}</span>
+          <div class="summary-card">
+            <span class="summary-card-label">Tickets semaine</span>
+            <span class="summary-card-value">{{ weekTotalTickets }}</span>
           </div>
-          <div v-if="precisionS1" class="summary-item">
-            <span class="summary-label">Precision S-1</span>
+          <div v-if="precisionS1" class="summary-card">
+            <span class="summary-card-label">Precision S-1</span>
             <span
-              class="summary-value"
+              class="summary-card-value"
               :style="{ color: precisionS1.precision >= 85 ? 'var(--color-success)' : precisionS1.precision >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }"
             >
               {{ precisionS1.precision }}%
             </span>
-            <div class="summary-sub">
-              <span class="summary-sub-text">Prevu {{ formatEuros(precisionS1.caPrevu) }} / Realise {{ formatEuros(precisionS1.caRealise) }}</span>
+            <div class="summary-card-sub">
+              <span class="summary-sub-text">{{ formatEuros(precisionS1.caPrevu) }} prevu / {{ formatEuros(precisionS1.caRealise) }} realise</span>
             </div>
           </div>
         </div>
@@ -332,7 +646,7 @@ watch(
                 <span class="ca-tickets">{{ fc.nb_tickets_prevision }} tickets</span>
               </div>
 
-              <!-- N-1 comparison (always visible) -->
+              <!-- N-1 comparison -->
               <div class="day-n1">
                 <span class="n1-label">N-1 :</span>
                 <span class="n1-value">{{ fc.ca_n1 !== null ? formatEuros(fc.ca_n1) : '--' }}</span>
@@ -415,21 +729,21 @@ watch(
         <!-- Day navigation -->
         <div class="day-nav">
           <button
-            class="nav-arrow"
+            class="nav-arrow-btn"
             :disabled="selectedDayIndex === 0"
             @click="selectedDayIndex--"
           >
             &larr;
           </button>
-          <div class="day-nav-title">
-            <span class="day-nav-name">
+          <div class="nav-center">
+            <span class="nav-label">
               {{ JOURS_LONGS[selectedForecast.jour_semaine] }}
+              {{ formatDateFr(selectedForecast.date) }}
             </span>
-            <span class="day-nav-date">{{ formatDateFr(selectedForecast.date) }}</span>
             <span v-if="isToday(selectedForecast.date)" class="today-badge">Aujourd'hui</span>
           </div>
           <button
-            class="nav-arrow"
+            class="nav-arrow-btn"
             :disabled="selectedDayIndex >= forecasts.length - 1"
             @click="selectedDayIndex++"
           >
@@ -614,6 +928,7 @@ watch(
     <div v-else class="empty-state">
       <p>Aucune donnee historique disponible pour generer des previsions.</p>
       <p class="empty-hint">Les previsions necessitent des donnees de ventes validees (clotures Zelty).</p>
+      <p class="empty-hint">Verifiez que la synchronisation quotidienne Zelty fonctionne dans Parametres &gt; Zelty.</p>
     </div>
   </div>
 </template>
@@ -621,7 +936,7 @@ watch(
 <style scoped>
 /* --- Page layout --- */
 .previsions {
-  max-width: 1200px;
+  max-width: 1280px;
   margin: 0 auto;
 }
 
@@ -629,7 +944,7 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .page-header h1 {
@@ -641,22 +956,6 @@ watch(
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.btn-sync {
-  padding: 10px 16px;
-  border: 1px solid var(--border);
-  background: var(--bg-surface);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  min-height: 48px;
-}
-
-.btn-sync:active {
-  background: var(--bg-hover);
 }
 
 .sync-status {
@@ -680,10 +979,10 @@ watch(
 }
 
 .toggle-btn {
-  padding: 10px 24px;
+  padding: 10px 20px;
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
@@ -741,15 +1040,8 @@ watch(
   min-height: 48px;
 }
 
-/* --- Week navigation --- */
-.week-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.week-nav-arrow {
+/* --- Shared navigation --- */
+.nav-arrow-btn {
   width: 48px;
   height: 48px;
   border: 1px solid var(--border);
@@ -761,21 +1053,36 @@ watch(
   align-items: center;
   justify-content: center;
   color: var(--text-primary);
+  flex-shrink: 0;
 }
 
-.week-nav-arrow:active {
+.nav-arrow-btn:active:not(:disabled) {
   background: var(--bg-hover);
 }
 
-.week-nav-center {
+.nav-arrow-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.week-nav,
+.month-nav,
+.day-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.nav-center {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
 }
 
-.week-nav-label {
-  font-size: 17px;
+.nav-label {
+  font-size: 18px;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -791,40 +1098,56 @@ watch(
   padding: 0;
 }
 
-/* --- Week summary --- */
-.week-summary {
+.today-badge {
+  background: var(--color-primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ============================= */
+/* SHARED SUMMARY                */
+/* ============================= */
+.summary-row {
   display: flex;
   gap: 12px;
   margin-bottom: 20px;
   flex-wrap: wrap;
 }
 
-.summary-item {
+.summary-card {
   flex: 1;
+  min-width: 140px;
   background: var(--bg-surface);
   border-radius: var(--radius-lg);
-  padding: 16px 20px;
+  padding: 14px 18px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
-.summary-label {
+.summary-card--primary {
+  border-left: 4px solid var(--color-primary);
+}
+
+.summary-card-label {
   display: block;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-secondary);
   margin-bottom: 4px;
 }
 
-.summary-value {
+.summary-card-value {
   font-size: 22px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
-.summary-sub {
+.summary-card-sub {
   margin-top: 4px;
 }
 
-.summary-evo {
+.evo-badge {
   font-size: 13px;
   font-weight: 700;
   padding: 2px 8px;
@@ -835,6 +1158,217 @@ watch(
   font-size: 12px;
   color: var(--text-tertiary);
 }
+
+/* ============================= */
+/* MONTH VIEW                    */
+/* ============================= */
+.month-calendar {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.month-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) 80px;
+  background: var(--bg-hover, #f9fafb);
+  border-bottom: 1px solid var(--border);
+}
+
+.month-header-cell {
+  padding: 10px 4px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.month-header-total {
+  background: var(--bg-hover, #f3f4f6);
+}
+
+.month-week-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) 80px;
+  border-bottom: 1px solid var(--border);
+}
+
+.month-week-row:last-child {
+  border-bottom: none;
+}
+
+.month-cell {
+  padding: 8px 6px;
+  min-height: 90px;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.month-cell:hover:not(.month-cell--empty) {
+  background: #f0f7ff;
+}
+
+.month-cell--empty {
+  background: var(--bg-hover, #f9fafb);
+  cursor: default;
+}
+
+.month-cell--today {
+  background: #fff7ed;
+  box-shadow: inset 0 0 0 2px var(--color-primary);
+}
+
+.month-cell--ferme {
+  opacity: 0.5;
+}
+
+.month-cell--weekend {
+  background: var(--bg-hover, #fafafa);
+}
+
+.month-cell--weekend.month-cell--today {
+  background: #fff7ed;
+}
+
+.month-cell--total {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover, #f9fafb);
+  border-right: none;
+  min-height: 90px;
+  cursor: default;
+}
+
+.month-cell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.month-cell-day {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.month-cell--today .month-cell-day {
+  color: var(--color-primary);
+}
+
+.month-cell-meteo {
+  font-size: 14px;
+}
+
+.month-cell-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.month-cell-ca {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.mini-confidence-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mini-confidence-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.month-cell-events {
+  margin-top: 1px;
+}
+
+.mini-event-tag {
+  display: inline-block;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.month-cell-n1 {
+  margin-top: 1px;
+}
+
+.mini-evo {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0px 4px;
+  border-radius: 3px;
+}
+
+.month-cell-ferme {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.month-week-total {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* --- Sync section --- */
+.sync-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.btn-sync-calendars {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.btn-sync-calendars:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-sync-calendars:active:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.sync-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ============================= */
+/* WEEK VIEW                     */
+/* ============================= */
 
 /* --- Day cards grid --- */
 .day-cards {
@@ -883,15 +1417,6 @@ watch(
 .day-date {
   font-size: 13px;
   color: var(--text-secondary);
-}
-
-.today-badge {
-  background: var(--color-primary);
-  color: white;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
 }
 
 .day-closed {
@@ -1118,53 +1643,6 @@ watch(
 /* ============================= */
 /* DAY VIEW                       */
 /* ============================= */
-.day-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.nav-arrow {
-  width: 56px;
-  height: 56px;
-  border: 1px solid var(--border);
-  background: var(--bg-surface);
-  border-radius: var(--radius-md);
-  font-size: 22px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-primary);
-}
-
-.nav-arrow:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.nav-arrow:active:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.day-nav-title {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-
-.day-nav-name {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.day-nav-date {
-  font-size: 15px;
-  color: var(--text-secondary);
-}
 
 /* --- Detail cards --- */
 .detail-cards {
@@ -1421,6 +1899,15 @@ watch(
   .detail-card--main {
     grid-column: 1 / -1;
   }
+
+  .month-header-row,
+  .month-week-row {
+    grid-template-columns: repeat(7, 1fr) 60px;
+  }
+
+  .month-cell-ca {
+    font-size: 14px;
+  }
 }
 
 /* --- Responsive: phone --- */
@@ -1429,7 +1916,7 @@ watch(
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .week-summary {
+  .summary-row {
     flex-direction: column;
   }
 
@@ -1439,6 +1926,20 @@ watch(
 
   .hourly-ca {
     display: none;
+  }
+
+  /* Month view: scroll horizontally on small screens */
+  .month-calendar {
+    overflow-x: auto;
+  }
+
+  .month-header-row,
+  .month-week-row {
+    min-width: 700px;
+  }
+
+  .month-cell {
+    min-height: 70px;
   }
 }
 </style>
