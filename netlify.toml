@@ -14,3 +14,6 @@
 # Scheduled Functions — Daily sync jobs
 [functions."sync-zelty-ca-daily"]
   schedule = "0 6 * * *"
+
+[functions."check-alerts"]
+  schedule = "0 8 * * *"

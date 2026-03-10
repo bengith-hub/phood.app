@@ -4,6 +4,7 @@ import { useIngredientsStore } from '@/stores/ingredients'
 import { useMercurialeStore } from '@/stores/mercuriale'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { restCall } from '@/lib/rest-client'
+import { loadConfig } from '@/lib/create-notification'
 import type { IngredientRestaurant, Mercuriale, HistoriquePrix } from '@/types/database'
 
 const ingredientsStore = useIngredientsStore()
@@ -17,8 +18,8 @@ const filterMultiOnly = ref(true)
 const historiquePrix = ref<HistoriquePrix[]>([])
 const expandedIngredientId = ref<string | null>(null)
 
-// Seuil for alerting when preferred supplier is not cheapest
-const SEUIL_ECART_PCT = 5
+// Seuil for alerting when preferred supplier is not cheapest (loaded from config)
+const seuilEcartPct = ref(10)
 
 interface FournisseurPrix {
   fournisseurId: string
@@ -153,7 +154,7 @@ const rows = computed<IngredientCoutRow[]>(() => {
       autresFournisseurs: autres.sort((a, b) => a.prixNormalise - b.prixNormalise),
       meilleurPrix,
       ecartPct,
-      hasAlert: ecartPct > SEUIL_ECART_PCT,
+      hasAlert: ecartPct > seuilEcartPct.value,
       historique: ingHistorique,
     })
   }
@@ -225,12 +226,16 @@ function variationClass(h: HistoriquePrix): string {
 
 onMounted(async () => {
   loading.value = true
-  await Promise.all([
+  const [, , , , config] = await Promise.all([
     ingredientsStore.fetchAll(),
     mercurialeStore.fetchAll(),
     fournisseursStore.fetchAll(),
     fetchHistoriquePrix(),
+    loadConfig(),
   ])
+  if (config?.seuil_ecart_prix_pct) {
+    seuilEcartPct.value = config.seuil_ecart_prix_pct
+  }
   loading.value = false
 })
 </script>

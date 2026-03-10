@@ -6,6 +6,7 @@ import { useMercurialeStore } from '@/stores/mercuriale'
 import { useAuth } from '@/composables/useAuth'
 import { restCall, storageUpload } from '@/lib/rest-client'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
+import { createNotificationForAdmins, loadConfig } from '@/lib/create-notification'
 import type { Commande, CommandeLigne, AnomalieType } from '@/types/database'
 
 const commandesStore = useCommandesStore()
@@ -221,6 +222,9 @@ async function handleValidate() {
       }
     }
 
+    // Detect price changes and create notifications
+    await detectPriceChanges(receptionLignes.value)
+
     // Reset and go back to selection
     step.value = 'validate'
   } catch (e) {
@@ -228,6 +232,68 @@ async function handleValidate() {
     alert('Erreur lors de la validation')
   } finally {
     validating.value = false
+  }
+}
+
+/**
+ * Compare BL prices with mercuriale prices. If gap exceeds threshold:
+ * 1. Record in historique_prix
+ * 2. Update mercuriale.prix_unitaire_ht (BL price is the truth)
+ * 3. Create prix_ecart notification for admins
+ */
+async function detectPriceChanges(lignes: ReceptionLigneEdit[]) {
+  try {
+    const config = await loadConfig()
+    const seuil = config?.seuil_ecart_prix_pct ?? 10
+
+    const alertLines: { designation: string; ancien: number; nouveau: number; ecart: number }[] = []
+
+    for (const l of lignes) {
+      if (l.prix_bl == null || l.prix_bl <= 0) continue
+
+      const merc = mercurialeStore.getById(l.mercuriale_id)
+      if (!merc || !merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) continue
+
+      const ecartPct = Math.abs(l.prix_bl - merc.prix_unitaire_ht) / merc.prix_unitaire_ht * 100
+
+      // Always record price history if price changed
+      if (Math.abs(l.prix_bl - merc.prix_unitaire_ht) > 0.01) {
+        await restCall('POST', 'historique_prix', {
+          mercuriale_id: l.mercuriale_id,
+          prix_ancien: merc.prix_unitaire_ht,
+          prix_nouveau: l.prix_bl,
+          source: 'bl',
+          valide_par: user.value?.id || null,
+        }).catch(() => {})
+
+        // Update mercuriale price (BL = truth)
+        await restCall('PATCH', `mercuriale?id=eq.${l.mercuriale_id}`, {
+          prix_unitaire_ht: l.prix_bl,
+        }).catch(() => {})
+      }
+
+      if (ecartPct > seuil) {
+        alertLines.push({
+          designation: l.designation,
+          ancien: merc.prix_unitaire_ht,
+          nouveau: l.prix_bl,
+          ecart: Math.round(ecartPct),
+        })
+      }
+    }
+
+    if (alertLines.length > 0) {
+      const first = alertLines[0]!
+      const titre = alertLines.length === 1
+        ? `Prix modifié : ${first.designation}`
+        : `${alertLines.length} écarts de prix détectés`
+      const message = alertLines
+        .map(a => `${a.designation} : ${a.ancien.toFixed(2)}€ → ${a.nouveau.toFixed(2)}€ (${a.ecart > 0 ? '+' : ''}${a.ecart}%)`)
+        .join('\n')
+      await createNotificationForAdmins('prix_ecart', titre, message)
+    }
+  } catch (e) {
+    console.error('Price change detection failed:', e)
   }
 }
 

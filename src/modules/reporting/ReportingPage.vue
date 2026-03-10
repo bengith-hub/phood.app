@@ -7,13 +7,14 @@ const reportingStore = useReportingStore()
 const recettesStore = useRecettesStore()
 
 // ── Tab navigation ──────────────────────────────────────────
-type TabId = 'cm' | 'produits' | 'associations' | 'previsions'
+type TabId = 'cm' | 'produits' | 'ca' | 'associations' | 'previsions'
 
 const activeTab = ref<TabId>('cm')
 
 const tabs: { id: TabId; label: string }[] = [
   { id: 'cm', label: 'Cout Matiere' },
   { id: 'produits', label: 'Top/Flop' },
+  { id: 'ca', label: 'Evolution CA' },
   { id: 'associations', label: 'Associations' },
   { id: 'previsions', label: 'Previsions' },
 ]
@@ -105,6 +106,51 @@ const moyenneCouleur = computed(() => {
   if (moyenneEcart.value > 10) return 'orange'
   return 'green'
 })
+
+// ── Tab 5: Evolution CA state ────────────────────────────────
+const caRange = ref<30 | 60 | 90>(30)
+
+interface CaPoint {
+  date: string
+  label: string
+  ca: number
+  dayOfWeek: number
+}
+
+const caPoints = computed<CaPoint[]>(() => {
+  const now = new Date()
+  const cutoff = new Date(now)
+  cutoff.setDate(cutoff.getDate() - caRange.value)
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+
+  return reportingStore.ventes
+    .filter(v => v.date >= cutoffStr)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(v => ({
+      date: v.date,
+      label: new Date(v.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+      ca: v.ca_ttc,
+      dayOfWeek: new Date(v.date).getDay(),
+    }))
+})
+
+const caMax = computed(() => {
+  const max = Math.max(...caPoints.value.map(p => p.ca), 1)
+  return Math.ceil(max / 500) * 500
+})
+
+// 7-day moving average
+const caMovingAvg = computed(() => {
+  const pts = caPoints.value
+  return pts.map((p, i) => {
+    const window = pts.slice(Math.max(0, i - 6), i + 1)
+    const avg = window.reduce((s, w) => s + w.ca, 0) / window.length
+    return { date: p.date, avg }
+  })
+})
+
+const caTotalPeriod = computed(() => caPoints.value.reduce((s, p) => s + p.ca, 0))
+const caMoyenneJour = computed(() => caPoints.value.length > 0 ? caTotalPeriod.value / caPoints.value.length : 0)
 
 // ── Format helpers ──────────────────────────────────────────
 function formatEuro(v: number): string {
@@ -433,7 +479,104 @@ onMounted(loadData)
     </div>
 
     <!-- ═══════════════════════════════════════════════════════
-         TAB 3: ASSOCIATIONS PRODUITS
+         TAB 3: EVOLUTION CA
+         ═══════════════════════════════════════════════════════ -->
+    <div v-else-if="activeTab === 'ca'" class="tab-content">
+      <!-- Range toggle -->
+      <div class="ca-controls">
+        <div class="period-toggle">
+          <button class="toggle-btn" :class="{ active: caRange === 30 }" @click="caRange = 30">30 jours</button>
+          <button class="toggle-btn" :class="{ active: caRange === 60 }" @click="caRange = 60">60 jours</button>
+          <button class="toggle-btn" :class="{ active: caRange === 90 }" @click="caRange = 90">90 jours</button>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="ca-summary">
+        <div class="summary-card">
+          <div class="summary-label">CA total ({{ caRange }}j)</div>
+          <div class="summary-value">{{ formatEuro(caTotalPeriod) }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Moyenne / jour</div>
+          <div class="summary-value">{{ formatEuro(caMoyenneJour) }}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Jours de donnees</div>
+          <div class="summary-value">{{ caPoints.length }}</div>
+        </div>
+      </div>
+
+      <!-- SVG line chart -->
+      <div v-if="caPoints.length > 1" class="ca-chart-container">
+        <svg class="ca-chart" :viewBox="`0 0 ${Math.max(caPoints.length * 20, 400)} 250`" preserveAspectRatio="none">
+          <!-- Grid lines -->
+          <line v-for="i in 5" :key="'grid-' + i"
+            :x1="0" :x2="Math.max(caPoints.length * 20, 400)"
+            :y1="i * 40" :y2="i * 40"
+            stroke="#e5e7eb" stroke-width="0.5"
+          />
+
+          <!-- Y-axis labels -->
+          <text v-for="i in 5" :key="'ylabel-' + i"
+            :x="2" :y="(5 - i) * 40 + 14"
+            class="chart-label" fill="#888" font-size="10"
+          >
+            {{ formatEuro(caMax * i / 5) }}
+          </text>
+
+          <!-- CA bars -->
+          <rect
+            v-for="(pt, idx) in caPoints" :key="'bar-' + idx"
+            :x="60 + idx * ((Math.max(caPoints.length * 20, 400) - 80) / caPoints.length)"
+            :y="200 - (pt.ca / caMax * 200)"
+            :width="Math.max(((Math.max(caPoints.length * 20, 400) - 80) / caPoints.length) - 2, 4)"
+            :height="pt.ca / caMax * 200"
+            :fill="pt.dayOfWeek === 0 || pt.dayOfWeek === 6 ? '#E85D2C' : '#60a5fa'"
+            rx="2"
+            opacity="0.7"
+          >
+            <title>{{ pt.label }} — {{ formatEuro(pt.ca) }}</title>
+          </rect>
+
+          <!-- Moving average line -->
+          <polyline
+            :points="caMovingAvg.map((m, idx) => {
+              const x = 60 + idx * ((Math.max(caPoints.length * 20, 400) - 80) / caPoints.length) + ((Math.max(caPoints.length * 20, 400) - 80) / caPoints.length) / 2
+              const y = 200 - (m.avg / caMax * 200)
+              return `${x},${y}`
+            }).join(' ')"
+            fill="none" stroke="#E85D2C" stroke-width="2" stroke-dasharray="6,3"
+          />
+        </svg>
+
+        <!-- X-axis labels (show every 7th) -->
+        <div class="ca-x-labels">
+          <span
+            v-for="(pt, idx) in caPoints" :key="'xlabel-' + idx"
+            :style="{ left: (60 + idx * ((Math.max(caPoints.length * 20, 400) - 80) / caPoints.length)) + 'px' }"
+            class="x-label"
+            v-show="idx % 7 === 0"
+          >
+            {{ pt.label }}
+          </span>
+        </div>
+
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#60a5fa;"></span> Semaine</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#E85D2C;"></span> Week-end</span>
+          <span class="legend-item"><span class="legend-line"></span> Moy. 7j</span>
+        </div>
+      </div>
+
+      <div v-else class="empty-state">
+        <p>Pas assez de donnees pour afficher le graphe.</p>
+        <p class="empty-hint">Les donnees apparaitront une fois les clotures Zelty importees.</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         TAB 4: ASSOCIATIONS PRODUITS
          ═══════════════════════════════════════════════════════ -->
     <div v-else-if="activeTab === 'associations'" class="tab-content">
       <div class="associations-header">
@@ -1543,5 +1686,60 @@ onMounted(loadData)
   .prevision-days {
     grid-template-columns: repeat(7, 1fr);
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EVOLUTION CA TAB
+   ═══════════════════════════════════════════════════════════════ */
+.ca-controls {
+  margin-bottom: 16px;
+}
+
+.ca-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.ca-chart-container {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ca-chart {
+  width: 100%;
+  height: 220px;
+  display: block;
+}
+
+.ca-x-labels {
+  position: relative;
+  height: 20px;
+  margin-top: 4px;
+}
+
+.x-label {
+  position: absolute;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.chart-legend {
+  margin-top: 12px;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 20px;
+  height: 2px;
+  background: #E85D2C;
+  border-top: 2px dashed #E85D2C;
+  vertical-align: middle;
 }
 </style>
