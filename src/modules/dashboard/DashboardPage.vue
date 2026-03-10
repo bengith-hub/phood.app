@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
 import { useCommandesStore } from '@/stores/commandes'
@@ -7,6 +7,9 @@ import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useStocksStore } from '@/stores/stocks'
 import { useNotificationsStore } from '@/stores/notifications'
+import { restCall } from '@/lib/rest-client'
+import { weatherCodeToEmoji } from '@/stores/previsions'
+import type { MeteoDaily } from '@/types/database'
 
 const router = useRouter()
 const { profile } = useAuth()
@@ -16,7 +19,11 @@ const ingredientsStore = useIngredientsStore()
 const stocksStore = useStocksStore()
 const notificationsStore = useNotificationsStore()
 
-const today = new Date().toISOString().split('T')[0]
+const today = new Date().toISOString().split('T')[0]!
+const meteoToday = ref<MeteoDaily | null>(null)
+
+// CA yesterday for quick KPI
+const caHier = ref<number | null>(null)
 
 // Orders needing attention today
 const commandesBrouillon = computed(() => commandesStore.brouillons)
@@ -36,6 +43,14 @@ const stocksBas = computed(() =>
     if (!ing) return undefined
     return { stock_tampon: ing.stock_tampon, nom: ing.nom, unite_stock: ing.unite_stock }
   })
+)
+
+// Next deliveries (J+1 and beyond, excludes today)
+const prochainesLivraisons = computed(() =>
+  commandesStore.commandes
+    .filter(c => c.date_livraison_prevue && c.date_livraison_prevue > today && c.statut === 'envoyee')
+    .sort((a, b) => (a.date_livraison_prevue || '').localeCompare(b.date_livraison_prevue || ''))
+    .slice(0, 3)
 )
 
 // Pending avoirs (avoir_en_cours orders)
@@ -63,12 +78,53 @@ onMounted(async () => {
     stocksStore.fetchAll(),
     notificationsStore.fetchAll(),
   ])
+
+  // Load today's weather (non-blocking)
+  try {
+    const meteoArr = await restCall<MeteoDaily[]>('GET', `meteo_daily?date=eq.${today}&limit=1`)
+    if (meteoArr.length > 0) meteoToday.value = meteoArr[0]!
+  } catch { /* weather is optional */ }
+
+  // Load yesterday's CA (non-blocking)
+  try {
+    const hier = new Date()
+    hier.setDate(hier.getDate() - 1)
+    const hierStr = hier.toISOString().split('T')[0]
+    const ventes = await restCall<{ ca_ttc: number }[]>('GET', `ventes_historique?date=eq.${hierStr}&select=ca_ttc&limit=1`)
+    if (ventes.length > 0) caHier.value = ventes[0]!.ca_ttc
+  } catch { /* CA is optional */ }
 })
 </script>
 
 <template>
   <div class="dashboard">
     <h1>Bonjour {{ profile?.nom || '' }}</h1>
+
+    <!-- Quick stats row -->
+    <div class="quick-stats">
+      <!-- Météo -->
+      <div class="stat-chip" v-if="meteoToday">
+        <span class="stat-emoji">{{ weatherCodeToEmoji(meteoToday.code_meteo) }}</span>
+        <span class="stat-temp">
+          {{ meteoToday.temperature_min?.toFixed(0) ?? '--' }}° / {{ meteoToday.temperature_max?.toFixed(0) ?? '--' }}°
+        </span>
+        <span v-if="meteoToday.precipitation_mm && meteoToday.precipitation_mm > 0" class="stat-rain">
+          {{ meteoToday.precipitation_mm.toFixed(1) }}mm
+        </span>
+      </div>
+
+      <!-- CA hier -->
+      <div class="stat-chip" v-if="caHier !== null" @click="router.push('/reporting')">
+        <span class="stat-label">CA hier</span>
+        <span class="stat-value">{{ caHier.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) }} €</span>
+      </div>
+
+      <!-- Stocks bas count -->
+      <div class="stat-chip" :class="{ 'stat-alert': stocksBas.length > 0 }" @click="router.push('/stocks')">
+        <span class="stat-label">Stocks bas</span>
+        <span class="stat-value">{{ stocksBas.length }}</span>
+      </div>
+    </div>
 
     <div class="cards">
       <!-- Livraisons du jour -->
@@ -86,6 +142,22 @@ onMounted(async () => {
         <div v-for="c in livraisonsJour" :key="c.id" class="card-item">
           <span class="item-label">{{ fournisseurNom(c.fournisseur_id) }}</span>
           <span class="item-value">{{ c.montant_total_ht.toFixed(0) }} € HT</span>
+        </div>
+      </div>
+
+      <!-- Prochaines livraisons (J+1+) -->
+      <div v-if="prochainesLivraisons.length > 0" class="card card-clickable" @click="router.push('/commandes')">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-icon card-icon-info">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </span>
+            <h2>Prochaines livraisons</h2>
+          </div>
+        </div>
+        <div v-for="c in prochainesLivraisons" :key="c.id" class="card-item">
+          <span class="item-label">{{ fournisseurNom(c.fournisseur_id) }}</span>
+          <span class="item-value">{{ formatDate(c.date_livraison_prevue) }}</span>
         </div>
       </div>
 
@@ -321,5 +393,60 @@ onMounted(async () => {
   font-weight: 600;
   cursor: pointer;
   padding: 8px 0 0;
+}
+
+/* ── Quick stats row ── */
+.quick-stats {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.stat-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.stat-chip:active {
+  border-color: var(--color-primary);
+}
+
+.stat-emoji {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.stat-temp {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-rain {
+  font-size: 13px;
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-alert .stat-value {
+  color: #ef4444;
 }
 </style>
