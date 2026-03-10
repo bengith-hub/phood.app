@@ -309,9 +309,38 @@ async function handleSave() {
 async function handleDelete() {
   if (!recetteId.value) return
   deleting.value = true
+  saveError.value = null
   try {
+    // Check if this recipe is used as a sous-recette in other recipes
+    const refs = await restCall<{ recette_id: string }[]>(
+      'GET',
+      `recette_ingredients?sous_recette_id=eq.${recetteId.value}&select=recette_id`,
+    )
+    if (refs.length > 0) {
+      // Find parent recipe names for a clear error message
+      const parentNames = refs
+        .map((r) => recettesStore.getById(r.recette_id)?.nom || 'Recette inconnue')
+        .filter((v, i, a) => a.indexOf(v) === i)
+      saveError.value = `Impossible de supprimer : cette recette est utilisée comme sous-recette dans : ${parentNames.join(', ')}. Retirez-la de ces recettes d'abord.`
+      return
+    }
+
+    // Delete child rows: ingredients of this recipe
     await restCall('DELETE', `recette_ingredients?recette_id=eq.${recetteId.value}`)
+
+    // Delete the recipe itself
     await restCall('DELETE', `recettes?id=eq.${recetteId.value}`)
+
+    // Verify the deletion actually happened (RLS can silently block)
+    const check = await restCall<{ id: string }[]>(
+      'GET',
+      `recettes?id=eq.${recetteId.value}&select=id`,
+    )
+    if (check.length > 0) {
+      saveError.value = 'La suppression a échoué. Vérifiez vos permissions ou contactez un administrateur.'
+      return
+    }
+
     await recettesStore.fetchAll()
     router.replace('/recettes')
   } catch (e: unknown) {
