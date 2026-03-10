@@ -1,6 +1,6 @@
 // Sync Open-Meteo weather forecast → meteo_daily
 // Triggered daily at 07:00 via pg_cron → pg_net
-// Fetches 7-day forecast from Meteo-France models via Open-Meteo (free, no API key)
+// Fetches 16-day forecast from Meteo-France models via Open-Meteo (free, no API key)
 // Coordinates: Begles (44.83, -0.57)
 
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
@@ -41,7 +41,7 @@ serve(async (req) => {
 
     const startTime = Date.now()
 
-    // Fetch 7-day forecast
+    // Fetch 16-day forecast (max supported by Open-Meteo free tier)
     const params = new URLSearchParams({
       latitude: LATITUDE.toString(),
       longitude: LONGITUDE.toString(),
@@ -53,6 +53,7 @@ serve(async (req) => {
         'cloud_cover_mean',
         'weather_code',
       ].join(','),
+      forecast_days: '16',
       timezone: 'Europe/Paris',
     })
 

@@ -1,16 +1,27 @@
 /**
- * Supabase Edge Function: Sync Zelty orders → decrement stock
+ * Supabase Edge Function: Sync Zelty orders → decrement stock + update repartition horaire
  *
  * Called daily after sync-zelty-ca, or via webhook when an order is completed.
  * Fetches yesterday's orders from Zelty, decomposes each product sold into
  * base ingredients via the recette → recette_ingredients → ingredient chain,
  * and decrements stock for each ingredient.
  *
+ * Also calculates hourly CA distribution and updates repartition_horaire
+ * using an exponential moving average (EMA) with alpha = 0.15.
+ *
  * Architecture:
- * 1. Fetch closed orders from Zelty (/orders) for yesterday
+ * 1. Fetch closed orders from Zelty (/orders) for yesterday (with pagination)
  * 2. For each order line (product), find the matching recette via zelty_product_id
  * 3. Recursively decompose recette → ingredients (up to 3 levels of sub-recipes)
  * 4. Call decrement_stock RPC for each base ingredient
+ * 5. Calculate hourly CA distribution and update repartition_horaire
+ *
+ * Zelty API notes:
+ * - /orders requires `from` and `to` params (NOT date_min/date_max)
+ * - Default page size is 100, use `limit` and `offset` for pagination
+ * - order.created_at is ISO with timezone: "2026-03-07T19:50:44+01:00"
+ * - order.price.final_amount_inc_tax is in centimes TTC
+ * - order.mode: "takeaway" | "delivery" | "eat_in" | etc.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -20,19 +31,27 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10'
+const ZELTY_PAGE_SIZE = 200
+
 interface ZeltyOrderLine {
   product_id: string
   quantity: number
   name: string
 }
 
-/** Zelty order_type: 'on_site' = sur place, 'take_away' / 'delivery' = emporter/livraison */
 type OrderChannel = 'sur_place' | 'emporter'
 
 interface ZeltyOrder {
   id: string
   status: string
-  order_type?: string // 'on_site', 'take_away', 'delivery', etc.
+  mode?: string          // 'takeaway', 'delivery', 'eat_in', etc.
+  order_type?: string    // fallback field
+  created_at?: string    // "2026-03-07T19:50:44+01:00"
+  price?: {
+    final_amount_inc_tax?: number  // centimes TTC
+    final_amount_exc_tax?: number
+  }
   items: ZeltyOrderLine[]
 }
 
@@ -51,6 +70,52 @@ interface Recette {
   id: string
   nb_portions: number
   zelty_product_id: string | null
+}
+
+/**
+ * Fetch all orders for a given day from Zelty with pagination.
+ */
+async function fetchDayOrders(apiKey: string, dateStr: string): Promise<ZeltyOrder[]> {
+  const allOrders: ZeltyOrder[] = []
+  let offset = 0
+  const MAX_PAGES = 10
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = `${ZELTY_BASE_URL}/orders?from=${dateStr}T00:00:00&to=${dateStr}T23:59:59&limit=${ZELTY_PAGE_SIZE}&offset=${offset}`
+    const resp = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json',
+      },
+    })
+
+    if (!resp.ok) {
+      throw new Error(`Zelty API error: ${resp.status} ${resp.statusText}`)
+    }
+
+    const data = await resp.json()
+    const orders: ZeltyOrder[] = data.orders || []
+    allOrders.push(...orders)
+
+    // Stop if last page
+    if (orders.length < ZELTY_PAGE_SIZE) break
+
+    offset += ZELTY_PAGE_SIZE
+  }
+
+  return allOrders
+}
+
+/**
+ * Extract local hour from Zelty ISO timestamp.
+ * Zelty returns timestamps with timezone offset: "2026-03-07T19:50:44+01:00"
+ * The hour in the string IS the local hour (Paris).
+ */
+function extractLocalHour(timestamp: string | undefined): number | null {
+  if (!timestamp) return null
+  const match = timestamp.match(/T(\d{2}):/)
+  if (match) return parseInt(match[1]!, 10)
+  return null
 }
 
 Deno.serve(async (req) => {
@@ -77,27 +142,21 @@ Deno.serve(async (req) => {
     // Determine date range (yesterday)
     const yesterday = new Date()
     yesterday.setDate(yesterday.getDate() - 1)
-    const dateStr = yesterday.toISOString().split('T')[0]
+    const dateStr = yesterday.toISOString().split('T')[0]!
 
-    // Fetch orders from Zelty for yesterday
-    const zeltyUrl = `https://api.zelty.fr/2.10/orders?date_min=${dateStr}T00:00:00&date_max=${dateStr}T23:59:59&status=closed`
-    const zeltyResponse = await fetch(zeltyUrl, {
-      headers: { 'Authorization': `Bearer ${zeltyApiKey}` },
-    })
+    // Fetch ALL orders from Zelty for yesterday (with pagination)
+    const orders = await fetchDayOrders(zeltyApiKey, dateStr)
 
-    if (!zeltyResponse.ok) {
-      throw new Error(`Zelty API error: ${zeltyResponse.status}`)
-    }
-
-    const zeltyData = await zeltyResponse.json()
-    const orders: ZeltyOrder[] = zeltyData.orders || zeltyData.data || []
-
-    // Map Zelty order_type to our channel
+    // Map Zelty mode to our channel
     function getChannel(order: ZeltyOrder): OrderChannel {
-      const t = (order.order_type || '').toLowerCase()
-      if (t === 'on_site' || t === 'eat_in' || t === 'dine_in') return 'sur_place'
-      return 'emporter' // take_away, delivery, etc.
+      const mode = (order.mode || order.order_type || '').toLowerCase()
+      if (mode === 'eat_in' || mode === 'on_site' || mode === 'dine_in') return 'sur_place'
+      return 'emporter' // takeaway, delivery, etc.
     }
+
+    // ========================================
+    // PART 1: Stock decrement (existing logic)
+    // ========================================
 
     // Aggregate quantities by zelty_product_id + channel
     const productQty = new Map<string, { sur_place: number; emporter: number }>()
@@ -155,10 +214,8 @@ Deno.serve(async (req) => {
         const qty = ri.quantite * multiplier
 
         if (ri.ingredient_id) {
-          // Base ingredient
           result.set(ri.ingredient_id, (result.get(ri.ingredient_id) || 0) + qty)
         } else if (ri.sous_recette_id) {
-          // Sub-recipe: recurse
           const subResult = decomposeRecette(ri.sous_recette_id, qty, channel, depth + 1)
           for (const [ingId, subQty] of subResult) {
             result.set(ingId, (result.get(ingId) || 0) + subQty)
@@ -181,7 +238,6 @@ Deno.serve(async (req) => {
         continue
       }
 
-      // Decompose per channel to respect sur_place/emporter toggles
       for (const channel of ['sur_place', 'emporter'] as OrderChannel[]) {
         const qtySold = qtyByChannel[channel]
         if (qtySold <= 0) continue
@@ -202,9 +258,116 @@ Deno.serve(async (req) => {
       if (qty > 0) {
         const { error } = await supabase.rpc('decrement_stock', {
           p_ingredient_id: ingredientId,
-          p_quantite: Math.round(qty * 1000) / 1000, // Round to 3 decimals
+          p_quantite: Math.round(qty * 1000) / 1000,
         })
         if (!error) decrementCount++
+      }
+    }
+
+    // ========================================
+    // PART 2: Update repartition horaire (EMA)
+    // ========================================
+    let repartitionUpdated = 0
+
+    // Calculate today's hourly distribution from orders
+    const jourSemaine = yesterday.getDay() // 0=Sun, 1=Mon, ...
+
+    // Determine contexte
+    const { data: vacancesEvents } = await supabase
+      .from('evenements')
+      .select('date_debut, date_fin')
+      .eq('type', 'vacances')
+      .lte('date_debut', dateStr)
+      .gte('date_fin', dateStr)
+
+    const isVacances = (vacancesEvents || []).length > 0
+    let contexte: string
+    if (isVacances) {
+      contexte = 'vacances'
+    } else if (jourSemaine === 6) {
+      contexte = 'samedi'
+    } else if (jourSemaine === 0) {
+      contexte = 'dimanche'
+    } else {
+      contexte = 'standard'
+    }
+
+    // Aggregate CA by hour
+    const hourlyCA: Record<number, number> = {}
+    let dayTotalCA = 0
+
+    for (const order of orders) {
+      const priceCentimes = order.price?.final_amount_inc_tax || 0
+      if (priceCentimes <= 0) continue
+      const totalEuros = priceCentimes / 100
+
+      const hour = extractLocalHour(order.created_at)
+      if (hour === null || hour < 10 || hour > 21) continue
+
+      hourlyCA[hour] = (hourlyCA[hour] || 0) + totalEuros
+      dayTotalCA += totalEuros
+    }
+
+    if (dayTotalCA > 0) {
+      // Calculate today's percentages
+      const todayPcts: Record<number, number> = {}
+      for (let h = 10; h <= 21; h++) {
+        todayPcts[h] = ((hourlyCA[h] || 0) / dayTotalCA) * 100
+      }
+
+      // Fetch existing repartition for this day/contexte
+      const { data: existingRep } = await supabase
+        .from('repartition_horaire')
+        .select('creneau_heure, pourcentage')
+        .eq('jour_semaine', jourSemaine)
+        .eq('contexte', contexte)
+
+      const existingMap = new Map<number, number>()
+      for (const r of (existingRep || [])) {
+        existingMap.set(r.creneau_heure, r.pourcentage)
+      }
+
+      // Apply EMA: new_pct = alpha * today_pct + (1 - alpha) * old_pct
+      const ALPHA = 0.15
+      const rows: Array<{
+        jour_semaine: number
+        creneau_heure: number
+        pourcentage: number
+        contexte: string
+        updated_at: string
+      }> = []
+
+      for (let h = 10; h <= 21; h++) {
+        const todayPct = todayPcts[h] || 0
+        const existingPct = existingMap.get(h)
+
+        let newPct: number
+        if (existingPct !== undefined && existingPct > 0) {
+          // EMA update
+          newPct = ALPHA * todayPct + (1 - ALPHA) * existingPct
+        } else {
+          // First time: use today's value directly
+          newPct = todayPct
+        }
+
+        rows.push({
+          jour_semaine: jourSemaine,
+          creneau_heure: h,
+          pourcentage: Math.round(newPct * 100) / 100,
+          contexte,
+          updated_at: new Date().toISOString(),
+        })
+      }
+
+      // Upsert
+      const { error: repError } = await supabase
+        .from('repartition_horaire')
+        .upsert(rows, { onConflict: 'jour_semaine,creneau_heure,contexte' })
+
+      if (!repError) {
+        repartitionUpdated = rows.length
+      } else {
+        console.error('Repartition upsert error:', repError)
       }
     }
 
@@ -230,6 +393,7 @@ Deno.serve(async (req) => {
         productsProcessed,
         productsUnmatched,
         ingredientsDecremented: decrementCount,
+        repartition: { contexte, updated: repartitionUpdated, dayTotalCA: Math.round(dayTotalCA) },
         duration_ms: duration,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -223,6 +223,23 @@ function formatEurosCompact(val: number): string {
   return val.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 }
 
+function isFutureDate(dateStr: string): boolean {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return new Date(dateStr + 'T00:00:00') >= today
+}
+
+function meteoHorizon(dateStr: string): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(dateStr + 'T00:00:00')
+  return Math.round((target.getTime() - today.getTime()) / 86400000)
+}
+
+function isSeasonalMeteo(m: { id: string } | null): boolean {
+  return m !== null && typeof m.id === 'string' && m.id.startsWith('seasonal-')
+}
+
 function confidenceColor(confidence: number): string {
   if (confidence >= 70) return 'var(--color-success)'
   if (confidence >= 40) return 'var(--color-warning)'
@@ -958,7 +975,17 @@ watch(
 
           <!-- Weather card (always shown, with empty state) -->
           <div class="detail-card detail-card--meteo">
-            <h3>Meteo</h3>
+            <h3>
+              Meteo
+              <template v-if="selectedForecast.meteo">
+                <span v-if="isSeasonalMeteo(selectedForecast.meteo)" class="meteo-source-badge meteo-source--seasonal">
+                  Moy. saisonniere
+                </span>
+                <span v-else-if="isFutureDate(selectedForecast.date) && meteoHorizon(selectedForecast.date) > 7" class="meteo-source-badge meteo-source--extended">
+                  Prevision etendue
+                </span>
+              </template>
+            </h3>
             <div v-if="selectedForecast.meteo" class="meteo-detail">
               <span class="meteo-icon-large">
                 {{ weatherCodeToEmoji(selectedForecast.meteo.code_meteo) }}
@@ -989,17 +1016,22 @@ watch(
               </div>
             </div>
             <div v-else class="meteo-empty">
-              <p>Pas de donnees meteo pour cette date.</p>
-              <button
-                v-if="meteoBackfillStatus !== 'running'"
-                class="btn-backfill"
-                @click="backfillMeteo"
-              >
-                Importer l'historique meteo
-              </button>
-              <p v-if="meteoBackfillMsg" class="backfill-msg" :class="meteoBackfillStatus">
-                {{ meteoBackfillMsg }}
+              <p v-if="isFutureDate(selectedForecast.date)">
+                Previsions meteo non disponibles. Elles seront synchronisees automatiquement.
               </p>
+              <template v-else>
+                <p>Pas de donnees meteo pour cette date.</p>
+                <button
+                  v-if="meteoBackfillStatus !== 'running'"
+                  class="btn-backfill"
+                  @click="backfillMeteo"
+                >
+                  Importer l'historique meteo
+                </button>
+                <p v-if="meteoBackfillMsg" class="backfill-msg" :class="meteoBackfillStatus">
+                  {{ meteoBackfillMsg }}
+                </p>
+              </template>
             </div>
           </div>
 
@@ -1069,7 +1101,7 @@ watch(
 
           <!-- Hourly distribution (Section 7.6) -->
           <div class="detail-card detail-card--repartition">
-            <h3>Repartition horaire du CA</h3>
+            <h3>Repartition horaire prevue du CA</h3>
             <div v-if="repartitionHoraire.length > 0" class="hourly-chart">
               <div
                 v-for="slot in repartitionHoraire"
@@ -2173,6 +2205,32 @@ watch(
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.empty-meteo {
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+  padding: 12px 0;
+}
+
+.meteo-source-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.meteo-source--seasonal {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.meteo-source--extended {
+  background: #dbeafe;
+  color: #1e40af;
 }
 
 /* --- Events detail --- */

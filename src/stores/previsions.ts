@@ -49,6 +49,79 @@ const SEASONAL_AVG_TEMP: Record<number, number> = {
   11: 7,  // December
 }
 
+// Seasonal average precipitation by month (mm/day, Bordeaux)
+const SEASONAL_AVG_PRECIP: Record<number, number> = {
+  0: 3.0, 1: 2.5, 2: 2.3, 3: 2.5, 4: 2.7, 5: 1.8,
+  6: 1.5, 7: 1.6, 8: 2.3, 9: 3.0, 10: 3.2, 11: 3.3,
+}
+
+// Seasonal average cloud cover by month (%, Bordeaux)
+const SEASONAL_AVG_CLOUD: Record<number, number> = {
+  0: 70, 1: 65, 2: 58, 3: 55, 4: 52, 5: 45,
+  6: 38, 7: 38, 8: 45, 9: 55, 10: 65, 11: 72,
+}
+
+// Seasonal sunshine hours per day by month (seconds, Bordeaux)
+const SEASONAL_AVG_SUN: Record<number, number> = {
+  0: 10800, 1: 14400, 2: 18000, 3: 21600, 4: 25200, 5: 28800,
+  6: 32400, 7: 30600, 8: 25200, 9: 18000, 10: 12600, 11: 10800,
+}
+
+/**
+ * Generate a synthetic MeteoDaily from seasonal averages.
+ * Used for dates beyond the 16-day Open-Meteo forecast (J+17 to J+30).
+ */
+function buildSeasonalMeteo(dateStr: string): MeteoDaily {
+  const d = new Date(dateStr + 'T00:00:00')
+  const month = d.getMonth()
+  const avgTemp = SEASONAL_AVG_TEMP[month] ?? 15
+  return {
+    id: `seasonal-${dateStr}`,
+    date: dateStr,
+    temperature_max: avgTemp + 3,
+    temperature_min: avgTemp - 3,
+    precipitation_mm: SEASONAL_AVG_PRECIP[month] ?? 2.5,
+    ensoleillement_secondes: SEASONAL_AVG_SUN[month] ?? 18000,
+    couverture_nuageuse_pct: SEASONAL_AVG_CLOUD[month] ?? 55,
+    code_meteo: null, // no WMO code for seasonal average
+    created_at: '',
+  }
+}
+
+/**
+ * Calculate how many days between today and the target date.
+ * Returns 0 for today, 1 for tomorrow, etc. Negative for past dates.
+ */
+function daysFromToday(dateStr: string): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(dateStr + 'T00:00:00')
+  return Math.round((target.getTime() - today.getTime()) / 86400000)
+}
+
+/**
+ * Confidence penalty based on météo data source quality.
+ * - Real forecast (J+0 to J+3): no penalty
+ * - Real forecast (J+4 to J+7): -5
+ * - Extended forecast (J+8 to J+15): -10
+ * - Seasonal averages (J+16+): -20
+ * - No météo at all: -15
+ */
+function meteoConfidencePenalty(dateStr: string, hasRealMeteo: boolean): number {
+  const horizon = daysFromToday(dateStr)
+  if (horizon < 0) return hasRealMeteo ? 0 : -10 // past date
+  if (!hasRealMeteo) {
+    // Seasonal fallback
+    if (horizon <= 30) return -20
+    return -25
+  }
+  // Real forecast from Open-Meteo
+  if (horizon <= 3) return 0
+  if (horizon <= 7) return -5
+  if (horizon <= 15) return -10
+  return -15
+}
+
 // --- Weather code to emoji mapping (WMO codes) ---
 export function weatherCodeToEmoji(code: number | null): string {
   if (code === null) return '--'
@@ -453,7 +526,17 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       }
     }
 
-    const meteoDay = meteoParDate.value.get(dateStr) || null
+    // Météo: use real forecast if available, else seasonal fallback for future dates
+    const realMeteo = meteoParDate.value.get(dateStr) || null
+    const horizon = daysFromToday(dateStr)
+    let meteoDay: MeteoDaily | null = realMeteo
+    const hasRealMeteo = realMeteo !== null
+
+    if (!realMeteo && horizon > 0 && horizon <= 30) {
+      // Use seasonal averages as fallback for dates beyond Open-Meteo range
+      meteoDay = buildSeasonalMeteo(dateStr)
+    }
+
     calculateWeatherCoefficient(meteoDay, factors)
     detectWeatherBreak(dateStr, factors)
     calculateTemperatureCoefficient(meteoDay, targetDate, factors)
@@ -468,9 +551,8 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       })
     }
 
-    if (!meteoDay) {
-      confidence = Math.max(10, confidence - 15)
-    }
+    // Apply météo confidence penalty based on data source quality
+    confidence = Math.max(10, confidence + meteoConfidencePenalty(dateStr, hasRealMeteo))
 
     const totalCoeff = factors.reduce((acc, f) => acc * f.coefficient, 1)
     const caPrevision = Math.round(baseCA * totalCoeff)
