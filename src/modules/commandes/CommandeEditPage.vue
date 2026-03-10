@@ -433,34 +433,53 @@ async function handleEnvoyer() {
         ? new Date(dateLivraison.value).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
         : 'non précisée'
 
+      // Detect if this is a re-sent (modified) order
+      const isModified = commande.value && commande.value.statut !== 'brouillon'
+      const dateStr = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+      const subjectLabel = isModified ? 'Commande modifiée' : 'Nouvelle commande'
+      const subject = `${dateStr} | ${subjectLabel} | Phood | Bègles | ${commandeData.numero}`
+
+      const modifiedNote = isModified
+        ? `<p style="background:#fef3cd;padding:10px;border-radius:6px;color:#856404;">⚠️ Cette commande <strong>annule et remplace</strong> la commande précédente ${commandeData.numero}.</p>`
+        : ''
+
+      // Build email payload with BCC support
+      const emailPayload: Record<string, unknown> = {
+        to: emailTo,
+        subject,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px;">
+            <h2 style="color: #E85D2C;">Phood Restaurant — Bègles</h2>
+            <p>Bonjour,</p>
+            ${modifiedNote}
+            <p>Veuillez trouver ci-joint notre bon de commande <strong>${commandeData.numero}</strong>.</p>
+            <table style="border-collapse: collapse; margin: 16px 0;">
+              <tr><td style="padding: 4px 12px 4px 0; color: #666;">Livraison souhaitée :</td><td><strong>${livraisonStr}</strong></td></tr>
+              <tr><td style="padding: 4px 12px 4px 0; color: #666;">Montant HT :</td><td><strong>${totalHT.value.toFixed(2)} €</strong></td></tr>
+              <tr><td style="padding: 4px 12px 4px 0; color: #666;">Articles :</td><td><strong>${nbArticles.value}</strong></td></tr>
+            </table>
+            ${notes.value ? `<p><em>Notes : ${notes.value}</em></p>` : ''}
+            <p>Cordialement,<br/>L'équipe Phood Restaurant</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #999;">Ce message a été envoyé automatiquement par PhoodApp.</p>
+          </div>
+        `,
+        attachments: [{
+          filename: `${commandeData.numero}.pdf`,
+          content: pdfBase64,
+          contentType: 'application/pdf',
+        }],
+      }
+
+      // Add BCC if configured for this supplier
+      if (fournisseur.value.email_commande_bcc) {
+        emailPayload.bcc = fournisseur.value.email_commande_bcc
+      }
+
       const response = await fetch('/.netlify/functions/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: emailTo,
-          subject: `Commande ${commandeData.numero} — Phood Restaurant`,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px;">
-              <h2 style="color: #E85D2C;">Phood Restaurant — Bègles</h2>
-              <p>Bonjour,</p>
-              <p>Veuillez trouver ci-joint notre bon de commande <strong>${commandeData.numero}</strong>.</p>
-              <table style="border-collapse: collapse; margin: 16px 0;">
-                <tr><td style="padding: 4px 12px 4px 0; color: #666;">Livraison souhaitée :</td><td><strong>${livraisonStr}</strong></td></tr>
-                <tr><td style="padding: 4px 12px 4px 0; color: #666;">Montant HT :</td><td><strong>${totalHT.value.toFixed(2)} €</strong></td></tr>
-                <tr><td style="padding: 4px 12px 4px 0; color: #666;">Articles :</td><td><strong>${nbArticles.value}</strong></td></tr>
-              </table>
-              ${notes.value ? `<p><em>Notes : ${notes.value}</em></p>` : ''}
-              <p>Cordialement,<br/>L'équipe Phood Restaurant</p>
-              <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-              <p style="font-size: 12px; color: #999;">Ce message a été envoyé automatiquement par PhoodApp.</p>
-            </div>
-          `,
-          attachments: [{
-            filename: `${commandeData.numero}.pdf`,
-            content: pdfBase64,
-            contentType: 'application/pdf',
-          }],
-        }),
+        body: JSON.stringify(emailPayload),
       })
 
       if (!response.ok) {

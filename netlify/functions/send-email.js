@@ -2,7 +2,7 @@
  * Netlify Function: Send email via Resend API
  *
  * POST /api/send-email
- * Body: { to, cc?, subject, html, attachments?: [{filename, content, contentType?}] }
+ * Body: { to, cc?, bcc?, subject, html, attachments?: [{filename, content, contentType?}] }
  *
  * Replaces Gmail Service Account approach with Resend for simpler setup.
  * Requires RESEND_API_KEY environment variable.
@@ -18,7 +18,7 @@ exports.handler = async function (event) {
   }
 
   try {
-    const { to, cc, subject, html, attachments } = JSON.parse(event.body);
+    const { to, cc, bcc, subject, html, attachments } = JSON.parse(event.body);
 
     if (!to || !subject || !html) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields: to, subject, html' }) };
@@ -40,6 +40,10 @@ exports.handler = async function (event) {
 
     if (cc) {
       payload.cc = Array.isArray(cc) ? cc : [cc];
+    }
+
+    if (bcc) {
+      payload.bcc = Array.isArray(bcc) ? bcc : [bcc];
     }
 
     if (attachments && attachments.length > 0) {
@@ -88,7 +92,7 @@ async function sendViaGmail(event) {
     const { google } = require('googleapis');
     const MailComposer = require('nodemailer/lib/mail-composer');
 
-    const { to, cc, subject, html, attachments } = JSON.parse(event.body);
+    const { to, cc, bcc, subject, html, attachments } = JSON.parse(event.body);
 
     const credentials = JSON.parse(
       Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_BASE64, 'base64').toString()
@@ -107,6 +111,7 @@ async function sendViaGmail(event) {
       from: `Phood Restaurant <team.begles@phood-restaurant.fr>`,
       to,
       cc,
+      bcc,
       subject,
       html,
       attachments: attachments?.map((a) => ({
