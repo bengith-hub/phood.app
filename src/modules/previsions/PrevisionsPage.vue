@@ -10,9 +10,52 @@ const store = usePrevisionsStore()
 const viewMode = ref<'semaine' | 'jour'>('semaine')
 const selectedDayIndex = ref(0)
 const expandedFactorsIndex = ref<number | null>(null)
+const weekOffset = ref(0) // 0 = current week, -1 = prev, +1 = next
 
 // --- Data ---
 const forecasts = ref<ForecastResult[]>([])
+const precisionS1 = ref<{ precision: number; caRealise: number; caPrevu: number } | null>(null)
+
+// --- Week navigation ---
+function getWeekStartDate(offset: number): string {
+  const today = new Date()
+  const dayOfWeek = today.getDay() // 0=Sun
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - daysToMonday + (offset * 7))
+  return monday.toISOString().split('T')[0]!
+}
+
+function goToPrevWeek() {
+  weekOffset.value--
+  recalculateForecasts()
+}
+
+function goToNextWeek() {
+  weekOffset.value++
+  recalculateForecasts()
+}
+
+function goToCurrentWeek() {
+  weekOffset.value = 0
+  recalculateForecasts()
+}
+
+function recalculateForecasts() {
+  const startDate = getWeekStartDate(weekOffset.value)
+  forecasts.value = store.calculateWeekForecast(startDate)
+  expandedFactorsIndex.value = null
+}
+
+const weekLabel = computed(() => {
+  if (forecasts.value.length === 0) return ''
+  const first = new Date(forecasts.value[0]!.date + 'T00:00:00')
+  const last = new Date(forecasts.value[forecasts.value.length - 1]!.date + 'T00:00:00')
+  const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' }
+  return `${first.toLocaleDateString('fr-FR', opts)} — ${last.toLocaleDateString('fr-FR', opts)}`
+})
+
+const isCurrentWeek = computed(() => weekOffset.value === 0)
 
 // --- Computed ---
 const selectedForecast = computed<ForecastResult | null>(() => {
@@ -36,6 +79,15 @@ const weekTotalCA = computed(() => {
 
 const weekTotalTickets = computed(() => {
   return forecasts.value.reduce((sum, f) => sum + f.nb_tickets_prevision, 0)
+})
+
+const weekN1Total = computed(() => {
+  return store.getWeekN1Total(forecasts.value)
+})
+
+const weekN1Evolution = computed(() => {
+  if (weekN1Total.value === null || weekN1Total.value === 0) return null
+  return ((weekTotalCA.value - weekN1Total.value) / weekN1Total.value) * 100
 })
 
 // --- Helpers ---
@@ -117,7 +169,8 @@ async function syncCalendars() {
 // --- Lifecycle ---
 onMounted(async () => {
   await store.fetchAll()
-  forecasts.value = store.calculateWeekForecast()
+  recalculateForecasts()
+  precisionS1.value = store.calculatePrecisionS1()
   // Auto-sync calendars if no events exist
   if (store.evenements.length === 0) {
     syncCalendars()
@@ -129,7 +182,8 @@ watch(
   () => [store.ventes.length, store.meteo.length, store.evenements.length],
   () => {
     if (store.ventes.length > 0) {
-      forecasts.value = store.calculateWeekForecast()
+      recalculateForecasts()
+      precisionS1.value = store.calculatePrecisionS1()
     }
   }
 )
@@ -182,15 +236,55 @@ watch(
       <!-- === WEEK VIEW === -->
       <div v-if="viewMode === 'semaine'" class="week-view">
 
+        <!-- Week navigation -->
+        <div class="week-nav">
+          <button class="week-nav-arrow" @click="goToPrevWeek">&larr;</button>
+          <div class="week-nav-center">
+            <span class="week-nav-label">{{ weekLabel }}</span>
+            <button
+              v-if="!isCurrentWeek"
+              class="btn-today-link"
+              @click="goToCurrentWeek"
+            >
+              Semaine actuelle
+            </button>
+          </div>
+          <button class="week-nav-arrow" @click="goToNextWeek">&rarr;</button>
+        </div>
+
         <!-- Week summary -->
         <div class="week-summary">
           <div class="summary-item">
-            <span class="summary-label">CA semaine</span>
+            <span class="summary-label">CA semaine (prevu)</span>
             <span class="summary-value">{{ formatEuros(weekTotalCA) }}</span>
+            <div v-if="weekN1Evolution !== null" class="summary-sub">
+              <span
+                class="summary-evo"
+                :class="weekN1Evolution > 2 ? 'evo-positive' : weekN1Evolution < -2 ? 'evo-negative' : 'evo-neutral'"
+              >
+                {{ weekN1Evolution >= 0 ? '+' : '' }}{{ weekN1Evolution.toFixed(0) }}% vs N-1
+              </span>
+            </div>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">N-1 semaine</span>
+            <span class="summary-value">{{ weekN1Total !== null ? formatEuros(weekN1Total) : '--' }}</span>
           </div>
           <div class="summary-item">
             <span class="summary-label">Tickets semaine</span>
             <span class="summary-value">{{ weekTotalTickets }}</span>
+          </div>
+          <div v-if="precisionS1" class="summary-item">
+            <span class="summary-label">Precision S-1</span>
+            <span
+              class="summary-value"
+              :style="{ color: precisionS1.precision >= 85 ? 'var(--color-success)' : precisionS1.precision >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }"
+            >
+              {{ precisionS1.precision }}%
+            </span>
+            <div class="summary-sub">
+              <span class="summary-sub-text">Prevu {{ formatEuros(precisionS1.caPrevu) }} / Realise {{ formatEuros(precisionS1.caRealise) }}</span>
+            </div>
           </div>
         </div>
 
@@ -222,9 +316,14 @@ watch(
               <!-- Weather -->
               <div class="day-meteo">
                 <span class="meteo-icon">{{ weatherCodeToEmoji(fc.meteo?.code_meteo ?? null) }}</span>
-                <span v-if="fc.meteo?.temperature_max !== null && fc.meteo?.temperature_max !== undefined" class="meteo-temp">
-                  {{ fc.meteo!.temperature_max.toFixed(0) }}&#176;
-                </span>
+                <template v-if="fc.meteo?.temperature_max !== null && fc.meteo?.temperature_max !== undefined">
+                  <span v-if="fc.meteo?.temperature_min !== null && fc.meteo?.temperature_min !== undefined" class="meteo-temp">
+                    {{ fc.meteo!.temperature_min.toFixed(0) }}&#176;/{{ fc.meteo!.temperature_max.toFixed(0) }}&#176;
+                  </span>
+                  <span v-else class="meteo-temp">
+                    {{ fc.meteo!.temperature_max.toFixed(0) }}&#176;
+                  </span>
+                </template>
               </div>
 
               <!-- CA forecast -->
@@ -233,10 +332,10 @@ watch(
                 <span class="ca-tickets">{{ fc.nb_tickets_prevision }} tickets</span>
               </div>
 
-              <!-- N-1 comparison -->
-              <div v-if="fc.ca_n1 !== null" class="day-n1">
+              <!-- N-1 comparison (always visible) -->
+              <div class="day-n1">
                 <span class="n1-label">N-1 :</span>
-                <span class="n1-value">{{ formatEuros(fc.ca_n1) }}</span>
+                <span class="n1-value">{{ fc.ca_n1 !== null ? formatEuros(fc.ca_n1) : '--' }}</span>
                 <span
                   v-if="evolutionN1(fc)"
                   class="n1-evo"
@@ -642,11 +741,62 @@ watch(
   min-height: 48px;
 }
 
+/* --- Week navigation --- */
+.week-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.week-nav-arrow {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+}
+
+.week-nav-arrow:active {
+  background: var(--bg-hover);
+}
+
+.week-nav-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.week-nav-label {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.btn-today-link {
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
 /* --- Week summary --- */
 .week-summary {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
 }
 
 .summary-item {
@@ -665,9 +815,25 @@ watch(
 }
 
 .summary-value {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.summary-sub {
+  margin-top: 4px;
+}
+
+.summary-evo {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.summary-sub-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* --- Day cards grid --- */
