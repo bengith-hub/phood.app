@@ -13,6 +13,19 @@ export interface EcartFacture {
   ecartPct: number
 }
 
+export interface EcartLigne {
+  designation: string
+  quantite_bc: number
+  prix_bc: number
+  montant_bc: number
+  quantite_facture: number | null
+  prix_facture: number | null
+  montant_facture: number | null
+  ecart_ht: number
+  ecart_pct: number
+  statut: 'ok' | 'ecart' | 'manquant_bc' | 'manquant_facture'
+}
+
 export const useFacturesStore = defineStore('factures', () => {
   const factures = ref<FacturePennylane[]>([])
   const achatsHorsCommande = ref<AchatHorsCommande[]>([])
@@ -206,6 +219,112 @@ export const useFacturesStore = defineStore('factures', () => {
     return results.sort((a, b) => Math.abs(b.ecartPct) - Math.abs(a.ecartPct))
   }
 
+  /**
+   * Line-by-line comparison between a facture (via PennyLane invoice_lines)
+   * and a commande's order lines. Returns matched and unmatched lines.
+   */
+  async function getEcartsLignes(factureId: string): Promise<EcartLigne[]> {
+    const facture = factures.value.find(f => f.id === factureId)
+    if (!facture || !facture.reception_id) return []
+
+    // Get reception → commande → commande_lignes
+    const reception = await restCall<{ commande_id: string } | null>(
+      'GET',
+      `receptions?id=eq.${facture.reception_id}&select=commande_id`,
+      undefined,
+      { maybeSingle: true },
+    )
+    if (!reception) return []
+
+    // Get commande lines with mercuriale designation
+    const bcLignes = await restCall<{
+      id: string
+      mercuriale_id: string
+      quantite: number
+      prix_unitaire_ht: number
+      montant_ht: number
+      mercuriale: { designation: string } | null
+    }[]>(
+      'GET',
+      `commande_lignes?commande_id=eq.${reception.commande_id}&select=id,mercuriale_id,quantite,prix_unitaire_ht,montant_ht,mercuriale(designation)`,
+    )
+
+    // Get PennyLane invoice lines (if available via our sync)
+    const receptionLignes = await restCall<{
+      mercuriale_id: string
+      quantite_recue: number
+      prix_bl: number | null
+      anomalie_type: string | null
+    }[]>(
+      'GET',
+      `reception_lignes?reception_id=eq.${facture.reception_id}&select=mercuriale_id,quantite_recue,prix_bl,anomalie_type`,
+    )
+
+    // Build comparison: match BC lines to reception lines by mercuriale_id
+    const results: EcartLigne[] = []
+    const matchedReceptionIds = new Set<string>()
+
+    for (const bc of bcLignes) {
+      const designation = bc.mercuriale?.designation || bc.mercuriale_id
+      const rl = receptionLignes.find(r => r.mercuriale_id === bc.mercuriale_id)
+
+      if (rl) {
+        matchedReceptionIds.add(rl.mercuriale_id)
+        const montantFacture = (rl.quantite_recue || 0) * (rl.prix_bl || bc.prix_unitaire_ht)
+        const ecartHt = montantFacture - bc.montant_ht
+        const ecartPct = bc.montant_ht !== 0 ? (ecartHt / bc.montant_ht) * 100 : 0
+
+        results.push({
+          designation,
+          quantite_bc: bc.quantite,
+          prix_bc: bc.prix_unitaire_ht,
+          montant_bc: bc.montant_ht,
+          quantite_facture: rl.quantite_recue,
+          prix_facture: rl.prix_bl,
+          montant_facture: montantFacture,
+          ecart_ht: ecartHt,
+          ecart_pct: ecartPct,
+          statut: Math.abs(ecartPct) > 2 ? 'ecart' : 'ok',
+        })
+      } else {
+        // BC line not in reception (missing from delivery)
+        results.push({
+          designation,
+          quantite_bc: bc.quantite,
+          prix_bc: bc.prix_unitaire_ht,
+          montant_bc: bc.montant_ht,
+          quantite_facture: null,
+          prix_facture: null,
+          montant_facture: null,
+          ecart_ht: -bc.montant_ht,
+          ecart_pct: -100,
+          statut: 'manquant_facture',
+        })
+      }
+    }
+
+    // Reception lines not in BC (extra items on delivery)
+    for (const rl of receptionLignes) {
+      if (!matchedReceptionIds.has(rl.mercuriale_id)) {
+        const montant = (rl.quantite_recue || 0) * (rl.prix_bl || 0)
+        results.push({
+          designation: rl.mercuriale_id,
+          quantite_bc: 0,
+          prix_bc: 0,
+          montant_bc: 0,
+          quantite_facture: rl.quantite_recue,
+          prix_facture: rl.prix_bl,
+          montant_facture: montant,
+          ecart_ht: montant,
+          ecart_pct: 100,
+          statut: 'manquant_bc',
+        })
+      }
+    }
+
+    return results
+  }
+
   // --- Helpers ---
   function getById(id: string) {
     return factures.value.find(f => f.id === id)
@@ -219,7 +338,7 @@ export const useFacturesStore = defineStore('factures', () => {
     factures, achatsHorsCommande, loading, error,
     nonRapprochees, rapprochees, ecarts, depannages,
     currentMonthFactures, summaryMois,
-    fetchAll, rapprocher, detecterDepannage, getEcarts,
+    fetchAll, rapprocher, detecterDepannage, getEcarts, getEcartsLignes,
     getById, getAchatsForFacture,
   }
 })
