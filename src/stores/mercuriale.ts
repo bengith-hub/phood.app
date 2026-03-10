@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { restCall } from '@/lib/rest-client'
+import { restCall, restFetchAll } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
 import type { Mercuriale } from '@/types/database'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
@@ -45,7 +45,7 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     error.value = null
     try {
       if (navigator.onLine) {
-        const data = await restCall<Mercuriale[]>('GET', 'mercuriale?select=*&order=designation')
+        const data = await restFetchAll<Mercuriale>('mercuriale?select=*&order=designation')
         items.value = data
         await db.mercuriale.clear()
         await db.mercuriale.bulkPut(data)
