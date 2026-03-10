@@ -19,7 +19,10 @@ const ingredientsStore = useIngredientsStore()
 const stocksStore = useStocksStore()
 const notificationsStore = useNotificationsStore()
 
-const today = new Date().toISOString().split('T')[0]!
+function toLocalDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const today = toLocalDateStr(new Date())
 const meteoToday = ref<MeteoDaily | null>(null)
 
 // CA yesterday for quick KPI
@@ -89,7 +92,7 @@ onMounted(async () => {
   try {
     const hier = new Date()
     hier.setDate(hier.getDate() - 1)
-    const hierStr = hier.toISOString().split('T')[0]
+    const hierStr = toLocalDateStr(hier)
     const ventes = await restCall<{ ca_ttc: number }[]>('GET', `ventes_historique?date=eq.${hierStr}&select=ca_ttc&limit=1`)
     if (ventes.length > 0) caHier.value = ventes[0]!.ca_ttc
   } catch { /* CA is optional */ }

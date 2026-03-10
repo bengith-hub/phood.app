@@ -159,7 +159,7 @@ export const useFacturesStore = defineStore('factures', () => {
             facture_pennylane_id: facture.id,
             fournisseur_nom: fournisseurNom,
             montant_ht: facture.montant_ht,
-            date_achat: facture.date_facture || new Date().toISOString().split('T')[0],
+            date_achat: facture.date_facture || (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}` })(),
             description: `Achat dépannage détecté automatiquement (facture ${facture.numero || facture.pennylane_id})`,
           })
         }

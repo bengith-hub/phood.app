@@ -130,7 +130,7 @@ async function fetchVacancesScolaires(year: number): Promise<{ debut: string; fi
 // --- Date helpers ---
 
 function toDateStr(d: Date): string {
-  return d.toISOString().split('T')[0]!
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 // --- Main: sync calendars to evenements table ---

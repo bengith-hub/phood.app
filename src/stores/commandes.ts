@@ -71,7 +71,8 @@ export const useCommandesStore = defineStore('commandes', () => {
   async function updateStatut(id: string, statut: StatutCommande) {
     const updates: Record<string, unknown> = { statut, updated_at: new Date().toISOString() }
     if (statut === 'envoyee') {
-      updates.date_commande = new Date().toISOString().split('T')[0]
+      const now = new Date()
+      updates.date_commande = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     }
     await restCall('PATCH', `commandes?id=eq.${id}`, updates)
     await fetchAll()

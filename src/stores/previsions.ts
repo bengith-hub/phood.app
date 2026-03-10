@@ -10,6 +10,14 @@ import type {
   RepartitionHoraire,
 } from '@/types/database'
 
+/** Format a Date to YYYY-MM-DD in local timezone (avoids toISOString UTC shift) */
+function toLocalDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 // --- Types ---
 
 export interface ForecastFactor {
@@ -189,7 +197,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       if (navigator.onLine) {
         const since = new Date()
         since.setMonth(since.getMonth() - 14)
-        const sinceStr = since.toISOString().split('T')[0]
+        const sinceStr = toLocalDateStr(since)
 
         const data = await restCall<VenteHistorique[]>(
           'GET',
@@ -211,11 +219,11 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       if (navigator.onLine) {
         const since = new Date()
         since.setMonth(since.getMonth() - 14)
-        const sinceStr = since.toISOString().split('T')[0]
+        const sinceStr = toLocalDateStr(since)
 
         const until = new Date()
         until.setDate(until.getDate() + 35)
-        const untilStr = until.toISOString().split('T')[0]
+        const untilStr = toLocalDateStr(until)
 
         const data = await restCall<MeteoDaily[]>(
           'GET',
@@ -304,7 +312,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let w = 1; w <= weeks; w++) {
       const pastDate = new Date(targetDate)
       pastDate.setDate(pastDate.getDate() - (w * 7))
-      const pastStr = pastDate.toISOString().split('T')[0]!
+      const pastStr = toLocalDateStr(pastDate)
       const vente = ventesParDate.value.get(pastStr)
       if (vente && vente.cloture_validee) {
         results.push(vente)
@@ -340,7 +348,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       checkDate.setDate(checkDate.getDate() + offset)
       if (checkDate.getDay() !== targetDow) continue
 
-      const checkStr = checkDate.toISOString().split('T')[0]!
+      const checkStr = toLocalDateStr(checkDate)
       const vente = ventesParDate.value.get(checkStr)
       if (vente && vente.cloture_validee) {
         const diff = Math.abs(offset)
@@ -414,7 +422,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let i = 1; i <= 7; i++) {
       const d = new Date(targetDate)
       d.setDate(d.getDate() - i)
-      const dStr = d.toISOString().split('T')[0]!
+      const dStr = toLocalDateStr(d)
       const m = meteoParDate.value.get(dStr)
       if (m) recentDays.push(m)
     }
@@ -494,7 +502,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     // If the restaurant is closed on this day of week, return 0
     if (isJourFerme(jourSemaine)) {
       const n1Vente = getN1Comparison(targetDate)
-      const todayStr = new Date().toISOString().split('T')[0]!
+      const todayStr = toLocalDateStr(new Date())
       const venteActuelle = dateStr < todayStr ? ventesParDate.value.get(dateStr) : null
       return {
         date: dateStr,
@@ -598,7 +606,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     const n1Vente = getN1Comparison(targetDate)
 
     // For past dates, include actual CA if available
-    const todayStr = new Date().toISOString().split('T')[0]!
+    const todayStr = toLocalDateStr(new Date())
     const venteActuelle = dateStr < todayStr ? ventesParDate.value.get(dateStr) : null
     const caRealise = venteActuelle && venteActuelle.cloture_validee ? venteActuelle.ca_ttc : null
 
@@ -626,7 +634,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let i = 0; i < 7; i++) {
       const d = new Date(start)
       d.setDate(d.getDate() + i)
-      const dateStr = d.toISOString().split('T')[0]!
+      const dateStr = toLocalDateStr(d)
       results.push(calculateForecast(dateStr))
     }
 
@@ -639,7 +647,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
     for (let day = 1; day <= daysInMonth; day++) {
       const d = new Date(year, month, day)
-      const dateStr = d.toISOString().split('T')[0]!
+      const dateStr = toLocalDateStr(d)
       results.push(calculateForecast(dateStr))
     }
 
@@ -716,7 +724,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (let i = 0; i < 7; i++) {
       const d = new Date(lastMonday)
       d.setDate(lastMonday.getDate() + i)
-      const dateStr = d.toISOString().split('T')[0]!
+      const dateStr = toLocalDateStr(d)
       const vente = ventesParDate.value.get(dateStr)
       if (!vente || !vente.cloture_validee) continue
 

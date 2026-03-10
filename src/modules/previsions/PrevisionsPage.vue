@@ -19,13 +19,17 @@ const monthForecasts = ref<ForecastResult[]>([])
 const precisionS1 = ref<{ precision: number; caRealise: number; caPrevu: number } | null>(null)
 
 // --- Week navigation ---
+function toLocalDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function getWeekStartDate(offset: number): string {
   const today = new Date()
   const dayOfWeek = today.getDay() // 0=Sun
   const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
   const monday = new Date(today)
   monday.setDate(today.getDate() - daysToMonday + (offset * 7))
-  return monday.toISOString().split('T')[0]!
+  return toLocalDateStr(monday)
 }
 
 function goToPrevWeek() {
@@ -288,7 +292,7 @@ function selectDayFromMonth(fc: ForecastResult): void {
 }
 
 function isToday(dateStr: string): boolean {
-  return dateStr === new Date().toISOString().split('T')[0]
+  return dateStr === toLocalDateStr(new Date())
 }
 
 function dayOfMonth(dateStr: string): number {
@@ -297,7 +301,7 @@ function dayOfMonth(dateStr: string): number {
 
 // --- Helpers: past date check ---
 function isPastDate(dateStr: string): boolean {
-  return dateStr < new Date().toISOString().split('T')[0]!
+  return dateStr < toLocalDateStr(new Date())
 }
 
 // --- Waterfall data for factors card ---
@@ -430,8 +434,8 @@ function openEventModal(dateStr?: string) {
   eventForm.value = {
     nom: '',
     description: '',
-    date_debut: dateStr || new Date().toISOString().split('T')[0]!,
-    date_fin: dateStr || new Date().toISOString().split('T')[0]!,
+    date_debut: dateStr || toLocalDateStr(new Date()),
+    date_fin: dateStr || toLocalDateStr(new Date()),
     coefficient: 1.0,
     notes: '',
   }
