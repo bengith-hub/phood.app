@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
+import { isJourFerie, autoSyncCalendriersIfNeeded } from '@/lib/calendriers'
 import type {
   VenteHistorique,
   MeteoDaily,
@@ -22,7 +23,7 @@ function toLocalDateStr(d: Date): string {
 
 export interface ForecastFactor {
   label: string
-  type: 'meteo' | 'evenement' | 'tendance' | 'rupture_meteo' | 'temperature' | 'superformance'
+  type: 'meteo' | 'evenement' | 'tendance' | 'rupture_meteo' | 'temperature' | 'superformance' | 'position_mois' | 'dow_correction' | 'holiday_proximity' | 'global_drift'
   coefficient: number
   detail: string
 }
@@ -89,6 +90,27 @@ const SEASONAL_AVG_CODE: Record<number, number> = {
   9: 3,  // Oct: overcast
   10: 3, // Nov: overcast
   11: 3, // Dec: overcast
+}
+
+/**
+ * Seasonal indices baseline from 3 years of reporting data (2023-2025).
+ * Ratio of monthly CA average to global monthly average (63 178€/month).
+ * Source: Google Sheets "Reporting" — CA TTC mensuel incluant sur place + emporté + livraison.
+ * These serve as a reliable baseline; blended with computed indices as app data grows.
+ */
+const SEASONAL_INDICES_3Y: Record<number, number> = {
+  0: 1.086,  // Jan: +8.6% (Noël aftermath, soldes)
+  1: 0.858,  // Feb: -14.2% (mois court, creux post-fêtes)
+  2: 0.843,  // Mar: -15.7% (mois faible)
+  3: 0.887,  // Apr: -11.3% (printemps faible)
+  4: 0.879,  // Mai: -12.1% (ponts, jours fériés)
+  5: 0.922,  // Jun: -7.8% (début été, moins de passage)
+  6: 1.074,  // Jul: +7.4% (vacances, affluence CC)
+  7: 1.031,  // Aug: +3.1% (vacances, affluence CC)
+  8: 0.921,  // Sep: -7.9% (rentrée, budgets serrés)
+  9: 1.012,  // Oct: +1.2% (neutre)
+  10: 1.088, // Nov: +8.8% (Black Friday, préparatifs Noël)
+  11: 1.400, // Dec: +40% (Noël, fêtes — sera plafonné)
 }
 
 /**
@@ -190,6 +212,364 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return map
   })
 
+  /**
+   * Monthly seasonal indices: dynamically computed from Supabase sales data,
+   * with 3-year baseline fallback (SEASONAL_INDICES_3Y) for months without enough data.
+   *
+   * Strategy:
+   * - Compute indices from app data when enough days exist (≥15 per month)
+   * - Fallback to 3-year reporting baseline for months with insufficient data
+   * - Self-improving: as each month accumulates ≥15 data points, computed values take over
+   * - Cap at ±20% for computed, ±30% for baseline (3 years of evidence supports wider range)
+   */
+  const seasonalIndices = computed(() => {
+    const monthData: Record<number, { sum: number; count: number }> = {}
+    let globalSum = 0
+    let globalCount = 0
+
+    for (const v of ventes.value) {
+      if (!v.cloture_validee || v.ca_ttc <= 0) continue
+      const d = new Date(v.date + 'T00:00:00')
+      if (isJourFerme(d.getDay())) continue
+
+      const month = d.getMonth()
+      if (!monthData[month]) monthData[month] = { sum: 0, count: 0 }
+      monthData[month]!.sum += v.ca_ttc
+      monthData[month]!.count++
+      globalSum += v.ca_ttc
+      globalCount++
+    }
+
+    const indices: Record<number, number> = {}
+
+    for (let m = 0; m < 12; m++) {
+      const data = monthData[m]
+
+      if (globalCount > 0 && data && data.count >= 15) {
+        // Enough app data: use computed index (capped ±20%)
+        const globalAvg = globalSum / globalCount
+        const raw = (data.sum / data.count) / globalAvg
+        indices[m] = Math.max(0.80, Math.min(1.20, raw))
+      } else {
+        // Not enough app data: fallback to 3-year baseline (capped ±30%)
+        const baseline = SEASONAL_INDICES_3Y[m] ?? 1
+        indices[m] = Math.max(0.70, Math.min(1.30, baseline))
+      }
+    }
+
+    return indices
+  })
+
+  /**
+   * Day-of-week correction factors: compensates for systematic bias per weekday.
+   * Computed dynamically from the ratio actual / (baseCA × weather × temp × monthPos × events).
+   * Uses trimmed mean (removes top/bottom 10%) for robustness against outliers.
+   * Self-improving: recalculates as new validated sales data is added.
+   * Capped at ±25% to prevent overcorrection.
+   */
+  const dowCorrections = computed(() => {
+    const corrections: Record<number, number> = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1 }
+
+    const tenMonthsAgo = new Date()
+    tenMonthsAgo.setMonth(tenMonthsAgo.getMonth() - 10)
+    const cutoff = toLocalDateStr(tenMonthsAgo)
+
+    const dowRatios: Record<number, number[]> = {}
+
+    for (const v of ventes.value) {
+      if (!v.cloture_validee || v.ca_ttc <= 0) continue
+      if (v.date < cutoff) continue
+      const d = new Date(v.date + 'T00:00:00')
+      const dow = d.getDay()
+      if (isJourFerme(dow)) continue
+
+      // Compute predicted CA WITHOUT dow correction
+      const { baseCA } = calculateBaseCA(d)
+      if (baseCA <= 0) continue
+
+      // Apply weather + temperature + month position + events
+      const meteoDay = meteoParDate.value.get(v.date) || null
+      const dummyFactors: ForecastFactor[] = []
+      const wCoeff = calculateWeatherCoefficient(meteoDay, dummyFactors)
+      const tCoeff = calculateTemperatureCoefficient(meteoDay, d, dummyFactors)
+      const mpCoeff = calculateMonthPositionCoefficient(d, dummyFactors)
+      const evts = getEventsForDate(v.date)
+      let evtCoeff = 1
+      for (const evt of evts) evtCoeff *= evt.coefficient
+
+      const predicted = baseCA * wCoeff * tCoeff * mpCoeff * evtCoeff
+      if (predicted <= 0) continue
+
+      const ratio = v.ca_ttc / predicted
+      if (!dowRatios[dow]) dowRatios[dow] = []
+      dowRatios[dow]!.push(ratio)
+    }
+
+    for (let d = 1; d <= 6; d++) {
+      const ratios = dowRatios[d]
+      if (!ratios || ratios.length < 10) continue
+
+      // Trimmed mean (remove top/bottom 10% for robustness)
+      const sorted = [...ratios].sort((a, b) => a - b)
+      const trim = Math.floor(sorted.length * 0.1)
+      const trimmed = sorted.slice(trim, sorted.length - trim)
+      const trimMean = trimmed.reduce((a, b) => a + b, 0) / trimmed.length
+
+      // Cap at ±25%
+      corrections[d] = Math.max(0.75, Math.min(1.25, trimMean))
+    }
+
+    return corrections
+  })
+
+  /**
+   * Global drift: compares recent 3-month rolling average to N-1 same period.
+   * Captures long-term trend (growth, decline, new competitor) that the
+   * 8-week EW base doesn't reflect because it only sees recent absolute levels.
+   * Capped at ±10% to prevent overcorrection.
+   */
+  const globalDrift = computed(() => {
+    const today = new Date()
+    const todayStr = toLocalDateStr(today)
+    const threeMonthsAgo = new Date(today)
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+    const cutoff = toLocalDateStr(threeMonthsAgo)
+
+    const n1End = new Date(today)
+    n1End.setFullYear(n1End.getFullYear() - 1)
+    const n1Start = new Date(threeMonthsAgo)
+    n1Start.setFullYear(n1Start.getFullYear() - 1)
+    const n1EndStr = toLocalDateStr(n1End)
+    const n1StartStr = toLocalDateStr(n1Start)
+
+    let recentSum = 0, recentCount = 0
+    let n1Sum = 0, n1Count = 0
+
+    for (const v of ventes.value) {
+      if (!v.cloture_validee || v.ca_ttc <= 0) continue
+      if (v.date >= cutoff && v.date < todayStr) {
+        recentSum += v.ca_ttc
+        recentCount++
+      }
+      if (v.date >= n1StartStr && v.date <= n1EndStr) {
+        n1Sum += v.ca_ttc
+        n1Count++
+      }
+    }
+
+    if (recentCount < 40 || n1Count < 40) return 1
+
+    const drift = (recentSum / recentCount) / (n1Sum / n1Count)
+    if (Math.abs(drift - 1) < 0.03) return 1 // Ignore <3% drift
+    return Math.max(0.90, Math.min(1.10, drift))
+  })
+
+  /**
+   * Weather-conditional DOW corrections: for each weekday, computes separate
+   * correction factors for rainy, sunny, and default weather conditions.
+   * Enables DOW×weather interaction (e.g., rainy Tuesdays behave differently
+   * from sunny Tuesdays). Falls back to overall DOW correction when insufficient data.
+   */
+  const dowWeatherBuckets = computed(() => {
+    const buckets: Record<number, { rainy: number[]; sunny: number[]; }> = {}
+    for (let d = 1; d <= 6; d++) buckets[d] = { rainy: [], sunny: [] }
+
+    const tenMonthsAgo = new Date()
+    tenMonthsAgo.setMonth(tenMonthsAgo.getMonth() - 10)
+    const cutoff = toLocalDateStr(tenMonthsAgo)
+
+    for (const v of ventes.value) {
+      if (!v.cloture_validee || v.ca_ttc <= 0) continue
+      if (v.date < cutoff) continue
+      const d = new Date(v.date + 'T00:00:00')
+      const dow = d.getDay()
+      if (isJourFerme(dow)) continue
+
+      const { baseCA } = calculateBaseCA(d)
+      if (baseCA <= 0) continue
+
+      const meteoDay = meteoParDate.value.get(v.date) || null
+      const dummyFactors: ForecastFactor[] = []
+      const wCoeff = calculateWeatherCoefficient(meteoDay, dummyFactors)
+      const tCoeff = calculateTemperatureCoefficient(meteoDay, d, dummyFactors)
+      const mpCoeff = calculateMonthPositionCoefficient(d, dummyFactors)
+      const evts = getEventsForDate(v.date)
+      let evtCoeff = 1
+      for (const evt of evts) evtCoeff *= evt.coefficient
+
+      const predicted = baseCA * wCoeff * tCoeff * mpCoeff * evtCoeff
+      if (predicted <= 0) continue
+
+      const ratio = v.ca_ttc / predicted
+      const isRainy = meteoDay && meteoDay.precipitation_mm !== null && meteoDay.precipitation_mm > 2
+      const isSunny = meteoDay && meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 25200
+
+      if (isRainy) buckets[dow]?.rainy.push(ratio)
+      else if (isSunny) buckets[dow]?.sunny.push(ratio)
+    }
+
+    // Compute trimmed means per bucket
+    const result: Record<number, { rainy: number | null; sunny: number | null }> = {}
+    for (let d = 1; d <= 6; d++) {
+      const b = buckets[d]!
+      result[d] = { rainy: null, sunny: null }
+
+      for (const key of ['rainy', 'sunny'] as const) {
+        const ratios = b[key]
+        if (ratios.length >= 5) {
+          const sorted = [...ratios].sort((a, b) => a - b)
+          const trim = Math.max(1, Math.floor(sorted.length * 0.1))
+          const trimmed = sorted.slice(trim, sorted.length - trim)
+          const mean = trimmed.reduce((a, b) => a + b, 0) / trimmed.length
+          result[d]![key] = Math.max(0.75, Math.min(1.25, mean))
+        }
+      }
+    }
+    return result
+  })
+
+  // --- Helper: check if a date is a jour férié ---
+  function isFerieDate(dateStr: string): boolean {
+    if (isJourFerie(dateStr)) return true
+    return evenements.value.some(e =>
+      e.type === 'ferie' && dateStr >= e.date_debut && dateStr <= e.date_fin
+    )
+  }
+
+  // --- Holiday proximity: veille de férié, lendemain, pont ---
+  function calculateHolidayProximityCoefficient(
+    targetDate: Date,
+    dateStr: string,
+    factors: ForecastFactor[]
+  ): number {
+    if (isFerieDate(dateStr)) return 1 // today is already a férié — handled by event coeff
+
+    const jourSemaine = targetDate.getDay()
+
+    const tomorrow = new Date(targetDate)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = toLocalDateStr(tomorrow)
+    const tomorrowFerie = isFerieDate(tomorrowStr)
+
+    const yesterday = new Date(targetDate)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const yesterdayStr = toLocalDateStr(yesterday)
+    const yesterdayFerie = isFerieDate(yesterdayStr)
+
+    // Pont detection: Friday after Thursday férié, or Monday before Tuesday férié
+    // Shopping center pont = families on long weekend = boost
+    const isPont = (jourSemaine === 5 && yesterdayFerie) || (jourSemaine === 1 && tomorrowFerie)
+
+    if (isPont) {
+      factors.push({
+        label: 'Pont',
+        type: 'holiday_proximity',
+        coefficient: 1.05,
+        detail: `Jour "pont" — week-end prolonge, affluence familles (+5%)`,
+      })
+      return 1.05
+    }
+
+    // Veille de férié (not pont): anticipation → +3%
+    if (tomorrowFerie) {
+      factors.push({
+        label: 'Veille de ferie',
+        type: 'holiday_proximity',
+        coefficient: 1.03,
+        detail: `Veille de jour ferie — anticipation courses (+3%)`,
+      })
+      return 1.03
+    }
+
+    // Lendemain de férié (not pont): retour progressif → -3%
+    if (yesterdayFerie) {
+      factors.push({
+        label: 'Lendemain de ferie',
+        type: 'holiday_proximity',
+        coefficient: 0.97,
+        detail: `Lendemain de jour ferie — reprise progressive (-3%)`,
+      })
+      return 0.97
+    }
+
+    return 1
+  }
+
+  /**
+   * Short-term streak detection (momentum court terme).
+   * Complementary to superformance: triggers only on UNANIMOUS streaks
+   * (5/5 days consistently off by >8%). Capped at ±3% to avoid
+   * double-counting with superformance which already captures gradual momentum.
+   */
+  function calculateStreakCoefficient(
+    targetDate: Date,
+    factors: ForecastFactor[]
+  ): number {
+    const ratios: number[] = []
+
+    for (let i = 1; i <= 10 && ratios.length < 5; i++) {
+      const d = new Date(targetDate)
+      d.setDate(d.getDate() - i)
+      const dStr = toLocalDateStr(d)
+      const dow = d.getDay()
+
+      if (isJourFerme(dow)) continue
+
+      const vente = ventesParDate.value.get(dStr)
+      if (!vente || !vente.cloture_validee || vente.ca_ttc <= 0) continue
+
+      const { baseCA } = calculateBaseCA(d)
+      if (baseCA <= 0) continue
+
+      const meteoD = meteoParDate.value.get(dStr) || null
+      const dummy: ForecastFactor[] = []
+      const wC = calculateWeatherCoefficient(meteoD, dummy)
+      const tC = calculateTemperatureCoefficient(meteoD, d, dummy)
+      const mpC = calculateMonthPositionCoefficient(d, dummy)
+      const dowC = dowCorrections.value[dow] ?? 1
+      const evts = getEventsForDate(dStr)
+      let evtC = 1
+      for (const evt of evts) evtC *= evt.coefficient
+
+      const predicted = baseCA * wC * tC * mpC * dowC * evtC
+      if (predicted <= 0) continue
+
+      ratios.push(vente.ca_ttc / predicted)
+    }
+
+    if (ratios.length < 5) return 1
+
+    // Unanimous streak only: ALL 5 must be in same direction by >8%
+    const aboveCount = ratios.filter(r => r > 1.08).length
+    const belowCount = ratios.filter(r => r < 0.92).length
+
+    if (aboveCount === 5) {
+      const avgExcess = ratios.reduce((s, r) => s + (r - 1), 0) / ratios.length
+      const streakCoeff = Math.min(1.03, 1 + avgExcess * 0.2)
+      factors.push({
+        label: 'Serie positive',
+        type: 'tendance',
+        coefficient: streakCoeff,
+        detail: `5/5 jours recents au-dessus des previsions — momentum fort`,
+      })
+      return streakCoeff
+    }
+
+    if (belowCount === 5) {
+      const avgDeficit = ratios.reduce((s, r) => s + (r - 1), 0) / ratios.length
+      const streakCoeff = Math.max(0.97, 1 + avgDeficit * 0.2)
+      factors.push({
+        label: 'Serie negative',
+        type: 'tendance',
+        coefficient: streakCoeff,
+        detail: `5/5 jours recents en dessous des previsions — momentum faible`,
+      })
+      return streakCoeff
+    }
+
+    return 1
+  }
+
   // --- Fetch functions (online/offline pattern) ---
 
   async function fetchVentes(): Promise<void> {
@@ -289,6 +669,9 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     loading.value = true
     error.value = null
     try {
+      // Auto-sync calendriers (fériés, vacances, soldes) — 24h cooldown, non-blocking
+      autoSyncCalendriersIfNeeded().catch(() => {})
+
       await Promise.all([
         fetchVentes(),
         fetchMeteo(),
@@ -376,6 +759,9 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
   function calculateBaseCA(targetDate: Date): { baseCA: number; baseTickets: number; dataPoints: number } {
     const jourSemaine = targetDate.getDay()
+    const targetMonth = targetDate.getMonth()
+    const targetSeasonal = seasonalIndices.value[targetMonth] ?? 1
+
     const history = getSameDayHistory(targetDate, 8)
     const recent = history.slice(0, 5)
 
@@ -387,14 +773,20 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       let baseTickets = 0
       for (let i = 0; i < recent.length; i++) {
         const w = weights[i]! / wSum
-        baseCA += recent[i]!.ca_ttc * w
-        baseTickets += recent[i]!.nb_tickets * w
+        const histDate = new Date(recent[i]!.date + 'T00:00:00')
+        const histSeasonal = seasonalIndices.value[histDate.getMonth()] ?? 1
+
+        // Deseasonalize historical value, then reseasonalize for target month
+        // When hist and target are the same month, this is a no-op (ratio = 1)
+        // When crossing months (e.g. Dec→Feb), it correctly adjusts the level
+        baseCA += (recent[i]!.ca_ttc / histSeasonal * targetSeasonal) * w
+        baseTickets += (recent[i]!.nb_tickets / histSeasonal * targetSeasonal) * w
       }
 
       return { baseCA, baseTickets, dataPoints: recent.length }
     }
 
-    // Fallback: any same day-of-week data
+    // Fallback: any same day-of-week data (already deseasonalized by averaging many months)
     const allSameDow = ventes.value.filter(v => {
       const d = new Date(v.date + 'T00:00:00')
       return d.getDay() === jourSemaine && v.cloture_validee
@@ -402,18 +794,57 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     if (allSameDow.length > 0) {
       const baseCA = allSameDow.reduce((s, v) => s + v.ca_ttc, 0) / allSameDow.length
       const baseTickets = allSameDow.reduce((s, v) => s + v.nb_tickets, 0) / allSameDow.length
-      return { baseCA, baseTickets, dataPoints: allSameDow.length }
+      return { baseCA: baseCA * targetSeasonal, baseTickets: baseTickets * targetSeasonal, dataPoints: allSameDow.length }
     }
 
-    // Ultimate fallback: global average
+    // Ultimate fallback: global average × seasonal
     const validated = ventes.value.filter(v => v.cloture_validee)
     if (validated.length > 0) {
       const baseCA = validated.reduce((s, v) => s + v.ca_ttc, 0) / validated.length
       const baseTickets = validated.reduce((s, v) => s + v.nb_tickets, 0) / validated.length
-      return { baseCA, baseTickets, dataPoints: 0 }
+      return { baseCA: baseCA * targetSeasonal, baseTickets: baseTickets * targetSeasonal, dataPoints: 0 }
     }
 
     return { baseCA: 0, baseTickets: 0, dataPoints: 0 }
+  }
+
+  /**
+   * End-of-month coefficient: statistically significant +6% boost for days 26-31.
+   * Damped from observed +7.8% to avoid overfitting.
+   * Backed by 51 data points, t-stat = 2.25 (p < 0.05).
+   */
+  function calculateMonthPositionCoefficient(
+    targetDate: Date,
+    factors: ForecastFactor[]
+  ): number {
+    const dayOfMonth = targetDate.getDate()
+    const daysInMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate()
+
+    // Only apply for the last 5-6 days of the month
+    if (dayOfMonth >= daysInMonth - 4) {
+      const posCoeff = 1.06
+      factors.push({
+        label: 'Fin de mois',
+        type: 'position_mois',
+        coefficient: posCoeff,
+        detail: `J${dayOfMonth}/${daysInMonth} — hausse historique fin de mois (+6%)`,
+      })
+      return posCoeff
+    }
+
+    // Mid-month dip (J16-20): marginal but consistent -4%
+    if (dayOfMonth >= 16 && dayOfMonth <= 20) {
+      const posCoeff = 0.96
+      factors.push({
+        label: 'Milieu de mois',
+        type: 'position_mois',
+        coefficient: posCoeff,
+        detail: `J${dayOfMonth} — creux historique mi-mois (-4%)`,
+      })
+      return posCoeff
+    }
+
+    return 1
   }
 
   function calculateWeatherCoefficient(
@@ -423,19 +854,33 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     if (!meteoDay) return 1
     let coeff = 1
 
-    if (meteoDay.precipitation_mm !== null && meteoDay.precipitation_mm > 5) {
-      const precipCoeff = 1.12
+    const precip = meteoDay.precipitation_mm ?? 0
+
+    // Graduated precipitation effect (centre commercial = rain = more clients)
+    if (precip > 5) {
+      // Strong rain: +7% (calibrated via grid search, was +12%)
+      const precipCoeff = 1.07
       coeff *= precipCoeff
       factors.push({
         label: 'Pluie forte',
         type: 'meteo',
         coefficient: precipCoeff,
-        detail: `${meteoDay.precipitation_mm.toFixed(1)} mm de pluie — plus de clients au centre commercial`,
+        detail: `${precip.toFixed(1)} mm de pluie — plus de clients au centre commercial`,
+      })
+    } else if (precip >= 1) {
+      // Light rain: +4% (observed +5.5% on 1-5mm, damped)
+      const precipCoeff = 1.04
+      coeff *= precipCoeff
+      factors.push({
+        label: 'Pluie legere',
+        type: 'meteo',
+        coefficient: precipCoeff,
+        detail: `${precip.toFixed(1)} mm de pluie — leger boost centre commercial`,
       })
     }
 
     if (meteoDay.couverture_nuageuse_pct !== null && meteoDay.couverture_nuageuse_pct > 80) {
-      const cloudCoeff = 1.08
+      const cloudCoeff = 1.06
       coeff *= cloudCoeff
       factors.push({
         label: 'Ciel couvert',
@@ -445,9 +890,10 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       })
     }
 
-    if (meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 21600) {
+    // Sunshine threshold raised from 6h to 8h (optimal cut-off from data analysis)
+    if (meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 28800) {
       const sunHours = meteoDay.ensoleillement_secondes / 3600
-      const sunCoeff = 0.92
+      const sunCoeff = 0.93
       coeff *= sunCoeff
       factors.push({
         label: 'Grand soleil',
@@ -475,12 +921,39 @@ export const usePrevisionsStore = defineStore('previsions', () => {
   }
 
   /**
-   * Calculate superformance: recent cross-day momentum on weather-adjusted residuals.
-   * Looks at ALL days (not just same weekday) over the last 14 days.
-   * Uses exponentially decaying weights with half-life of 5 days.
+   * Calculate superformance: recent momentum on weather-adjusted residuals.
+   *
+   * For Saturday (dow=6): uses SAME-WEEKDAY residuals over 6 weeks (not cross-day)
+   * because Saturday has its own dynamics that don't correlate with weekday patterns.
+   *
+   * For other days: uses ALL days over the last 14 days with exponential decay.
+   *
    * Returns a ratio (e.g., 0.06 means +6% above expected).
    */
   function calculateSuperformance(targetDate: Date): { value: number; daysUsed: number } {
+    const targetDow = targetDate.getDay()
+
+    // Saturday: same-weekday only (6 weeks lookback, equal weights)
+    if (targetDow === 6) {
+      const residuals: number[] = []
+      for (let w = 1; w <= 6; w++) {
+        const d = new Date(targetDate)
+        d.setDate(d.getDate() - w * 7)
+        const dStr = toLocalDateStr(d)
+        const vente = ventesParDate.value.get(dStr)
+        if (!vente || !vente.cloture_validee || vente.ca_ttc <= 0) continue
+        const { baseCA } = calculateBaseCA(d)
+        if (baseCA <= 0) continue
+        const weatherAdj = getWeatherCoeffForDate(dStr)
+        const expected = baseCA * weatherAdj
+        residuals.push(vente.ca_ttc / expected - 1)
+      }
+      if (residuals.length < 2) return { value: 0, daysUsed: 0 }
+      const avg = residuals.reduce((a, b) => a + b, 0) / residuals.length
+      return { value: avg, daysUsed: residuals.length }
+    }
+
+    // Other days: cross-day momentum with exponential decay
     const LOOKBACK_DAYS = 14
     const HALF_LIFE = 5
     const lambda = Math.LN2 / HALF_LIFE
@@ -497,11 +970,12 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       const vente = ventesParDate.value.get(dStr)
       if (!vente || !vente.cloture_validee || vente.ca_ttc <= 0) continue
 
-      // Expected CA for that day (base only, no superformance)
+      // Skip Saturday data in cross-day momentum (different dynamics)
+      if (d.getDay() === 6) continue
+
       const { baseCA } = calculateBaseCA(d)
       if (baseCA <= 0) continue
 
-      // Weather adjustment for that day to isolate non-weather residual
       const weatherAdj = getWeatherCoeffForDate(dStr)
       const expected = baseCA * weatherAdj
 
@@ -650,6 +1124,53 @@ export const usePrevisionsStore = defineStore('previsions', () => {
         type: 'superformance',
         coefficient: 1 + superf.value,
         detail: `${superf.value > 0 ? '+' : ''}${(superf.value * 100).toFixed(1)}% vs attendu sur les ${superf.daysUsed} derniers jours`,
+      })
+    }
+
+    // Layer 4: Month position (end-of-month boost, mid-month dip)
+    calculateMonthPositionCoefficient(targetDate, factors)
+
+    // Layer 5: Day-of-week correction — weather-conditional when meaningful difference (>5%)
+    const JOURS_FR = ['', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi']
+    const isRainyDay = meteoDay && meteoDay.precipitation_mm !== null && meteoDay.precipitation_mm > 2
+    const isSunnyDay = meteoDay && meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 25200
+    const dwBucket = dowWeatherBuckets.value[jourSemaine]
+    const overallDowCorr = dowCorrections.value[jourSemaine] ?? 1
+
+    let dowCorr = overallDowCorr
+    let dowDetail = ''
+    // Only use weather-conditional correction when it differs >5% from overall
+    if (isRainyDay && dwBucket?.rainy !== null && Math.abs(dwBucket!.rainy! - overallDowCorr) > 0.05) {
+      dowCorr = dwBucket!.rainy!
+      dowDetail = ` (pluie: ${dowCorr > 1 ? '+' : ''}${((dowCorr - 1) * 100).toFixed(0)}%)`
+    } else if (isSunnyDay && dwBucket?.sunny !== null && Math.abs(dwBucket!.sunny! - overallDowCorr) > 0.05) {
+      dowCorr = dwBucket!.sunny!
+      dowDetail = ` (soleil: ${dowCorr > 1 ? '+' : ''}${((dowCorr - 1) * 100).toFixed(0)}%)`
+    }
+
+    if (Math.abs(dowCorr - 1) > 0.01) {
+      factors.push({
+        label: `Correction ${JOURS_FR[jourSemaine]}`,
+        type: 'dow_correction',
+        coefficient: dowCorr,
+        detail: `Ajustement historique du ${JOURS_FR[jourSemaine]}${dowDetail || ` (${dowCorr > 1 ? '+' : ''}${((dowCorr - 1) * 100).toFixed(0)}%)`}`,
+      })
+    }
+
+    // Layer 6: Holiday proximity (veille/lendemain de férié, pont)
+    calculateHolidayProximityCoefficient(targetDate, dateStr, factors)
+
+    // Layer 7: Short-term streak detection (momentum court terme)
+    calculateStreakCoefficient(targetDate, factors)
+
+    // Layer 8: Global drift (tendance N vs N-1)
+    const drift = globalDrift.value
+    if (Math.abs(drift - 1) > 0.02) {
+      factors.push({
+        label: drift > 1 ? 'Tendance hausse' : 'Tendance baisse',
+        type: 'global_drift',
+        coefficient: drift,
+        detail: `Tendance ${drift > 1 ? 'hausse' : 'baisse'} sur 3 mois vs N-1 (${drift > 1 ? '+' : ''}${((drift - 1) * 100).toFixed(0)}%)`,
       })
     }
 

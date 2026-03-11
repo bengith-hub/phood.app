@@ -7,7 +7,7 @@
  * - Soldes: calcul local (2ème mercredi janvier, dernier mercredi juin, 4 semaines)
  */
 
-import { supabase } from './supabase'
+import { restCall } from './rest-client'
 import type { Evenement } from '@/types/database'
 
 // --- Easter calculation: Meeus/Jones/Butcher algorithm ---
@@ -145,57 +145,79 @@ export async function syncCalendriers(year?: number): Promise<{
   const stats = { joursFeries: 0, vacances: 0, soldes: 0 }
 
   for (const y of years) {
-    // 1. Jours fériés
+    // 1. Jours fériés — batch upsert
     const feries = getJoursFeries(y)
-    for (const f of feries) {
-      const dateStr = toDateStr(f.date)
-      const { error } = await supabase
-        .from('evenements')
-        .upsert({
-          nom: f.nom,
-          type: 'ferie',
-          date_debut: dateStr,
-          date_fin: dateStr,
-          coefficient: 0.7, // Default: 30% less traffic on holidays for restaurant in mall
-          recurrent: true,
-        }, { onConflict: 'nom,date_debut' })
-      if (!error) stats.joursFeries++
+    try {
+      await restCall('POST', 'evenements?on_conflict=nom,date_debut', feries.map(f => ({
+        nom: f.nom,
+        type: 'ferie',
+        date_debut: toDateStr(f.date),
+        date_fin: toDateStr(f.date),
+        coefficient: 0.7,
+        recurrent: true,
+      })), { prefer: 'resolution=merge-duplicates' })
+      stats.joursFeries += feries.length
+    } catch (err) {
+      console.warn('Failed to sync jours fériés:', err)
     }
 
-    // 2. Soldes
+    // 2. Soldes — batch upsert
     const soldes = getSoldes(y)
-    for (const s of soldes) {
-      const { error } = await supabase
-        .from('evenements')
-        .upsert({
-          nom: s.nom,
-          type: 'soldes',
-          date_debut: toDateStr(s.debut),
-          date_fin: toDateStr(s.fin),
-          coefficient: 1.15, // 15% more traffic during sales in mall
-          recurrent: true,
-        }, { onConflict: 'nom,date_debut' })
-      if (!error) stats.soldes++
+    try {
+      await restCall('POST', 'evenements?on_conflict=nom,date_debut', soldes.map(s => ({
+        nom: s.nom,
+        type: 'soldes',
+        date_debut: toDateStr(s.debut),
+        date_fin: toDateStr(s.fin),
+        coefficient: 1.15,
+        recurrent: true,
+      })), { prefer: 'resolution=merge-duplicates' })
+      stats.soldes += soldes.length
+    } catch (err) {
+      console.warn('Failed to sync soldes:', err)
     }
 
-    // 3. Vacances scolaires
+    // 3. Vacances scolaires — batch upsert
     const vacances = await fetchVacancesScolaires(y)
-    for (const v of vacances) {
-      const { error } = await supabase
-        .from('evenements')
-        .upsert({
+    if (vacances.length > 0) {
+      try {
+        await restCall('POST', 'evenements?on_conflict=nom,date_debut', vacances.map(v => ({
           nom: v.nom,
           type: 'vacances',
           date_debut: v.debut,
           date_fin: v.fin,
-          coefficient: 1.10, // 10% more traffic during school holidays
+          coefficient: 1.10,
           recurrent: false,
-        }, { onConflict: 'nom,date_debut' })
-      if (!error) stats.vacances++
+        })), { prefer: 'resolution=merge-duplicates' })
+        stats.vacances += vacances.length
+      } catch (err) {
+        console.warn('Failed to sync vacances:', err)
+      }
     }
   }
 
   return stats
+}
+
+/**
+ * Auto-sync calendriers if not synced in the last 24 hours.
+ * Called automatically on fetchAll() — no manual action needed.
+ */
+const SYNC_KEY = 'phood-calendriers-last-sync'
+
+export async function autoSyncCalendriersIfNeeded(): Promise<void> {
+  try {
+    const lastSync = localStorage.getItem(SYNC_KEY)
+    if (lastSync) {
+      const elapsed = Date.now() - parseInt(lastSync)
+      if (elapsed < 24 * 60 * 60 * 1000) return // <24h: skip
+    }
+    if (!navigator.onLine) return
+    await syncCalendriers()
+    localStorage.setItem(SYNC_KEY, String(Date.now()))
+  } catch (err) {
+    console.warn('Auto-sync calendriers failed:', err)
+  }
 }
 
 /**
