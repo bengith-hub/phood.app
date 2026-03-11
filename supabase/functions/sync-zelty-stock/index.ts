@@ -72,6 +72,31 @@ interface Recette {
   zelty_product_id: string | null
 }
 
+interface IngredientInfo {
+  unite_stock: string
+  rendement: number | null
+}
+
+/**
+ * Unit conversion factor between recipe unit and stock unit.
+ * Same logic as src/lib/unit-conversion.ts (duplicated for Deno Edge Function).
+ */
+function getUnitFactor(fromUnite: string, toUnite: string): number {
+  const from = fromUnite.toLowerCase()
+  const to = toUnite.toLowerCase()
+  if (from === to) return 1
+  // Weight: kg ↔ g
+  if (from === 'kg' && to === 'g') return 1000
+  if (from === 'g' && to === 'kg') return 0.001
+  // Volume: L ↔ mL, L ↔ cl
+  if (from === 'l' && to === 'ml') return 1000
+  if (from === 'ml' && to === 'l') return 0.001
+  if (from === 'l' && to === 'cl') return 100
+  if (from === 'cl' && to === 'l') return 0.01
+  // Same or count-based (unite, piece, botte) → no conversion
+  return 1
+}
+
 /**
  * Fetch all orders for a given day from Zelty with pagination.
  */
@@ -195,6 +220,16 @@ Deno.serve(async (req) => {
       ingredientsByRecette.set(ri.recette_id, list)
     }
 
+    // Load ingredients for unit conversion + rendement
+    const { data: ingredientsList } = await supabase
+      .from('ingredients_restaurant')
+      .select('id, unite_stock, rendement')
+
+    const ingredientById = new Map<string, IngredientInfo>()
+    for (const ing of (ingredientsList || []) as Array<{ id: string; unite_stock: string; rendement: number | null }>) {
+      ingredientById.set(ing.id, { unite_stock: ing.unite_stock, rendement: ing.rendement })
+    }
+
     // Recursive decomposition: recette → base ingredients, filtered by channel
     function decomposeRecette(
       recetteId: string,
@@ -214,7 +249,18 @@ Deno.serve(async (req) => {
         const qty = ri.quantite * multiplier
 
         if (ri.ingredient_id) {
-          result.set(ri.ingredient_id, (result.get(ri.ingredient_id) || 0) + qty)
+          // Convert recipe unit → stock unit (e.g., 0.15 kg → 150 g)
+          const ing = ingredientById.get(ri.ingredient_id)
+          let adjustedQty = qty
+          if (ing) {
+            adjustedQty *= getUnitFactor(ri.unite, ing.unite_stock)
+            // Apply rendement: if yield < 1 (e.g., 0.85 = 15% prep loss),
+            // we need more raw ingredient: 150g / 0.85 ≈ 176.5g
+            if (ing.rendement && ing.rendement > 0 && ing.rendement < 1) {
+              adjustedQty /= ing.rendement
+            }
+          }
+          result.set(ri.ingredient_id, (result.get(ri.ingredient_id) || 0) + adjustedQty)
         } else if (ri.sous_recette_id) {
           const subResult = decomposeRecette(ri.sous_recette_id, qty, channel, depth + 1)
           for (const [ingId, subQty] of subResult) {
