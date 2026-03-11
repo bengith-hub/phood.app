@@ -243,12 +243,6 @@ function coefficientClass(coeff: number): string {
 
 // --- Precision helpers (forecast vs actual) ---
 
-function dayPrecisionPct(fc: ForecastResult): number | null {
-  if (fc.ca_realise === null || fc.ca_realise === 0) return null
-  const error = Math.abs(fc.ca_prevision - fc.ca_realise) / fc.ca_realise
-  return Math.round((1 - error) * 100)
-}
-
 function dayEcartPct(fc: ForecastResult): string | null {
   if (fc.ca_realise === null || fc.ca_prevision === 0) return null
   const pct = ((fc.ca_realise - fc.ca_prevision) / fc.ca_prevision) * 100

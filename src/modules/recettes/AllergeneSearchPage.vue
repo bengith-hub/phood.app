@@ -8,62 +8,97 @@ const ingredientsStore = useIngredientsStore()
 
 const query = ref('')
 const hasSearched = ref(false)
-const showSafe = ref(false) // false = "contient", true = "ne contient PAS"
+const showSafe = ref(false)
+const showSuggestions = ref(false)
 
-const ALLERGEN_LABELS: Record<string, string> = {
-  gluten: 'Gluten', crustaces: 'Crustacés', oeufs: 'Oeufs', poissons: 'Poissons',
-  arachides: 'Arachides', soja: 'Soja', lait: 'Lait', fruits_a_coque: 'Fruits à coque',
-  celeri: 'Céleri', moutarde: 'Moutarde', sesame: 'Sésame', sulfites: 'Sulfites',
-  lupin: 'Lupin', mollusques: 'Mollusques',
+function normalize(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
-const ALLERGEN_SHORTCUTS = Object.entries(ALLERGEN_LABELS)
-
-function getIngredient(id: string) {
+function getIngredientInfo(id: string) {
   const ing = ingredientsStore.getById(id)
   if (!ing || !ing.actif) return undefined
-  return { allergenes: ing.allergenes, contient: ing.contient }
+  return { nom: ing.nom, contient: ing.contient }
 }
 
-// Count ingredients missing composition (no allergenes AND no contient)
+// Count ingredients missing composition
 const ingredientsSansCompo = computed(() => {
   return ingredientsStore.ingredients.filter(i =>
     i.actif && (!i.allergenes || i.allergenes.length === 0) && !i.contient
   ).length
 })
 
-// Recipes WITH the allergen
-const resultsContient = computed(() => {
-  const q = query.value.trim()
-  if (!q) return []
-  return recettesStore.findRecipesWithAllergen(q, getIngredient)
+// Autocomplete suggestions from ingredient names
+const suggestions = computed(() => {
+  const q = normalize(query.value.trim())
+  if (q.length < 2) return []
+  const seen = new Set<string>()
+  return ingredientsStore.ingredients
+    .filter(i => {
+      if (!i.actif) return false
+      const n = normalize(i.nom)
+      if (!n.includes(q)) return false
+      if (seen.has(n)) return false
+      seen.add(n)
+      return true
+    })
+    .map(i => i.nom)
+    .sort((a, b) => {
+      // Exact start match first
+      const aStart = normalize(a).startsWith(q) ? 0 : 1
+      const bStart = normalize(b).startsWith(q) ? 0 : 1
+      if (aStart !== bStart) return aStart - bStart
+      return a.localeCompare(b, 'fr')
+    })
+    .slice(0, 8)
 })
 
-// Recipes WITHOUT the allergen (safe to propose)
+// Recipes WITH the ingredient
+const resultsContient = computed(() => {
+  const q = query.value.trim()
+  if (!q || q.length < 2) return []
+  return recettesStore.findRecipesWithIngredient(q, getIngredientInfo)
+})
+
+// Recipes WITHOUT the ingredient (safe to propose)
 const resultsSans = computed(() => {
   const q = query.value.trim()
-  if (!q) return []
-  const withAllergen = new Set(resultsContient.value.map(r => r.recette.id))
+  if (!q || q.length < 2) return []
+  const withIngredient = new Set(resultsContient.value.map(r => r.recette.id))
   return recettesStore.plats
-    .filter(p => !withAllergen.has(p.id))
+    .filter(p => {
+      if (withIngredient.has(p.id)) return false
+      const ris = recettesStore.getIngredients(p.id)
+      if (ris.length === 0) return false
+      if (/EMP\/LIV|EMP\b.*\bLIV\b/i.test(p.nom)) return false
+      const cat = p.categorie
+      if (cat === 'Test' || cat === 'Kit boitage') return false
+      return true
+    })
     .map(p => ({ recette: p }))
 })
 
 const results = computed(() => showSafe.value ? resultsSans.value : resultsContient.value)
 
-// Debounce search feedback
+// Debounce search
 let debounceTimer: ReturnType<typeof setTimeout>
 watch(query, () => {
   hasSearched.value = false
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
-    hasSearched.value = query.value.trim().length > 0
-  }, 200)
+    hasSearched.value = query.value.trim().length >= 2
+  }, 300)
 })
 
-function setQuery(allergen: string) {
-  query.value = allergen
+function selectSuggestion(name: string) {
+  query.value = name
   hasSearched.value = true
+  showSuggestions.value = false
+}
+
+function onBlur() {
+  // Delay to allow click on suggestion
+  setTimeout(() => (showSuggestions.value = false), 200)
 }
 
 onMounted(async () => {
@@ -76,31 +111,36 @@ onMounted(async () => {
 
 <template>
   <div class="allergene-search">
-    <h1>Verification allergenes</h1>
-    <p class="subtitle">Recherchez un allergene pour voir quelles recettes le contiennent</p>
+    <h1>Recherche ingredients</h1>
+    <p class="subtitle">Tapez un ingredient pour voir quels plats le contiennent</p>
 
     <!-- Warning: missing compositions -->
     <div v-if="ingredientsSansCompo > 0" class="compo-warning" @click="$router.push('/recettes')">
-      ⚠️ <strong>{{ ingredientsSansCompo }} ingredient{{ ingredientsSansCompo > 1 ? 's' : '' }}</strong> sans composition connue — les resultats peuvent etre incomplets
+      ⚠️ <strong>{{ ingredientsSansCompo }} ingredient{{ ingredientsSansCompo > 1 ? 's' : '' }}</strong>
+      sans composition connue — les resultats peuvent etre incomplets
     </div>
 
-    <input
-      v-model="query"
-      type="search"
-      placeholder="Ex: gluten, sesame, lait..."
-      class="search-input"
-      autofocus
-    />
-
-    <div class="quick-tags">
-      <button
-        v-for="[key, label] in ALLERGEN_SHORTCUTS"
-        :key="key"
-        :class="['tag', { active: query.toLowerCase() === key }]"
-        @click="setQuery(key)"
-      >
-        {{ label }}
-      </button>
+    <!-- Search with autocomplete -->
+    <div class="search-wrapper">
+      <input
+        v-model="query"
+        type="search"
+        placeholder="Ex: carotte, poulet, coriandre, gluten..."
+        class="search-input"
+        autofocus
+        @focus="showSuggestions = true"
+        @blur="onBlur"
+      />
+      <div v-if="showSuggestions && suggestions.length > 0 && !hasSearched" class="suggestions">
+        <button
+          v-for="s in suggestions"
+          :key="s"
+          class="suggestion-item"
+          @mousedown.prevent="selectSuggestion(s)"
+        >
+          {{ s }}
+        </button>
+      </div>
     </div>
 
     <div v-if="recettesStore.loading || ingredientsStore.loading" class="loading">
@@ -120,17 +160,17 @@ onMounted(async () => {
 
       <div class="results-header">
         <template v-if="!showSafe">
-          <span class="results-count">{{ results.length }} recette{{ results.length !== 1 ? 's' : '' }}</span>
-          contenant <strong>{{ ALLERGEN_LABELS[query.toLowerCase()] || query }}</strong>
+          <span class="results-count">{{ results.length }} plat{{ results.length !== 1 ? 's' : '' }}</span>
+          contenant <strong>{{ query }}</strong>
         </template>
         <template v-else>
-          <span class="results-count results-safe">{{ results.length }} recette{{ results.length !== 1 ? 's' : '' }}</span>
-          <strong>sans {{ ALLERGEN_LABELS[query.toLowerCase()] || query }}</strong> — a proposer au client
+          <span class="results-count results-safe">{{ results.length }} plat{{ results.length !== 1 ? 's' : '' }}</span>
+          <strong>sans {{ query }}</strong> — a proposer au client
         </template>
       </div>
 
       <div v-if="results.length === 0" class="no-results">
-        {{ showSafe ? 'Toutes les recettes contiennent cet allergene.' : 'Aucune recette ne contient cet allergene.' }}
+        {{ showSafe ? 'Tous les plats contiennent cet ingredient.' : 'Aucun plat ne contient cet ingredient.' }}
       </div>
 
       <div v-else class="results-list">
@@ -139,13 +179,13 @@ onMounted(async () => {
             <span class="result-name">{{ item.recette.nom }}</span>
             <span v-if="item.recette.categorie" class="result-cat">{{ item.recette.categorie }}</span>
           </div>
-          <div v-if="!showSafe && 'allergens' in item" class="result-allergens">
+          <div v-if="!showSafe && 'matchedIngredients' in item" class="result-ingredients">
             <span
-              v-for="a in Array.from((item as { allergens: Set<string> }).allergens)"
-              :key="a"
-              :class="['allergen-badge', { highlight: a.includes(query.toLowerCase()) }]"
+              v-for="ing in (item as { matchedIngredients: string[] }).matchedIngredients"
+              :key="ing"
+              class="ingredient-badge"
             >
-              {{ ALLERGEN_LABELS[a] || a }}
+              {{ ing }}
             </span>
           </div>
         </div>
@@ -169,6 +209,11 @@ h1 { font-size: 28px; margin-bottom: 8px; }
   cursor: pointer;
 }
 
+.search-wrapper {
+  position: relative;
+  margin-bottom: 24px;
+}
+
 .search-input {
   width: 100%;
   height: 56px;
@@ -185,26 +230,38 @@ h1 { font-size: 28px; margin-bottom: 8px; }
   border-color: var(--color-primary);
 }
 
-.quick-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 0 24px;
-}
-.tag {
-  padding: 8px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
+.suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
   background: var(--bg-surface);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--text-secondary);
+  border: 2px solid var(--color-primary);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  max-height: 320px;
+  overflow-y: auto;
 }
-.tag.active {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
+.suggestion-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 14px 20px;
+  font-size: 17px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+.suggestion-item:hover,
+.suggestion-item:focus {
+  background: #fff7ed;
 }
 
 .loading {
@@ -276,7 +333,7 @@ h1 { font-size: 28px; margin-bottom: 8px; }
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .result-name {
   font-size: 16px;
@@ -286,21 +343,17 @@ h1 { font-size: 28px; margin-bottom: 8px; }
   font-size: 13px;
   color: var(--text-tertiary);
 }
-.result-allergens {
+.result-ingredients {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-.allergen-badge {
-  background: #f3f4f6;
-  color: #6b7280;
+.ingredient-badge {
+  background: #fef3c7;
+  color: #92400e;
   padding: 4px 10px;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
-}
-.allergen-badge.highlight {
-  background: #fef3c7;
-  color: #92400e;
 }
 </style>

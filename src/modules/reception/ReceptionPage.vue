@@ -8,6 +8,7 @@ import { useAuth } from '@/composables/useAuth'
 import { restCall, storageUpload } from '@/lib/rest-client'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import { createNotificationForAdmins, loadConfig } from '@/lib/create-notification'
+import { getEtablissement, emailSubjectPrefix, emailFooter } from '@/lib/email-templates'
 import { toStockUnits, getConditioningUnit } from '@/lib/unit-conversion'
 import type { Commande, CommandeLigne, AnomalieType, AvoirLigne } from '@/types/database'
 
@@ -340,7 +341,7 @@ async function handleAvoirSendEmail() {
       body: JSON.stringify({
         to: fournisseur.email_commande,
         cc: config?.destinataires_email_avoir || [],
-        subject: `${today} | Demande d'avoir | Phood | Begles | ${commandeNum}`,
+        subject: `${emailSubjectPrefix(getEtablissement(config), "Demande d'avoir")} | ${commandeNum}`,
         html: emailHtml,
       }),
     })
@@ -422,7 +423,7 @@ function buildAvoirEmailHtml(commandeNum: string, _fournisseurNom: string, _date
       ${commentHtml}
       <p>Merci de bien vouloir traiter cette demande dans les meilleurs delais.</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-      <p style="color:#888;font-size:13px;">Phood Restaurant — Centre Commercial Rives d'Arcins — Begles<br/>team.begles@phood-restaurant.fr</p>
+      ${emailFooter(getEtablissement(null))}
     </div>
   `
 }

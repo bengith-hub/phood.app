@@ -9,8 +9,6 @@ import { useIngredientsStore } from '@/stores/ingredients'
 import { useAuth } from '@/composables/useAuth'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { useLocking } from '@/composables/useLocking'
-import { generateCommandePdf } from '@/lib/pdf-commande'
-import { storageUpload, storagePublicUrl } from '@/lib/rest-client'
 import { toStockUnits, getConditioningUnit, fromStockUnits } from '@/lib/unit-conversion'
 import StockCoverageRow from './StockCoverageRow.vue'
 import type { StockCoverageInfo } from './StockCoverageRow.vue'
@@ -51,8 +49,6 @@ const dateLivraison = ref('')
 const dateLivraisonError = ref('')
 const notes = ref('')
 const searchQuery = ref('')
-const showPdfModal = ref(false)
-const pdfBlobUrl = ref<string | null>(null)
 const showStockDetails = ref(false)
 const dateFinCouverture = ref('')
 const COUVERTURE_DEFAUT_JOURS = 5
@@ -378,74 +374,6 @@ function getCondLabel(produit: Mercuriale): string {
 }
 
 
-// ─── PDF preview ───
-
-async function handlePdfPreview() {
-  if (!commandeId.value || !fournisseur.value) return
-
-  const lignesArray: CommandeLigne[] = []
-  for (const l of lignes.value.values()) {
-    if (l.quantite > 0) {
-      const montantHt = l.quantite * l.prix_unitaire_ht
-      lignesArray.push({
-        id: '',
-        commande_id: commandeId.value,
-        mercuriale_id: l.mercuriale_id,
-        quantite: l.quantite,
-        conditionnement_idx: l.conditionnement_idx,
-        prix_unitaire_ht: l.prix_unitaire_ht,
-        montant_ht: montantHt,
-        montant_ttc: montantHt * (1 + l.tva / 100),
-        created_at: '',
-      })
-    }
-  }
-
-  // Always use current form values (commande.value may have stale DB data)
-  const commandeData: Commande = {
-    id: commande.value?.id || commandeId.value,
-    numero: commande.value?.numero || commandeId.value,
-    fournisseur_id: selectedFournisseurId.value,
-    statut: commande.value?.statut || 'brouillon',
-    date_commande: commande.value?.date_commande || toLocalDateStr(new Date()),
-    date_livraison_prevue: dateLivraison.value || null,
-    montant_total_ht: totalHT.value,
-    montant_total_ttc: totalTTC.value,
-    notes: notes.value || null,
-    pdf_url: commande.value?.pdf_url || null,
-    created_by: commande.value?.created_by || user.value?.id || '',
-    locked_by: null,
-    locked_at: null,
-    created_at: commande.value?.created_at || '',
-    updated_at: '',
-  }
-
-  const pdf = await generateCommandePdf({
-    commande: commandeData,
-    lignes: lignesArray,
-    fournisseur: fournisseur.value,
-    getMercuriale: (id: string) => mercurialeStore.getById(id),
-  })
-
-  // Clean up previous blob URL
-  if (pdfBlobUrl.value) {
-    URL.revokeObjectURL(pdfBlobUrl.value)
-  }
-
-  const blob = pdf.output('blob')
-  pdfBlobUrl.value = URL.createObjectURL(blob)
-  showPdfModal.value = true
-}
-
-function closePdfModal() {
-  showPdfModal.value = false
-}
-
-function openPdfNewTab() {
-  if (pdfBlobUrl.value) {
-    window.open(pdfBlobUrl.value, '_blank')
-  }
-}
 
 // ─── Actions ───
 
@@ -471,150 +399,11 @@ async function handleEnvoyer() {
   sendError.value = null
 
   try {
-    // Save lines first
-    const lignesArray: Partial<CommandeLigne>[] = []
-    const lignesForPdf: CommandeLigne[] = []
-    for (const l of lignes.value.values()) {
-      if (l.quantite > 0) {
-        const montantHt = l.quantite * l.prix_unitaire_ht
-        const ligne: Partial<CommandeLigne> = {
-          mercuriale_id: l.mercuriale_id,
-          quantite: l.quantite,
-          conditionnement_idx: l.conditionnement_idx,
-          prix_unitaire_ht: l.prix_unitaire_ht,
-          montant_ht: montantHt,
-          montant_ttc: montantHt * (1 + l.tva / 100),
-        }
-        lignesArray.push(ligne)
-        lignesForPdf.push({
-          id: '',
-          commande_id: commandeId.value,
-          mercuriale_id: l.mercuriale_id,
-          quantite: l.quantite,
-          conditionnement_idx: l.conditionnement_idx,
-          prix_unitaire_ht: l.prix_unitaire_ht,
-          montant_ht: montantHt,
-          montant_ttc: montantHt * (1 + l.tva / 100),
-          created_at: '',
-        })
-      }
-    }
-    await commandesStore.saveLignes(commandeId.value, lignesArray)
-
-    // Always use current form values (commande.value may have stale DB data)
-    const commandeData: Commande = {
-      id: commande.value?.id || commandeId.value,
-      numero: commande.value?.numero || commandeId.value,
-      fournisseur_id: selectedFournisseurId.value,
-      statut: commande.value?.statut || 'brouillon',
-      date_commande: commande.value?.date_commande || toLocalDateStr(new Date()),
-      date_livraison_prevue: dateLivraison.value || null,
-      montant_total_ht: totalHT.value,
-      montant_total_ttc: totalTTC.value,
-      notes: notes.value || null,
-      pdf_url: commande.value?.pdf_url || null,
-      created_by: commande.value?.created_by || user.value?.id || '',
-      locked_by: null,
-      locked_at: null,
-      created_at: commande.value?.created_at || '',
-      updated_at: '',
-    }
-
-    // Generate PDF
-    const pdf = await generateCommandePdf({
-      commande: commandeData,
-      lignes: lignesForPdf,
-      fournisseur: fournisseur.value,
-      getMercuriale: (id: string) => mercurialeStore.getById(id),
-    })
-
-    // Convert PDF to base64 for email attachment
-    const pdfBase64 = pdf.output('datauristring').split(',')[1]!
-
-    // Send email to supplier
-    const emailTo = fournisseur.value.email_commande
-    if (emailTo) {
-      const livraisonStr = dateLivraison.value
-        ? new Date(dateLivraison.value).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
-        : 'non précisée'
-
-      // Detect if this is a re-sent (modified) order
-      const isModified = commande.value && commande.value.statut !== 'brouillon'
-      const dateStr = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
-      const subjectLabel = isModified ? 'Commande modifiée' : 'Nouvelle commande'
-      const subject = `${dateStr} | ${subjectLabel} | Phood | Bègles | ${commandeData.numero}`
-
-      const modifiedNote = isModified
-        ? `<p style="background:#fef3cd;padding:10px;border-radius:6px;color:#856404;">⚠️ Cette commande <strong>annule et remplace</strong> la commande précédente ${commandeData.numero}.</p>`
-        : ''
-
-      // Build email payload with BCC support
-      const emailPayload: Record<string, unknown> = {
-        to: emailTo,
-        subject,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px;">
-            <h2 style="color: #E85D2C;">Phood Restaurant — Bègles</h2>
-            <p>Bonjour,</p>
-            ${modifiedNote}
-            <p>Veuillez trouver ci-joint notre bon de commande <strong>${commandeData.numero}</strong>.</p>
-            <table style="border-collapse: collapse; margin: 16px 0;">
-              <tr><td style="padding: 4px 12px 4px 0; color: #666;">Livraison souhaitée :</td><td><strong>${livraisonStr}</strong></td></tr>
-              <tr><td style="padding: 4px 12px 4px 0; color: #666;">Montant HT :</td><td><strong>${totalHT.value.toFixed(2)} €</strong></td></tr>
-              <tr><td style="padding: 4px 12px 4px 0; color: #666;">Articles :</td><td><strong>${nbArticles.value}</strong></td></tr>
-            </table>
-            ${notes.value ? `<p><em>Notes : ${notes.value}</em></p>` : ''}
-            <p>Cordialement,<br/>L'équipe Phood Restaurant</p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-            <p style="font-size: 12px; color: #999;">Ce message a été envoyé automatiquement par PhoodApp.</p>
-          </div>
-        `,
-        attachments: [{
-          filename: `${commandeData.numero}.pdf`,
-          content: pdfBase64,
-          contentType: 'application/pdf',
-        }],
-      }
-
-      // Add BCC if configured for this supplier
-      if (fournisseur.value.email_commande_bcc) {
-        emailPayload.bcc = fournisseur.value.email_commande_bcc
-      }
-
-      const response = await fetch('/.netlify/functions/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(emailPayload),
-      })
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({ error: 'Erreur envoi email' }))
-        throw new Error(errBody.error || `Email error ${response.status}`)
-      }
-    }
-
-    // Upload PDF to Supabase Storage
-    try {
-      const pdfBlob = pdf.output('blob')
-      const pdfPath = `commandes/${commandeData.numero}.pdf`
-      await storageUpload('pdfs', pdfPath, pdfBlob, {
-        contentType: 'application/pdf',
-        upsert: true,
-      })
-      // Update commande with PDF URL
-      const publicUrl = storagePublicUrl('pdfs', pdfPath)
-      await commandesStore.updateCommande(commandeId.value, { pdf_url: publicUrl })
-    } catch {
-      // PDF upload is not critical — continue
-      console.warn('PDF upload to storage failed, continuing...')
-    }
-
-    // Update status to sent
-    await commandesStore.updateStatut(commandeId.value, 'envoyee')
-    router.push('/commandes')
+    // Save draft first, then redirect to recap/send page
+    await handleSaveDraft()
+    router.push(`/commandes/${commandeId.value}/envoyer`)
   } catch (e: unknown) {
-    sendError.value = e instanceof Error ? e.message : 'Erreur lors de l\'envoi'
-    console.error('handleEnvoyer error:', e)
+    sendError.value = e instanceof Error ? e.message : 'Erreur lors de la sauvegarde'
   } finally {
     sending.value = false
   }
@@ -938,13 +727,6 @@ watch(selectedFournisseurId, async (newId) => {
           Sauvegarder brouillon
         </button>
         <button
-          class="btn-outline"
-          :disabled="nbArticles === 0"
-          @click="handlePdfPreview"
-        >
-          Aper&ccedil;u PDF
-        </button>
-        <button
           class="btn-primary"
           :disabled="!francoAtteint || !dateLivraison || nbArticles === 0 || sending || (!commandeAutorisee.ok && !forceEnvoi)"
           @click="handleEnvoyer"
@@ -957,32 +739,6 @@ watch(selectedFournisseurId, async (newId) => {
       <div v-if="sendError" class="send-error">{{ sendError }}</div>
     </div>
 
-    <!-- PDF Preview Modal -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div v-if="showPdfModal" class="pdf-overlay" @click.self="closePdfModal">
-          <div class="pdf-modal">
-            <div class="pdf-modal-header">
-              <h3>Aper&ccedil;u du bon de commande</h3>
-              <div class="pdf-modal-actions">
-                <button class="btn-outline small" @click="openPdfNewTab">
-                  Ouvrir dans un nouvel onglet
-                </button>
-                <button class="btn-icon-close" @click="closePdfModal">&#x2715;</button>
-              </div>
-            </div>
-            <div class="pdf-modal-body">
-              <iframe
-                v-if="pdfBlobUrl"
-                :src="pdfBlobUrl"
-                class="pdf-iframe"
-                title="Aper&ccedil;u PDF commande"
-              />
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 
@@ -1467,93 +1223,6 @@ h1 {
   border-radius: var(--radius-md);
   color: #991b1b;
   font-size: 14px;
-}
-
-/* PDF Modal */
-.pdf-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-}
-
-.pdf-modal {
-  background: var(--bg-surface);
-  border-radius: var(--radius-lg);
-  width: 100%;
-  max-width: 900px;
-  height: 85vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.pdf-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.pdf-modal-header h3 {
-  font-size: 18px;
-  font-weight: 700;
-  margin: 0;
-}
-
-.pdf-modal-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.btn-icon-close {
-  width: 40px;
-  height: 40px;
-  border: none;
-  background: var(--bg-main);
-  border-radius: 50%;
-  font-size: 18px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-}
-
-.pdf-modal-body {
-  flex: 1;
-  overflow: hidden;
-}
-
-.pdf-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-}
-
-/* Modal transition */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.2s ease;
-}
-.modal-enter-active .pdf-modal,
-.modal-leave-active .pdf-modal {
-  transition: transform 0.25s ease;
-}
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-.modal-enter-from .pdf-modal,
-.modal-leave-to .pdf-modal {
-  transform: scale(0.95);
 }
 
 /* FIX 5: Creneau banner */

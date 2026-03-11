@@ -5,6 +5,7 @@ import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useCommandesStore } from '@/stores/commandes'
 import { restCall } from '@/lib/rest-client'
 import { loadConfig } from '@/lib/create-notification'
+import { getEtablissement, emailSubjectPrefix, emailFooter } from '@/lib/email-templates'
 import type { Avoir, StatutAvoir, Config } from '@/types/database'
 
 const { isManagerOrAbove } = useAuth()
@@ -107,7 +108,7 @@ async function sendRelance(avoir: Avoir) {
       body: JSON.stringify({
         to: fournisseur.email_commande,
         cc: config.value?.destinataires_email_avoir || [],
-        subject: `${today} | RELANCE Demande d'avoir | Phood | Begles | ${commandeNum}`,
+        subject: `${emailSubjectPrefix(getEtablissement(config.value), "RELANCE Demande d'avoir")} | ${commandeNum}`,
         html: emailHtml,
       }),
     })
@@ -164,7 +165,7 @@ function buildRelanceEmailHtml(avoir: Avoir, _fournisseurNom: string, commandeNu
       </table>
       <p>Merci de nous faire un retour dans les plus brefs delais.</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-      <p style="color:#888;font-size:13px;">Phood Restaurant — Begles<br/>team.begles@phood-restaurant.fr</p>
+      ${emailFooter(getEtablissement(config.value))}
     </div>
   `
 }

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { restCall } from '@/lib/rest-client'
 import { useAuth } from '@/composables/useAuth'
 import { syncCalendriers } from '@/lib/calendriers'
+import EmailTagInput from '@/components/EmailTagInput.vue'
 import type { Config, ZoneStockage, Profile } from '@/types/database'
 
 const { profile: myProfile } = useAuth()
@@ -108,6 +109,15 @@ async function saveConfig() {
       destinataires_email_avoir: config.value.destinataires_email_avoir,
       destinataires_email_alertes: config.value.destinataires_email_alertes,
       google_calendar_id: config.value.google_calendar_id,
+      etablissement_nom: config.value.etablissement_nom,
+      etablissement_slogan: config.value.etablissement_slogan,
+      etablissement_adresse: config.value.etablissement_adresse,
+      etablissement_code_postal: config.value.etablissement_code_postal,
+      etablissement_ville: config.value.etablissement_ville,
+      etablissement_telephone: config.value.etablissement_telephone,
+      etablissement_email: config.value.etablissement_email,
+      etablissement_contact: config.value.etablissement_contact,
+      etablissement_creneaux_livraison: config.value.etablissement_creneaux_livraison,
     })
     saveMsg.value = 'Enregistré'
     setTimeout(() => saveMsg.value = '', 3000)
@@ -512,64 +522,128 @@ function formatDuration(ms: number | null) {
       <!-- General settings -->
       <div v-if="activeTab === 'general'" class="tab-content">
         <div v-if="config" class="settings-form">
-          <div class="field-group">
-            <label>Seuil alerte écart prix (%)</label>
-            <input
-              v-model.number="config.seuil_ecart_prix_pct"
-              type="number"
-              inputmode="numeric"
-              min="0"
-              max="100"
-              step="1"
-            />
-            <span class="hint">Alerte si prix BL dépasse ce % vs BC</span>
-          </div>
 
-          <div class="field-group">
-            <label>Délai alerte avoir (heures)</label>
-            <input
-              v-model.number="config.delai_alerte_avoir_heures"
-              type="number"
-              inputmode="numeric"
-              min="1"
-            />
-            <span class="hint">Rappel si demande d'avoir non résolue</span>
-          </div>
+          <!-- Établissement -->
+          <fieldset class="settings-fieldset">
+            <legend>Établissement</legend>
 
-          <div class="field-group">
-            <label>Expiration avoir (heures)</label>
-            <input
-              v-model.number="config.delai_expiration_avoir_heures"
-              type="number"
-              inputmode="numeric"
-              min="1"
-            />
-          </div>
+            <div class="field-group">
+              <label>Nom du restaurant</label>
+              <input v-model="config.etablissement_nom" placeholder="Phood Restaurant" />
+            </div>
 
-          <div class="field-group">
-            <label>Emails alertes (séparés par virgule)</label>
-            <input
-              :value="config.destinataires_email_alertes?.join(', ')"
-              @change="config.destinataires_email_alertes = ($event.target as HTMLInputElement).value.split(',').map(e => e.trim()).filter(Boolean)"
-            />
-          </div>
+            <div class="field-group">
+              <label>Slogan</label>
+              <input v-model="config.etablissement_slogan" placeholder="Manger Viet & Bien" />
+            </div>
 
-          <div class="field-group">
-            <label>Emails avoirs (séparés par virgule)</label>
-            <input
-              :value="config.destinataires_email_avoir?.join(', ')"
-              @change="config.destinataires_email_avoir = ($event.target as HTMLInputElement).value.split(',').map(e => e.trim()).filter(Boolean)"
-            />
-          </div>
+            <div class="field-group">
+              <label>Adresse</label>
+              <input v-model="config.etablissement_adresse" placeholder="Galerie CC Rives d'Arcins" />
+            </div>
 
-          <div class="field-group">
-            <label>ID Google Calendar (livraisons & commandes)</label>
-            <input
-              v-model="config.google_calendar_id"
-              placeholder="exemple@group.calendar.google.com"
-            />
-            <span class="field-help">Calendrier dédié recommandé. Compatible Google Nest Mini.</span>
-          </div>
+            <div class="field-row">
+              <div class="field-group">
+                <label>Code postal</label>
+                <input v-model="config.etablissement_code_postal" placeholder="33130" inputmode="numeric" />
+              </div>
+              <div class="field-group">
+                <label>Ville</label>
+                <input v-model="config.etablissement_ville" placeholder="Bègles" />
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label>Téléphone</label>
+              <input v-model="config.etablissement_telephone" type="tel" placeholder="07 60 49 43 11" />
+            </div>
+
+            <div class="field-group">
+              <label>Email (expéditeur / réponse)</label>
+              <input v-model="config.etablissement_email" type="email" inputmode="email" placeholder="team.begles@phood-restaurant.fr" />
+              <span class="hint">Apparaît sur les bons de commande et emails sortants</span>
+            </div>
+
+            <div class="field-group">
+              <label>Personne à contacter</label>
+              <input v-model="config.etablissement_contact" placeholder="Prénom Nom" />
+            </div>
+
+            <div class="field-group">
+              <label>Créneaux de livraison recommandés</label>
+              <input v-model="config.etablissement_creneaux_livraison" placeholder="Ex: 7h-9h du mardi au samedi" />
+              <span class="hint">Affiché sur le bon de commande PDF</span>
+            </div>
+          </fieldset>
+
+          <!-- Alertes & Avoirs -->
+          <fieldset class="settings-fieldset">
+            <legend>Alertes & Avoirs</legend>
+
+            <div class="field-group">
+              <label>Seuil alerte écart prix (%)</label>
+              <input
+                v-model.number="config.seuil_ecart_prix_pct"
+                type="number"
+                inputmode="numeric"
+                min="0"
+                max="100"
+                step="1"
+              />
+              <span class="hint">Alerte si prix BL dépasse ce % vs BC</span>
+            </div>
+
+            <div class="field-group">
+              <label>Délai alerte avoir (heures)</label>
+              <input
+                v-model.number="config.delai_alerte_avoir_heures"
+                type="number"
+                inputmode="numeric"
+                min="1"
+              />
+              <span class="hint">Rappel si demande d'avoir non résolue</span>
+            </div>
+
+            <div class="field-group">
+              <label>Expiration avoir (heures)</label>
+              <input
+                v-model.number="config.delai_expiration_avoir_heures"
+                type="number"
+                inputmode="numeric"
+                min="1"
+              />
+            </div>
+
+            <div class="field-group">
+              <label>Emails alertes</label>
+              <EmailTagInput
+                v-model="config.destinataires_email_alertes"
+                placeholder="Ajouter un email..."
+              />
+            </div>
+
+            <div class="field-group">
+              <label>Emails avoirs</label>
+              <EmailTagInput
+                v-model="config.destinataires_email_avoir"
+                placeholder="Ajouter un email..."
+              />
+            </div>
+          </fieldset>
+
+          <!-- Intégrations -->
+          <fieldset class="settings-fieldset">
+            <legend>Intégrations</legend>
+
+            <div class="field-group">
+              <label>ID Google Calendar (livraisons & commandes)</label>
+              <input
+                v-model="config.google_calendar_id"
+                placeholder="exemple@group.calendar.google.com"
+              />
+              <span class="hint">Calendrier dédié recommandé. Compatible Google Nest Mini.</span>
+            </div>
+          </fieldset>
 
           <div class="actions">
             <button class="btn-save" :disabled="saving" @click="saveConfig">
@@ -973,7 +1047,31 @@ function formatDuration(ms: number | null) {
 .settings-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
+}
+
+.settings-fieldset {
+  border: 1px solid var(--border, #D1D5DB);
+  border-radius: var(--radius-sm, 8px);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-fieldset legend {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: 0 8px;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+.field-row .field-group {
+  flex: 1;
 }
 
 .field-group {

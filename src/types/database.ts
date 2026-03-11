@@ -19,7 +19,29 @@ export interface Config {
   destinataires_email_avoir: string[]
   destinataires_email_alertes: string[]
   google_calendar_id: string | null
+  // Établissement (restaurant identity)
+  etablissement_nom: string | null
+  etablissement_slogan: string | null
+  etablissement_adresse: string | null
+  etablissement_code_postal: string | null
+  etablissement_ville: string | null
+  etablissement_telephone: string | null
+  etablissement_email: string | null
+  etablissement_contact: string | null
+  etablissement_creneaux_livraison: string | null
   updated_at: string
+}
+
+export interface EtablissementInfo {
+  nom: string
+  slogan: string
+  adresse: string
+  code_postal: string
+  ville: string
+  telephone: string
+  email: string
+  contact: string | null
+  creneaux_livraison: string | null
 }
 
 export interface ZoneStockage {

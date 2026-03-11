@@ -37,6 +37,11 @@ const router = createRouter({
           component: () => import('@/modules/commandes/CommandeEditPage.vue'),
         },
         {
+          path: 'commandes/:id/envoyer',
+          name: 'commande-envoyer',
+          component: () => import('@/modules/commandes/CommandeRecapPage.vue'),
+        },
+        {
           path: 'commandes/:id',
           name: 'commande-detail',
           component: () => import('@/modules/commandes/CommandeEditPage.vue'),

@@ -12,10 +12,11 @@
  * Schedule configured in netlify.toml
  */
 
+const { sendEmail } = require('./lib/gmail');
+
 exports.handler = async function () {
   const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
   const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     console.error('Missing env vars');
@@ -254,7 +255,7 @@ exports.handler = async function () {
     }
 
     // ── 5. Send grouped email if alerts found ─────────────────
-    if (alerts.length > 0 && emailRecipients.length > 0 && RESEND_API_KEY) {
+    if (alerts.length > 0 && emailRecipients.length > 0) {
       const htmlParts = alerts.map(a => `
         <div style="margin-bottom:20px;padding:16px;border-left:4px solid #E85D2C;background:#fef9f7;">
           <h3 style="margin:0 0 8px;color:#E85D2C;">${a.titre}</h3>
@@ -262,27 +263,19 @@ exports.handler = async function () {
         </div>
       `);
 
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: 'Phood Restaurant <team.begles@phood-restaurant.fr>',
-          to: emailRecipients,
-          subject: `[Phood] ${alerts.length} alerte(s) du jour`,
-          html: `
-            <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
-              <h2 style="color:#E85D2C;">Alertes PhoodApp</h2>
-              ${htmlParts.join('')}
-              <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-              <p style="color:#888;font-size:13px;">
-                <a href="https://app.phood.fr/" style="color:#E85D2C;">Ouvrir PhoodApp</a>
-              </p>
-            </div>
-          `,
-        }),
+      await sendEmail({
+        to: emailRecipients,
+        subject: `[Phood] ${alerts.length} alerte(s) du jour`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+            <h2 style="color:#E85D2C;">Alertes PhoodApp</h2>
+            ${htmlParts.join('')}
+            <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+            <p style="color:#888;font-size:13px;">
+              <a href="https://app.phood.fr/" style="color:#E85D2C;">Ouvrir PhoodApp</a>
+            </p>
+          </div>
+        `,
       });
       console.log(`Alert email sent to ${emailRecipients.join(', ')}`);
     }

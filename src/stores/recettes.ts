@@ -178,6 +178,66 @@ export const useRecettesStore = defineStore('recettes', () => {
     return results
   }
 
+  /**
+   * Get all base ingredient IDs recursively (through sub-recipes, max 3 levels)
+   */
+  function getAllBaseIngredientIds(recetteId: string, depth = 0): Set<string> {
+    if (depth > 3) return new Set()
+    const ids = new Set<string>()
+    const ris = getIngredients(recetteId)
+    for (const ri of ris) {
+      if (ri.ingredient_id) {
+        ids.add(ri.ingredient_id)
+      } else if (ri.sous_recette_id) {
+        getAllBaseIngredientIds(ri.sous_recette_id, depth + 1).forEach(id => ids.add(id))
+      }
+    }
+    return ids
+  }
+
+  const _norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+  /**
+   * Find all PLATS (Zelty products only, no sub-recipes) containing a specific ingredient by name.
+   * Also searches the `contient` free-text field for black-box ingredients.
+   */
+  function findRecipesWithIngredient(
+    query: string,
+    getIngredientInfo: (id: string) => { nom: string; contient: string | null } | undefined,
+  ): { recette: Recette; matchedIngredients: string[] }[] {
+    const results: { recette: Recette; matchedIngredients: string[] }[] = []
+    const q = _norm(query.trim())
+    if (q.length < 2) return results
+
+    for (const recette of plats.value) {
+      const ris = getIngredients(recette.id)
+      if (ris.length === 0) continue
+      if (/EMP\/LIV|EMP\b.*\bLIV\b/i.test(recette.nom)) continue
+      const cat = recette.categorie
+      if (cat === 'Test' || cat === 'Kit boitage') continue
+
+      const baseIds = getAllBaseIngredientIds(recette.id)
+      const matched = new Set<string>()
+
+      for (const id of baseIds) {
+        const info = getIngredientInfo(id)
+        if (!info) continue
+        if (_norm(info.nom).includes(q)) {
+          matched.add(info.nom)
+        }
+        if (info.contient && _norm(info.contient).includes(q)) {
+          matched.add(info.nom + ' (composition)')
+        }
+      }
+
+      if (matched.size > 0) {
+        results.push({ recette, matchedIngredients: Array.from(matched) })
+      }
+    }
+
+    return results
+  }
+
   async function setActif(id: string, actif: boolean) {
     await restCall('PATCH', `recettes?id=eq.${id}`, { actif })
     const rec = recettes.value.find(r => r.id === id)
@@ -197,6 +257,6 @@ export const useRecettesStore = defineStore('recettes', () => {
     recettes, recetteIngredients, loading, error,
     actives, plats, sousRecettes, allPlats, allSousRecettes, categories,
     fetchAll, getById, getIngredients, calculateCost, getAllergens,
-    findRecipesWithAllergen, setActif, bulkSetActif,
+    findRecipesWithAllergen, findRecipesWithIngredient, setActif, bulkSetActif,
   }
 })

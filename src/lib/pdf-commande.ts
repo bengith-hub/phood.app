@@ -1,23 +1,14 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { Commande, CommandeLigne, Fournisseur, Mercuriale, Conditionnement } from '@/types/database'
+import type { Commande, CommandeLigne, Fournisseur, Mercuriale, Conditionnement, EtablissementInfo } from '@/types/database'
 
 interface PdfData {
   commande: Commande
   lignes: CommandeLigne[]
   fournisseur: Fournisseur
   getMercuriale: (id: string) => Mercuriale | undefined
-}
-
-// Restaurant constants
-const RESTAURANT = {
-  nom: 'Phood Restaurant',
-  slogan: 'Manger Viet & Bien',
-  adresse: 'Galerie CC Rives d\'Arcins',
-  codePostal: '33130',
-  ville: 'Bègles',
-  telephone: '07 60 49 43 11',
-  email: 'team.begles@phood-restaurant.fr',
+  etablissement: EtablissementInfo
+  commentaire?: string
 }
 
 const PHOOD_ORANGE: [number, number, number] = [232, 93, 44]
@@ -50,7 +41,7 @@ async function loadLogo(): Promise<string | null> {
 loadLogo()
 
 export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
-  const { commande, lignes, fournisseur, getMercuriale } = data
+  const { commande, lignes, fournisseur, getMercuriale, etablissement } = data
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -115,10 +106,18 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   if (fournisseur.email_commande_bcc) fournisseurLines.push(`Email : ${fournisseur.email_commande_bcc}`)
   if (fournisseur.contact_nom) fournisseurLines.push(`Contact : ${fournisseur.contact_nom}`)
 
+  // Right box: base lines + optional contact + optional creneaux
+  const etablissementLines: string[] = []
+  etablissementLines.push(`${etablissement.adresse}, ${etablissement.code_postal} ${etablissement.ville}`)
+  etablissementLines.push(`${etablissement.code_postal} ${etablissement.ville}, FR`)
+  etablissementLines.push(`Téléphone : ${etablissement.telephone}`)
+  if (etablissement.contact) etablissementLines.push(`Contact : ${etablissement.contact}`)
+  if (etablissement.creneaux_livraison) etablissementLines.push(`Créneaux livraison : ${etablissement.creneaux_livraison}`)
+
   // Left box: label(6) + name(7) + lines(5 each) + padding(5) = 18 + lines*5
   const leftH = 18 + fournisseurLines.length * 5
-  // Right box: label(6) + name(7) + address(5) + city(5) + phone(5) + gap(3) + date1(5) + date2(5) + padding(4) = 45
-  const rightH = 45
+  // Right box: label(6) + name(7) + etab lines(5 each) + gap(3) + date1(5) + date2(5) + padding(4) = 30 + etabLines*5
+  const rightH = 30 + etablissementLines.length * 5 + 10
   const boxH = Math.max(leftH, rightH)
 
   // Fournisseur box (left)
@@ -157,29 +156,33 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(...PHOOD_ORANGE)
-  doc.text('ÉTABLISSEMENT : BÈGLES', boxRight + 5, boxTop + 6)
+  doc.text(`ÉTABLISSEMENT : ${etablissement.ville.toUpperCase()}`, boxRight + 5, boxTop + 6)
 
   doc.setFontSize(11)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(...PHOOD_DARK)
-  doc.text(RESTAURANT.nom, boxRight + 5, boxTop + 13)
+  doc.text(etablissement.nom, boxRight + 5, boxTop + 13)
 
   doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(60)
-  doc.text(`${RESTAURANT.adresse}, ${RESTAURANT.codePostal} ${RESTAURANT.ville}`, boxRight + 5, boxTop + 19)
-  doc.text(`${RESTAURANT.codePostal} ${RESTAURANT.ville}, FR`, boxRight + 5, boxTop + 24)
-  doc.text(`Téléphone : ${RESTAURANT.telephone}`, boxRight + 5, boxTop + 29)
+  let etabLineY = boxTop + 19
+  for (const line of etablissementLines) {
+    doc.text(line, boxRight + 5, etabLineY)
+    etabLineY += 5
+  }
 
-  // Dates inside the right box (below phone, with a small gap)
+  // Dates inside the right box (below content, with a small gap)
+  etabLineY += 2
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(...PHOOD_ORANGE)
   if (commande.date_commande) {
-    doc.text(`Date de commande (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_commande)}`, boxRight + 5, boxTop + 35)
+    doc.text(`Date de commande (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_commande)}`, boxRight + 5, etabLineY)
+    etabLineY += 5
   }
   if (commande.date_livraison_prevue) {
-    doc.text(`Date de livraison (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_livraison_prevue)}`, boxRight + 5, boxTop + 40)
+    doc.text(`Date de livraison (jj/mm/aaaa) : ${formatDateDDMMYYYY(commande.date_livraison_prevue)}`, boxRight + 5, etabLineY)
   }
 
   y = boxTop + boxH + 8
@@ -187,6 +190,9 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   // ═══════════════════════════════════════════════════════
   // COMMENTAIRE (optional)
   // ═══════════════════════════════════════════════════════
+  // Combine commande.notes + extra commentaire from send screen
+  const allNotes = [commande.notes, data.commentaire].filter(Boolean).join('\n')
+
   // Always show the section header (empty = ready for handwritten notes)
   doc.setFillColor(245, 245, 245)
   doc.roundedRect(margin, y, contentWidth, 7, 1, 1, 'F')
@@ -196,11 +202,11 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   doc.text('Commentaire :', margin + 4, y + 5)
   y += 9
 
-  if (commande.notes) {
+  if (allNotes) {
     doc.setFontSize(8.5)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(60)
-    const noteLines = doc.splitTextToSize(commande.notes, contentWidth - 10)
+    const noteLines = doc.splitTextToSize(allNotes, contentWidth - 10)
     doc.text(noteLines, margin + 4, y + 4)
     y += noteLines.length * 4 + 6
   } else {
@@ -316,7 +322,7 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   doc.setTextColor(150)
   doc.text('Généré par PhoodApp', margin, pageHeight - 10)
   doc.text(
-    `${RESTAURANT.nom} — ${RESTAURANT.adresse}, ${RESTAURANT.codePostal} ${RESTAURANT.ville}`,
+    `${etablissement.nom} — ${etablissement.adresse}, ${etablissement.code_postal} ${etablissement.ville}`,
     pageWidth / 2,
     pageHeight - 10,
     { align: 'center' }
