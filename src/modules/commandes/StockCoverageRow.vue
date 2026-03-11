@@ -10,6 +10,8 @@ export interface StockCoverageInfo {
   rotationIcon: string
   coverageOk: boolean
   unite: string
+  noRecentData?: boolean
+  enTransit?: number
 }
 
 const props = defineProps<{
@@ -19,10 +21,19 @@ const props = defineProps<{
 
 <template>
   <div v-if="props.coverage" class="stock-coverage">
+    <!-- Alert: no recent stock data -->
+    <div v-if="props.coverage.noRecentData" class="stock-alert">
+      Pas de donn&eacute;es stock r&eacute;centes (&gt;30j)
+    </div>
+
     <div class="stock-row">
       <div class="stock-item">
         <span class="stock-label">Stock actuel</span>
         <span class="stock-value">{{ props.coverage.stockActuel.toFixed(1) }} {{ props.coverage.unite }}</span>
+      </div>
+      <div v-if="props.coverage.enTransit && props.coverage.enTransit > 0" class="stock-item">
+        <span class="stock-label">En transit</span>
+        <span class="stock-value transit">+{{ props.coverage.enTransit.toFixed(1) }} {{ props.coverage.unite }}</span>
       </div>
       <div class="stock-item">
         <span class="stock-label">Tampon</span>
@@ -70,6 +81,16 @@ const props = defineProps<{
   background: var(--bg-main);
 }
 
+.stock-alert {
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3cd;
+  border-radius: 6px;
+}
+
 .stock-row {
   display: flex;
   flex-wrap: wrap;
@@ -103,6 +124,10 @@ const props = defineProps<{
 
 .stock-value.reco {
   color: var(--color-primary);
+}
+
+.stock-value.transit {
+  color: var(--color-info, #2563eb);
 }
 
 .coverage-date.coverage-ok {

@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { restCall } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
+import { useFournisseursStore } from '@/stores/fournisseurs'
+import { useMercurialeStore } from '@/stores/mercuriale'
 import type { Commande, CommandeLigne, StatutCommande } from '@/types/database'
 
 export const useCommandesStore = defineStore('commandes', () => {
@@ -99,10 +101,18 @@ export const useCommandesStore = defineStore('commandes', () => {
       const cmd = commandes.value.find(c => c.id === id)
       if (!cmd) return
 
+      // Resolve supplier name and product names (FIX 8+9)
+      const fournisseursStore = useFournisseursStore()
+      const mercurialeStore = useMercurialeStore()
+      const fournisseurNom = fournisseursStore.getById(cmd.fournisseur_id)?.nom || 'Fournisseur'
+
       if (statut === 'envoyee') {
         // Fetch order lines for the event description
         const lignes = await fetchLignes(id)
-        const lignesDesc = lignes.map(l => `\u2022 ${l.mercuriale_id} \u00d7 ${l.quantite}`).join('\n')
+        const lignesDesc = lignes.map(l => {
+          const merc = mercurialeStore.getById(l.mercuriale_id)
+          return `\u2022 ${merc?.designation || 'Produit inconnu'} \u00d7 ${l.quantite}`
+        }).join('\n')
 
         await fetch('/.netlify/functions/google-calendar', {
           method: 'POST',
@@ -111,7 +121,7 @@ export const useCommandesStore = defineStore('commandes', () => {
             action: 'create-delivery',
             calendarId,
             commandeNumero: cmd.numero,
-            fournisseurNom: cmd.fournisseur_id, // Will be resolved by caller if needed
+            fournisseurNom,
             dateLivraison: cmd.date_livraison_prevue || cmd.date_commande,
             nbReferences: lignes.length,
             lignesDescription: lignesDesc,
@@ -126,7 +136,7 @@ export const useCommandesStore = defineStore('commandes', () => {
             calendarId,
             commandeNumero: cmd.numero,
             newStatus: 'received',
-            fournisseurNom: cmd.fournisseur_id,
+            fournisseurNom,
           }),
         })
       }

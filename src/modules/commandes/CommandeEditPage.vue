@@ -11,9 +11,10 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { useLocking } from '@/composables/useLocking'
 import { generateCommandePdf } from '@/lib/pdf-commande'
 import { storageUpload, storagePublicUrl } from '@/lib/rest-client'
+import { toStockUnits, getConditioningUnit, fromStockUnits } from '@/lib/unit-conversion'
 import StockCoverageRow from './StockCoverageRow.vue'
 import type { StockCoverageInfo } from './StockCoverageRow.vue'
-import type { Commande, CommandeLigne, Mercuriale, Conditionnement, Fournisseur } from '@/types/database'
+import type { Commande, CommandeLigne, Mercuriale, Conditionnement, Fournisseur, IngredientRestaurant } from '@/types/database'
 
 /** Get logo URL from fournisseur's site_web via icon.horse (free, reliable) */
 function getLogoUrl(f: Partial<Fournisseur> | Fournisseur | null | undefined): string | null {
@@ -36,7 +37,7 @@ const fournisseursStore = useFournisseursStore()
 const mercurialeStore = useMercurialeStore()
 const stocksStore = useStocksStore()
 const ingredientsStore = useIngredientsStore()
-const { user, isManagerOrAbove, profile } = useAuth()
+const { user, isManagerOrAbove, isAdmin, profile } = useAuth()
 const { lockedBy, isLocked, isMyLock, acquireLock } = useLocking('commande')
 
 const commandeId = ref<string | null>(route.params.id as string || null)
@@ -97,6 +98,52 @@ const francoManquant = computed(() => Math.max(0, francoMinimum.value - totalHT.
 
 const isDraft = computed(() => !commande.value || commande.value.statut === 'brouillon')
 
+// ─── FIX 5: Order day/time verification (blocking + admin override) ───
+
+const forceEnvoi = ref(false)
+
+function computeProchainCreneau(f: Fournisseur): string {
+  const jours = f.jours_commande || []
+  const heure = f.heure_limite_commande || '23:59'
+  const noms = ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam']
+  if (jours.length === 0) return ''
+  const now = new Date()
+  for (let i = 0; i <= 7; i++) {
+    const d = new Date(now)
+    d.setDate(d.getDate() + i)
+    const jour = d.getDay()
+    if (jours.includes(jour)) {
+      if (i === 0) {
+        const heureActuelle = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+        if (heureActuelle > heure) continue
+      }
+      return `Prochain : ${noms[jour]} avant ${heure}`
+    }
+  }
+  return ''
+}
+
+const commandeAutorisee = computed(() => {
+  if (!fournisseur.value) return { ok: true, message: '' }
+  const f = fournisseur.value
+  const now = new Date()
+  const jourActuel = now.getDay()
+  const heureActuelle = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+
+  const joursOk = !f.jours_commande?.length || f.jours_commande.includes(jourActuel)
+  const heureOk = !f.heure_limite_commande || heureActuelle <= f.heure_limite_commande
+
+  if (!joursOk || !heureOk) {
+    const prochainMsg = computeProchainCreneau(f)
+    return { ok: false, message: `Hors cr\u00e9neau commande pour ce fournisseur. ${prochainMsg}` }
+  }
+  return { ok: true, message: '' }
+})
+
+// ─── FIX 6: Toggle pre-fill with recommendations ───
+
+const prefillRecommandations = ref(false)
+
 // Coverage duration: computed from date picker or supplier default
 const couvertureDefautJours = computed(() => fournisseur.value?.duree_couverture_defaut || COUVERTURE_DEFAUT_JOURS)
 
@@ -148,6 +195,43 @@ const { status: saveStatus } = useAutoSave(autoSaveData, {
   intervalMs: 5000,
 })
 
+// ─── Stock en transit (commandes envoyées non réceptionnées) ───
+
+const stockEnTransitMap = ref<Map<string, number>>(new Map())
+
+async function loadStockEnTransit() {
+  const envoyees = commandesStore.envoyees
+  const map = new Map<string, number>()
+  for (const cmd of envoyees) {
+    if (cmd.id === commandeId.value) continue
+    const cmdLignes = await commandesStore.fetchLignes(cmd.id)
+    for (const l of cmdLignes) {
+      const merc = mercurialeStore.getById(l.mercuriale_id)
+      if (!merc?.ingredient_restaurant_id) continue
+      const ing = ingredientsStore.getById(merc.ingredient_restaurant_id)
+      const condUnite = getConditioningUnit(merc)
+      const qtyStock = toStockUnits(l.quantite, merc.coefficient_conversion, condUnite, ing?.unite_stock || merc.unite_stock)
+      const current = map.get(merc.ingredient_restaurant_id) || 0
+      map.set(merc.ingredient_restaurant_id, current + qtyStock)
+    }
+  }
+  stockEnTransitMap.value = map
+}
+
+// ─── Stock tampon variable (semaine/weekend/vacances) ───
+
+function getStockTamponActuel(ing: IngredientRestaurant): number {
+  if (!dateLivraison.value) return ing.stock_tampon
+  const livDate = new Date(dateLivraison.value)
+  const dayOfWeek = livDate.getDay() // 0=dim, 5=ven, 6=sam
+  // Weekend (vendredi-dimanche) → stock_tampon_weekend if available
+  if (dayOfWeek >= 5 || dayOfWeek === 0) {
+    return ing.stock_tampon_weekend ?? ing.stock_tampon
+  }
+  // TODO V2: check vacances scolaires → ing.stock_tampon_vacances
+  return ing.stock_tampon
+}
+
 // ─── Stock coverage & rotation helpers (section 7.5) ───
 
 /**
@@ -175,16 +259,30 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
 
   const stock = stocksStore.getByIngredient(ingredientId)
   const stockActuel = stock?.quantite ?? 0
-  const stockTampon = ing.stock_tampon
+  const stockTampon = getStockTamponActuel(ing)
   const consoJour = getConsoMoyenneJour(ingredientId)
   const previsionConso3j = consoJour * 3
 
-  // Recommendation: enough to cover N days above tampon
-  const targetStock = stockTampon + consoJour * dureeEnJours.value
-  const recommandationQty = Math.max(0, Math.ceil(targetStock - stockActuel))
+  // Include losses (pertes_pct) in forecast — CDC §3.5
+  const pertesFactor = 1 + (produit.pertes_pct || 0) / 100
+  const consoPrevue = consoJour * dureeEnJours.value * pertesFactor
 
-  // Convert commanded qty from order units to stock units
-  const qtyEnUniteStock = qtyCommandee * produit.coefficient_conversion
+  // Include stock in transit (sent orders not yet received) — CDC §3.5
+  const enTransit = stockEnTransitMap.value.get(ingredientId) || 0
+
+  // Recommendation: enough to cover N days above tampon, minus stock + transit
+  const targetStock = stockTampon + consoPrevue
+  const recommandationQty = Math.max(0, Math.ceil(targetStock - stockActuel - enTransit))
+
+  // Convert commanded qty from order units to stock units (with proper unit conversion)
+  const condUnite = getConditioningUnit(produit)
+  const qtyEnUniteStock = toStockUnits(qtyCommandee, produit.coefficient_conversion, condUnite, ing.unite_stock)
+
+  // Alert if no recent stock data (>30 days)
+  const lastUpdate = stock?.derniere_maj ? new Date(stock.derniere_maj) : null
+  const thirtyDaysAgo = new Date()
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+  const noRecentData = !lastUpdate || lastUpdate < thirtyDaysAgo
 
   // Coverage date
   let dateCouverture: string | null = null
@@ -192,26 +290,26 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
 
   if (consoJour > 0 && dateLivraison.value) {
     const livDate = new Date(dateLivraison.value)
-    const stockApresLivraison = stockActuel + qtyEnUniteStock - stockTampon
+    const stockApresLivraison = stockActuel + enTransit + qtyEnUniteStock - stockTampon
     const joursCouverts = Math.floor(stockApresLivraison / consoJour)
     const coverageDate = new Date(livDate)
     coverageDate.setDate(coverageDate.getDate() + Math.max(0, joursCouverts))
     dateCouverture = coverageDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
 
-    // Check if coverage extends past estimated next delivery (assume 3-5 day cycle)
+    // Check if coverage extends past estimated next delivery
     const prochaineLivraison = new Date(livDate)
     prochaineLivraison.setDate(prochaineLivraison.getDate() + dureeEnJours.value)
     coverageOk = coverageDate.getTime() >= prochaineLivraison.getTime()
   }
 
-  // Rotation: how long does one order unit last
+  // Rotation: how long does one order unit last (in stock units)
   let rotationJours: number | null = null
   let rotationLabel = ''
   let rotationIcon = ''
 
   if (consoJour > 0) {
-    const conditionUnit = produit.coefficient_conversion
-    rotationJours = conditionUnit / consoJour
+    const conditionUnitInStock = toStockUnits(1, produit.coefficient_conversion, condUnite, ing.unite_stock)
+    rotationJours = conditionUnitInStock / consoJour
 
     if (rotationJours < 7) {
       rotationLabel = 'Rapide'
@@ -236,6 +334,8 @@ function getStockCoverage(produit: Mercuriale, qtyCommandee: number): StockCover
     rotationIcon,
     coverageOk,
     unite: ing.unite_stock,
+    noRecentData,
+    enTransit,
   }
 }
 
@@ -561,15 +661,20 @@ onMounted(async () => {
       dateLivraison.value = commande.value.date_livraison_prevue || ''
       notes.value = commande.value.notes || ''
 
-      // Load existing lines
+      // Load existing lines with conditionnement_idx protection (FIX 10)
       const existingLignes = await commandesStore.fetchLignes(commandeId.value)
       for (const l of existingLignes) {
+        const merc = mercurialeStore.getById(l.mercuriale_id)
+        const maxIdx = merc ? (merc.conditionnements?.length || 1) - 1 : 0
+        const safeIdx = l.conditionnement_idx <= maxIdx
+          ? l.conditionnement_idx
+          : Math.max(0, merc?.conditionnements?.findIndex(c => c.utilise_commande) ?? 0)
         lignes.value.set(l.mercuriale_id, {
           mercuriale_id: l.mercuriale_id,
           quantite: l.quantite,
-          conditionnement_idx: l.conditionnement_idx,
+          conditionnement_idx: safeIdx,
           prix_unitaire_ht: l.prix_unitaire_ht,
-          tva: mercurialeStore.getById(l.mercuriale_id)?.tva || 5.5,
+          tva: merc?.tva || 5.5,
         })
       }
 
@@ -582,6 +687,9 @@ onMounted(async () => {
       }
     }
   }
+
+  // Load stock in transit (sent orders not yet received) — FIX 2
+  await loadStockEnTransit()
 })
 
 // Auto-create brouillon when fournisseur selected for new order
@@ -618,6 +726,28 @@ watch(() => fournisseur.value?.duree_couverture_defaut, () => {
     const d = new Date(dateLivraison.value + 'T00:00:00')
     d.setDate(d.getDate() + couvertureDefautJours.value)
     dateFinCouverture.value = toLocalDateStr(d)
+  }
+})
+
+// FIX 6: Pre-fill quantities when toggle is activated
+watch(prefillRecommandations, (val) => {
+  if (!val) return
+  for (const group of produits.value) {
+    for (const p of group.produits) {
+      if (lignes.value.has(p.id)) continue // don't overwrite existing entries
+      const coverage = getStockCoverage(p, 0)
+      if (coverage && coverage.recommandationQty > 0) {
+        const condUnite = getConditioningUnit(p)
+        const ing = ingredientsStore.getById(p.ingredient_restaurant_id || '')
+        const qtyCommande = Math.ceil(fromStockUnits(
+          coverage.recommandationQty,
+          p.coefficient_conversion,
+          condUnite,
+          ing?.unite_stock || p.unite_stock,
+        ))
+        if (qtyCommande > 0) setQuantite(p, qtyCommande)
+      }
+    }
   }
 })
 
@@ -713,10 +843,27 @@ watch(selectedFournisseurId, async (newId) => {
         </div>
       </div>
 
+      <!-- FIX 5: Order time slot warning -->
+      <div v-if="!commandeAutorisee.ok" class="creneau-banner">
+        <span class="creneau-icon">&#x26D4;</span>
+        <span>{{ commandeAutorisee.message }}</span>
+        <label v-if="isAdmin" class="force-label">
+          <input v-model="forceEnvoi" type="checkbox" />
+          Forcer l'envoi (admin)
+        </label>
+      </div>
+
       <!-- Stock details toggle -->
-      <button class="btn-toggle-stock" @click="showStockDetails = !showStockDetails">
-        {{ showStockDetails ? 'Masquer les stocks' : 'Afficher les stocks' }}
-      </button>
+      <div class="stock-actions-row">
+        <button class="btn-toggle-stock" @click="showStockDetails = !showStockDetails">
+          {{ showStockDetails ? 'Masquer les stocks' : 'Afficher les stocks' }}
+        </button>
+        <!-- FIX 6: Pre-fill toggle -->
+        <label v-if="isDraft" class="prefill-toggle">
+          <input v-model="prefillRecommandations" type="checkbox" />
+          Pr&eacute;-remplir avec recommandations
+        </label>
+      </div>
 
       <!-- Search -->
       <input
@@ -799,10 +946,10 @@ watch(selectedFournisseurId, async (newId) => {
         </button>
         <button
           class="btn-primary"
-          :disabled="!francoAtteint || !dateLivraison || nbArticles === 0 || sending"
+          :disabled="!francoAtteint || !dateLivraison || nbArticles === 0 || sending || (!commandeAutorisee.ok && !forceEnvoi)"
           @click="handleEnvoyer"
           v-if="isManagerOrAbove"
-          :title="!dateLivraison ? 'Date de livraison requise' : !francoAtteint ? `Franco minimum non atteint (${francoMinimum.toFixed(2)} €)` : ''"
+          :title="!dateLivraison ? 'Date de livraison requise' : !francoAtteint ? `Franco minimum non atteint (${francoMinimum.toFixed(2)} €)` : !commandeAutorisee.ok ? commandeAutorisee.message : ''"
         >
           {{ sending ? 'Envoi en cours...' : 'Envoyer la commande' }}
         </button>
@@ -1407,5 +1554,65 @@ h1 {
 .modal-enter-from .pdf-modal,
 .modal-leave-to .pdf-modal {
   transform: scale(0.95);
+}
+
+/* FIX 5: Creneau banner */
+.creneau-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  font-size: 15px;
+  color: #991b1b;
+  flex-wrap: wrap;
+}
+
+.creneau-icon {
+  font-size: 20px;
+}
+
+.force-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: #7f1d1d;
+  cursor: pointer;
+}
+
+.force-label input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+
+/* FIX 6: Stock actions row with toggle */
+.stock-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.prefill-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.prefill-toggle input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--color-primary);
 }
 </style>

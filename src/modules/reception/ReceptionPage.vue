@@ -3,15 +3,18 @@ import { ref, computed, onMounted } from 'vue'
 import { useCommandesStore } from '@/stores/commandes'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useMercurialeStore } from '@/stores/mercuriale'
+import { useIngredientsStore } from '@/stores/ingredients'
 import { useAuth } from '@/composables/useAuth'
 import { restCall, storageUpload } from '@/lib/rest-client'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import { createNotificationForAdmins, loadConfig } from '@/lib/create-notification'
+import { toStockUnits, getConditioningUnit } from '@/lib/unit-conversion'
 import type { Commande, CommandeLigne, AnomalieType, AvoirLigne } from '@/types/database'
 
 const commandesStore = useCommandesStore()
 const fournisseursStore = useFournisseursStore()
 const mercurialeStore = useMercurialeStore()
+const ingredientsStore = useIngredientsStore()
 const { user, isManagerOrAbove } = useAuth()
 
 // Steps: select → photo → compare → (avoir if anomalies) → validate
@@ -251,14 +254,22 @@ async function performValidation(withAvoir: boolean) {
     const newStatut = withAvoir ? 'avoir_en_cours' : (hasAnomalies.value ? 'controlee' : 'validee')
     await commandesStore.updateStatut(selectedCommande.value.id, newStatut)
 
-    // Increment stocks for accepted quantities
+    // Increment stocks for accepted quantities (converted to stock units)
     for (const l of receptionLignes.value) {
       if (l.quantite_acceptee > 0) {
         const merc = mercurialeStore.getById(l.mercuriale_id)
         if (merc?.ingredient_restaurant_id) {
+          const ing = ingredientsStore.getById(merc.ingredient_restaurant_id)
+          const condUnite = getConditioningUnit(merc)
+          const qtyStock = toStockUnits(
+            l.quantite_acceptee,
+            merc.coefficient_conversion,
+            condUnite,
+            ing?.unite_stock || merc.unite_stock,
+          )
           await restCall('POST', 'rpc/increment_stock', {
             p_ingredient_id: merc.ingredient_restaurant_id,
-            p_quantite: l.quantite_acceptee,
+            p_quantite: qtyStock,
           })
         }
       }
@@ -507,6 +518,7 @@ onMounted(async () => {
     commandesStore.fetchAll(),
     fournisseursStore.fetchAll(),
     mercurialeStore.fetchAll(),
+    ingredientsStore.fetchAll(),
   ])
 })
 </script>
