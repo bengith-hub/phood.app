@@ -656,7 +656,7 @@ watch(
         <!-- Month summary cards -->
         <div class="summary-row">
           <div class="summary-card summary-card--primary">
-            <span class="summary-card-label">CA prevu</span>
+            <span class="summary-card-label">CA prevu (TTC)</span>
             <span class="summary-card-value">{{ formatEuros(monthTotalCA) }}</span>
             <div v-if="monthN1Evolution !== null" class="summary-card-sub">
               <span
@@ -778,17 +778,6 @@ watch(
           </div>
         </div>
 
-        <!-- Sync info -->
-        <div class="sync-section">
-          <button
-            class="btn-sync-calendars"
-            :disabled="calendarSyncing"
-            @click="syncCalendars"
-          >
-            {{ calendarSyncing ? 'Synchronisation...' : 'Mettre a jour les calendriers' }}
-          </button>
-          <span class="sync-hint">Jours feries, vacances scolaires et soldes</span>
-        </div>
       </div>
 
       <!-- === WEEK VIEW === -->
@@ -813,7 +802,7 @@ watch(
         <!-- Week summary -->
         <div class="summary-row">
           <div class="summary-card summary-card--primary">
-            <span class="summary-card-label">CA semaine (prevu)</span>
+            <span class="summary-card-label">CA semaine prevu (TTC)</span>
             <span class="summary-card-value">{{ formatEuros(weekTotalCA) }}</span>
             <div v-if="weekN1Evolution !== null" class="summary-card-sub">
               <span
@@ -1007,13 +996,13 @@ watch(
           <div class="detail-card detail-card--main">
             <div class="detail-row">
               <div class="detail-metric">
-                <span class="metric-label">CA prevu</span>
+                <span class="metric-label">CA prevu (TTC)</span>
                 <span class="metric-value metric-value--large">
                   {{ formatEuros(selectedForecast.ca_prevision) }}
                 </span>
               </div>
               <div v-if="selectedForecast.ca_realise !== null" class="detail-metric">
-                <span class="metric-label">CA realise</span>
+                <span class="metric-label">CA realise (TTC)</span>
                 <span class="metric-value metric-value--large metric-value--realise">
                   {{ formatEuros(selectedForecast.ca_realise) }}
                 </span>
@@ -1027,7 +1016,7 @@ watch(
                 </span>
               </div>
               <div v-else-if="isPastDate(selectedForecast.date)" class="detail-metric">
-                <span class="metric-label">CA realise</span>
+                <span class="metric-label">CA realise (TTC)</span>
                 <span class="metric-value metric-value--large metric-value--missing">--</span>
                 <span class="metric-missing-hint">Pas de donnee Zelty</span>
               </div>
@@ -1782,45 +1771,6 @@ watch(
   font-size: 15px;
   font-weight: 700;
   color: var(--text-primary);
-}
-
-/* --- Sync section --- */
-.sync-section {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 16px;
-  padding: 12px 16px;
-  background: var(--bg-surface);
-  border-radius: var(--radius-md);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-}
-
-.btn-sync-calendars {
-  padding: 8px 16px;
-  border: 1px solid var(--border);
-  background: white;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  min-height: 40px;
-  white-space: nowrap;
-}
-
-.btn-sync-calendars:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-sync-calendars:active:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.sync-hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 
 /* ============================= */
