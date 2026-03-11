@@ -150,13 +150,19 @@ export interface PrixVenteCanal {
 
 export interface RecetteVariante {
   nom: string
-  coefficient: number
+  zelty_option_value_id?: number  // Zelty option value ID (e.g., 1215713=Normal, 1215714=Grand)
+  coefficient: number             // Multiplier for all ingredients (e.g., 1.0, 1.5)
 }
 
 export interface RecetteModificateur {
   nom: string
-  type: string
-  ingredients: string[]
+  zelty_option_value_id?: number  // Zelty option value ID for matching
+  type: 'extra' | 'sans'
+  impact_stock: Array<{
+    ingredient_restaurant_id: string
+    quantite: number
+    unite: string
+  }>
   prix_supplement: number
 }
 

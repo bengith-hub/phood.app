@@ -297,8 +297,8 @@ function removeVariante(index: number) {
 function addModificateur() {
   modificateurs.value.push({
     nom: '',
-    type: 'extra',
-    ingredients: [],
+    type: 'extra' as const,
+    impact_stock: [],
     prix_supplement: 0,
   })
 }
@@ -444,7 +444,7 @@ onMounted(async () => {
     actif.value = r.actif
     variantes.value = r.variantes ? [...r.variantes] : []
     modificateurs.value = r.modificateurs
-      ? r.modificateurs.map(m => ({ ...m, ingredients: [...m.ingredients] }))
+      ? r.modificateurs.map(m => ({ ...m, impact_stock: [...(m.impact_stock || [])] }))
       : []
 
     // Prix

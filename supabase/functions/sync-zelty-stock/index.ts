@@ -2,26 +2,34 @@
  * Supabase Edge Function: Sync Zelty orders → decrement stock + update repartition horaire
  *
  * Called daily after sync-zelty-ca, or via webhook when an order is completed.
- * Fetches yesterday's orders from Zelty, decomposes each product sold into
- * base ingredients via the recette → recette_ingredients → ingredient chain,
- * and decrements stock for each ingredient.
+ * Fetches yesterday's orders from Zelty (with expand[]=items), decomposes each
+ * product sold into base ingredients via the recette → recette_ingredients chain,
+ * applying variante coefficients (Normal/Grand) and modificateurs (extras/sans),
+ * then decrements stock for each ingredient.
  *
  * Also calculates hourly CA distribution and updates repartition_horaire
  * using an exponential moving average (EMA) with alpha = 0.15.
  *
  * Architecture:
- * 1. Fetch closed orders from Zelty (/orders) for yesterday (with pagination)
- * 2. For each order line (product), find the matching recette via zelty_product_id
- * 3. Recursively decompose recette → ingredients (up to 3 levels of sub-recipes)
- * 4. Call decrement_stock RPC for each base ingredient
- * 5. Calculate hourly CA distribution and update repartition_horaire
+ * 1. Fetch closed orders from Zelty (/orders?expand[]=items) for yesterday
+ * 2. For each order item, find the matching recette via zelty_product_id
+ * 3. Detect variante from item.modifiers → apply coefficient (e.g., Grand = 1.5)
+ * 4. Detect modificateurs → apply extras (+stock) and "sans" (-stock)
+ * 5. Recursively decompose recette → ingredients (up to 3 levels of sub-recipes)
+ * 6. Apply unit conversion (recipe unite → stock unite) and rendement
+ * 7. Call decrement_stock RPC for each base ingredient
+ * 8. Calculate hourly CA distribution and update repartition_horaire
  *
  * Zelty API notes:
  * - /orders requires `from` and `to` params (NOT date_min/date_max)
+ * - expand[]=items is REQUIRED to get order line items
  * - Default page size is 100, use `limit` and `offset` for pagination
  * - order.created_at is ISO with timezone: "2026-03-07T19:50:44+01:00"
  * - order.price.final_amount_inc_tax is in centimes TTC
  * - order.mode: "takeaway" | "delivery" | "eat_in" | etc.
+ * - item.item_id is the Zelty dish ID (= recettes.zelty_product_id)
+ * - item.modifiers[].id is the Zelty option value ID (= variantes/modificateurs mapping)
+ * - item.modifiers[].type is always "option_value"
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -34,16 +42,35 @@ const corsHeaders = {
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10'
 const ZELTY_PAGE_SIZE = 200
 
-interface ZeltyOrderLine {
-  product_id: string
-  quantity: number
+// ========================================
+// Zelty API types
+// ========================================
+
+interface ZeltyModifier {
+  id: number
+  type: string           // "option_value"
   name: string
+  quantity: number
+  price?: {
+    original_amount_inc_tax?: number
+  }
+}
+
+interface ZeltyItem {
+  id: number
+  name: string
+  type: string           // "dish"
+  item_id: string        // Zelty dish ID = recettes.zelty_product_id
+  price?: {
+    final_amount_inc_tax?: number
+  }
+  modifiers?: ZeltyModifier[]
 }
 
 type OrderChannel = 'sur_place' | 'emporter'
 
 interface ZeltyOrder {
-  id: string
+  id: number
   status: string
   mode?: string          // 'takeaway', 'delivery', 'eat_in', etc.
   order_type?: string    // fallback field
@@ -52,8 +79,12 @@ interface ZeltyOrder {
     final_amount_inc_tax?: number  // centimes TTC
     final_amount_exc_tax?: number
   }
-  items: ZeltyOrderLine[]
+  items?: ZeltyItem[]
 }
+
+// ========================================
+// PhoodApp DB types
+// ========================================
 
 interface RecetteIngredient {
   id: string
@@ -66,16 +97,39 @@ interface RecetteIngredient {
   emporter: boolean
 }
 
+interface RecetteVariante {
+  nom: string
+  zelty_option_value_id?: number
+  coefficient: number
+}
+
+interface RecetteModificateur {
+  nom: string
+  zelty_option_value_id?: number
+  type: 'extra' | 'sans'
+  impact_stock?: Array<{
+    ingredient_restaurant_id: string
+    quantite: number
+    unite: string
+  }>
+}
+
 interface Recette {
   id: string
   nb_portions: number
   zelty_product_id: string | null
+  variantes: RecetteVariante[] | null
+  modificateurs: RecetteModificateur[] | null
 }
 
 interface IngredientInfo {
   unite_stock: string
   rendement: number | null
 }
+
+// ========================================
+// Helpers
+// ========================================
 
 /**
  * Unit conversion factor between recipe unit and stock unit.
@@ -85,20 +139,18 @@ function getUnitFactor(fromUnite: string, toUnite: string): number {
   const from = fromUnite.toLowerCase()
   const to = toUnite.toLowerCase()
   if (from === to) return 1
-  // Weight: kg ↔ g
   if (from === 'kg' && to === 'g') return 1000
   if (from === 'g' && to === 'kg') return 0.001
-  // Volume: L ↔ mL, L ↔ cl
   if (from === 'l' && to === 'ml') return 1000
   if (from === 'ml' && to === 'l') return 0.001
   if (from === 'l' && to === 'cl') return 100
   if (from === 'cl' && to === 'l') return 0.01
-  // Same or count-based (unite, piece, botte) → no conversion
   return 1
 }
 
 /**
  * Fetch all orders for a given day from Zelty with pagination.
+ * Uses expand[]=items to include order line items with modifiers.
  */
 async function fetchDayOrders(apiKey: string, dateStr: string): Promise<ZeltyOrder[]> {
   const allOrders: ZeltyOrder[] = []
@@ -106,7 +158,7 @@ async function fetchDayOrders(apiKey: string, dateStr: string): Promise<ZeltyOrd
   const MAX_PAGES = 10
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const url = `${ZELTY_BASE_URL}/orders?from=${dateStr}T00:00:00&to=${dateStr}T23:59:59&limit=${ZELTY_PAGE_SIZE}&offset=${offset}`
+    const url = `${ZELTY_BASE_URL}/orders?from=${dateStr}T00:00:00&to=${dateStr}T23:59:59&limit=${ZELTY_PAGE_SIZE}&offset=${offset}&expand[]=items`
     const resp = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -122,9 +174,7 @@ async function fetchDayOrders(apiKey: string, dateStr: string): Promise<ZeltyOrd
     const orders: ZeltyOrder[] = data.orders || []
     allOrders.push(...orders)
 
-    // Stop if last page
     if (orders.length < ZELTY_PAGE_SIZE) break
-
     offset += ZELTY_PAGE_SIZE
   }
 
@@ -142,6 +192,10 @@ function extractLocalHour(timestamp: string | undefined): number | null {
   if (match) return parseInt(match[1]!, 10)
   return null
 }
+
+// ========================================
+// Main handler
+// ========================================
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -169,7 +223,7 @@ Deno.serve(async (req) => {
     yesterday.setDate(yesterday.getDate() - 1)
     const dateStr = yesterday.toISOString().split('T')[0]!
 
-    // Fetch ALL orders from Zelty for yesterday (with pagination)
+    // Fetch ALL orders from Zelty for yesterday (with items via expand[])
     const orders = await fetchDayOrders(zeltyApiKey, dateStr)
 
     // Map Zelty mode to our channel
@@ -180,25 +234,13 @@ Deno.serve(async (req) => {
     }
 
     // ========================================
-    // PART 1: Stock decrement (existing logic)
+    // PART 1: Stock decrement
     // ========================================
 
-    // Aggregate quantities by zelty_product_id + channel
-    const productQty = new Map<string, { sur_place: number; emporter: number }>()
-    for (const order of orders) {
-      const channel = getChannel(order)
-      for (const item of (order.items || [])) {
-        const pid = String(item.product_id)
-        const entry = productQty.get(pid) || { sur_place: 0, emporter: 0 }
-        entry[channel] += item.quantity
-        productQty.set(pid, entry)
-      }
-    }
-
-    // Load all recettes with zelty_product_id mapping
+    // Load all recettes with zelty_product_id + variantes + modificateurs
     const { data: recettes } = await supabase
       .from('recettes')
-      .select('id, nb_portions, zelty_product_id')
+      .select('id, nb_portions, zelty_product_id, variantes, modificateurs')
       .not('zelty_product_id', 'is', null)
 
     const recetteByZelty = new Map<string, Recette>()
@@ -272,33 +314,104 @@ Deno.serve(async (req) => {
       return result
     }
 
-    // Process each sold product, per channel
-    const allDecrements = new Map<string, number>()
-    let productsProcessed = 0
-    let productsUnmatched = 0
+    /**
+     * Apply modificateur impact_stock adjustments to the decrements map.
+     * - Extra: adds ingredient quantities (more stock used)
+     * - Sans: subtracts ingredient quantities (less stock used)
+     */
+    function applyModificateur(
+      mod: RecetteModificateur,
+      decrements: Map<string, number>
+    ) {
+      if (!mod.impact_stock) return
+      for (const impact of mod.impact_stock) {
+        const ing = ingredientById.get(impact.ingredient_restaurant_id)
+        const stockUnite = ing?.unite_stock || impact.unite
+        const factor = getUnitFactor(impact.unite, stockUnite)
+        let qty = impact.quantite * factor
 
-    for (const [zeltyId, qtyByChannel] of productQty) {
-      const recette = recetteByZelty.get(zeltyId)
-      if (!recette) {
-        productsUnmatched++
-        continue
-      }
+        // Apply rendement for extras too
+        if (mod.type === 'extra' && ing?.rendement && ing.rendement > 0 && ing.rendement < 1) {
+          qty /= ing.rendement
+        }
 
-      for (const channel of ['sur_place', 'emporter'] as OrderChannel[]) {
-        const qtySold = qtyByChannel[channel]
-        if (qtySold <= 0) continue
-
-        const portionMultiplier = qtySold / Math.max(1, recette.nb_portions)
-        const ingredients = decomposeRecette(recette.id, portionMultiplier, channel)
-
-        for (const [ingId, qty] of ingredients) {
-          allDecrements.set(ingId, (allDecrements.get(ingId) || 0) + qty)
+        if (mod.type === 'extra') {
+          decrements.set(
+            impact.ingredient_restaurant_id,
+            (decrements.get(impact.ingredient_restaurant_id) || 0) + qty
+          )
+        } else if (mod.type === 'sans') {
+          // Reduce decrement (but don't go negative for this ingredient)
+          const current = decrements.get(impact.ingredient_restaurant_id) || 0
+          decrements.set(
+            impact.ingredient_restaurant_id,
+            Math.max(0, current - qty)
+          )
         }
       }
-      productsProcessed++
     }
 
-    // Apply all decrements
+    // Process each order item individually (not aggregated by product_id)
+    // This preserves per-item variantes and modificateurs
+    const allDecrements = new Map<string, number>()
+    let itemsProcessed = 0
+    let itemsUnmatched = 0
+    let variantesApplied = 0
+    let modificateursApplied = 0
+
+    for (const order of orders) {
+      const channel = getChannel(order)
+
+      for (const item of (order.items || [])) {
+        const zeltyDishId = String(item.item_id)
+        const recette = recetteByZelty.get(zeltyDishId)
+        if (!recette) {
+          itemsUnmatched++
+          continue
+        }
+
+        // Build a Set of modifier IDs selected for this item
+        const selectedModifierIds = new Set<number>()
+        for (const m of (item.modifiers || [])) {
+          selectedModifierIds.add(m.id)
+        }
+
+        // Determine variante coefficient (default: 1.0)
+        let varianteCoefficient = 1.0
+        if (recette.variantes && recette.variantes.length > 0) {
+          for (const v of recette.variantes) {
+            if (v.zelty_option_value_id && selectedModifierIds.has(v.zelty_option_value_id)) {
+              varianteCoefficient = v.coefficient
+              variantesApplied++
+              break
+            }
+          }
+        }
+
+        // Decompose base recipe with variante coefficient applied
+        const portionMultiplier = varianteCoefficient / Math.max(1, recette.nb_portions)
+        const itemDecrements = decomposeRecette(recette.id, portionMultiplier, channel)
+
+        // Apply modificateurs (extras add stock, "sans" reduce stock)
+        if (recette.modificateurs && recette.modificateurs.length > 0) {
+          for (const mod of recette.modificateurs) {
+            if (mod.zelty_option_value_id && selectedModifierIds.has(mod.zelty_option_value_id)) {
+              applyModificateur(mod, itemDecrements)
+              modificateursApplied++
+            }
+          }
+        }
+
+        // Add this item's decrements to the global total
+        for (const [ingId, qty] of itemDecrements) {
+          allDecrements.set(ingId, (allDecrements.get(ingId) || 0) + qty)
+        }
+
+        itemsProcessed++
+      }
+    }
+
+    // Apply all decrements via RPC
     let decrementCount = 0
     for (const [ingredientId, qty] of allDecrements) {
       if (qty > 0) {
@@ -315,7 +428,6 @@ Deno.serve(async (req) => {
     // ========================================
     let repartitionUpdated = 0
 
-    // Calculate today's hourly distribution from orders
     const jourSemaine = yesterday.getDay() // 0=Sun, 1=Mon, ...
 
     // Determine contexte
@@ -355,13 +467,11 @@ Deno.serve(async (req) => {
     }
 
     if (dayTotalCA > 0) {
-      // Calculate today's percentages
       const todayPcts: Record<number, number> = {}
       for (let h = 10; h <= 21; h++) {
         todayPcts[h] = ((hourlyCA[h] || 0) / dayTotalCA) * 100
       }
 
-      // Fetch existing repartition for this day/contexte
       const { data: existingRep } = await supabase
         .from('repartition_horaire')
         .select('creneau_heure, pourcentage')
@@ -389,10 +499,8 @@ Deno.serve(async (req) => {
 
         let newPct: number
         if (existingPct !== undefined && existingPct > 0) {
-          // EMA update
           newPct = ALPHA * todayPct + (1 - ALPHA) * existingPct
         } else {
-          // First time: use today's value directly
           newPct = todayPct
         }
 
@@ -405,7 +513,6 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Upsert
       const { error: repError } = await supabase
         .from('repartition_horaire')
         .upsert(rows, { onConflict: 'jour_semaine,creneau_heure,contexte' })
@@ -420,7 +527,6 @@ Deno.serve(async (req) => {
     // ========================================
     // PART 3: Update nb_tickets in ventes_historique
     // ========================================
-    // Count orders with positive amount as "tickets" (actual sales)
     const nbTickets = orders.filter(o => (o.price?.final_amount_inc_tax || 0) > 0).length
 
     if (nbTickets > 0) {
@@ -453,8 +559,10 @@ Deno.serve(async (req) => {
         success: true,
         date: dateStr,
         orders: orders.length,
-        productsProcessed,
-        productsUnmatched,
+        itemsProcessed,
+        itemsUnmatched,
+        variantesApplied,
+        modificateursApplied,
         ingredientsDecremented: decrementCount,
         nbTickets,
         repartition: { contexte, updated: repartitionUpdated, dayTotalCA: Math.round(dayTotalCA) },
