@@ -4,8 +4,11 @@
  * Called daily after sync-zelty-ca, or via webhook when an order is completed.
  * Fetches yesterday's orders from Zelty (with expand[]=items), decomposes each
  * product sold into base ingredients via the recette → recette_ingredients chain,
- * applying variante coefficients (Normal/Grand) and modificateurs (extras/sans),
- * then decrements stock for each ingredient.
+ * Auto-detects variantes and modificateurs from Zelty modifier NAMES:
+ *   - "Normal" → coefficient 1.0, "Grand" → coefficient 1.5
+ *   - "Sans X" → find ingredient X by name, skip its decrement
+ *   - price > 0 → extra: find matching recette/ingredient, add extra portion
+ * No manual mapping needed in PhoodApp — zero config when Zelty options change.
  *
  * Also calculates hourly CA distribution and updates repartition_horaire
  * using an exponential moving average (EMA) with alpha = 0.15.
@@ -13,12 +16,13 @@
  * Architecture:
  * 1. Fetch closed orders from Zelty (/orders?expand[]=items) for yesterday
  * 2. For each order item, find the matching recette via zelty_product_id
- * 3. Detect variante from item.modifiers → apply coefficient (e.g., Grand = 1.5)
- * 4. Detect modificateurs → apply extras (+stock) and "sans" (-stock)
- * 5. Recursively decompose recette → ingredients (up to 3 levels of sub-recipes)
- * 6. Apply unit conversion (recipe unite → stock unite) and rendement
- * 7. Call decrement_stock RPC for each base ingredient
- * 8. Calculate hourly CA distribution and update repartition_horaire
+ * 3. Auto-detect variante by modifier name → apply coefficient
+ * 4. Auto-detect "sans" by name prefix → set ingredient decrement to 0
+ * 5. Auto-detect extras by price > 0 → find recette/ingredient by name, add portion
+ * 6. Recursively decompose recette → ingredients (up to 3 levels of sub-recipes)
+ * 7. Apply unit conversion (recipe unite → stock unite) and rendement
+ * 8. Call decrement_stock RPC for each base ingredient
+ * 9. Calculate hourly CA distribution and update repartition_horaire
  *
  * Zelty API notes:
  * - /orders requires `from` and `to` params (NOT date_min/date_max)
@@ -97,32 +101,15 @@ interface RecetteIngredient {
   emporter: boolean
 }
 
-interface RecetteVariante {
-  nom: string
-  zelty_option_value_id?: number
-  coefficient: number
-}
-
-interface RecetteModificateur {
-  nom: string
-  zelty_option_value_id?: number
-  type: 'extra' | 'sans'
-  impact_stock?: Array<{
-    ingredient_restaurant_id: string
-    quantite: number
-    unite: string
-  }>
-}
-
 interface Recette {
   id: string
+  nom: string
   nb_portions: number
   zelty_product_id: string | null
-  variantes: RecetteVariante[] | null
-  modificateurs: RecetteModificateur[] | null
 }
 
 interface IngredientInfo {
+  nom: string
   unite_stock: string
   rendement: number | null
 }
@@ -237,10 +224,10 @@ Deno.serve(async (req) => {
     // PART 1: Stock decrement
     // ========================================
 
-    // Load all recettes with zelty_product_id + variantes + modificateurs
+    // Load all recettes with zelty_product_id
     const { data: recettes } = await supabase
       .from('recettes')
-      .select('id, nb_portions, zelty_product_id, variantes, modificateurs')
+      .select('id, nom, nb_portions, zelty_product_id')
       .not('zelty_product_id', 'is', null)
 
     const recetteByZelty = new Map<string, Recette>()
@@ -262,14 +249,14 @@ Deno.serve(async (req) => {
       ingredientsByRecette.set(ri.recette_id, list)
     }
 
-    // Load ingredients for unit conversion + rendement
+    // Load ingredients for unit conversion + rendement + name matching
     const { data: ingredientsList } = await supabase
       .from('ingredients_restaurant')
-      .select('id, unite_stock, rendement')
+      .select('id, nom, unite_stock, rendement')
 
     const ingredientById = new Map<string, IngredientInfo>()
-    for (const ing of (ingredientsList || []) as Array<{ id: string; unite_stock: string; rendement: number | null }>) {
-      ingredientById.set(ing.id, { unite_stock: ing.unite_stock, rendement: ing.rendement })
+    for (const ing of (ingredientsList || []) as Array<{ id: string; nom: string; unite_stock: string; rendement: number | null }>) {
+      ingredientById.set(ing.id, { nom: ing.nom, unite_stock: ing.unite_stock, rendement: ing.rendement })
     }
 
     // Recursive decomposition: recette → base ingredients, filtered by channel
@@ -315,49 +302,48 @@ Deno.serve(async (req) => {
     }
 
     /**
-     * Apply modificateur impact_stock adjustments to the decrements map.
-     * - Extra: adds ingredient quantities (more stock used)
-     * - Sans: subtracts ingredient quantities (less stock used)
+     * Normalize a French string for fuzzy name matching.
+     * Removes accents, lowercases, trims.
      */
-    function applyModificateur(
-      mod: RecetteModificateur,
-      decrements: Map<string, number>
-    ) {
-      if (!mod.impact_stock) return
-      for (const impact of mod.impact_stock) {
-        const ing = ingredientById.get(impact.ingredient_restaurant_id)
-        const stockUnite = ing?.unite_stock || impact.unite
-        const factor = getUnitFactor(impact.unite, stockUnite)
-        let qty = impact.quantite * factor
-
-        // Apply rendement for extras too
-        if (mod.type === 'extra' && ing?.rendement && ing.rendement > 0 && ing.rendement < 1) {
-          qty /= ing.rendement
-        }
-
-        if (mod.type === 'extra') {
-          decrements.set(
-            impact.ingredient_restaurant_id,
-            (decrements.get(impact.ingredient_restaurant_id) || 0) + qty
-          )
-        } else if (mod.type === 'sans') {
-          // Reduce decrement (but don't go negative for this ingredient)
-          const current = decrements.get(impact.ingredient_restaurant_id) || 0
-          decrements.set(
-            impact.ingredient_restaurant_id,
-            Math.max(0, current - qty)
-          )
-        }
-      }
+    function normalize(name: string): string {
+      return name.toLowerCase().trim()
+        .replace(/[éèêë]/g, 'e')
+        .replace(/[àâä]/g, 'a')
+        .replace(/[ùûü]/g, 'u')
+        .replace(/[ôö]/g, 'o')
+        .replace(/[îï]/g, 'i')
+        .replace(/[ç]/g, 'c')
     }
 
-    // Process each order item individually (not aggregated by product_id)
-    // This preserves per-item variantes and modificateurs
+    /**
+     * Check if two normalized names match (one contains the other).
+     */
+    function namesMatch(a: string, b: string): boolean {
+      return a.includes(b) || b.includes(a)
+    }
+
+    // Build recette lookup by normalized name (for extra matching)
+    const allRecettes = (recettes || []) as Recette[]
+    const recetteByName = new Map<string, Recette>()
+    for (const r of allRecettes) {
+      if (r.nom) recetteByName.set(normalize(r.nom), r)
+    }
+
+    // --------------------------------------------------------
+    // Process each order item with auto-detection by name
+    // --------------------------------------------------------
+    // Modifier detection heuristic:
+    //   "Normal"       → variante coefficient 1.0
+    //   "Grand"        → variante coefficient 1.5
+    //   "Sans X"       → find ingredient X in recipe, set decrement to 0
+    //   price > 0      → extra: find matching recette or ingredient, add portion
+    // --------------------------------------------------------
     const allDecrements = new Map<string, number>()
     let itemsProcessed = 0
     let itemsUnmatched = 0
     let variantesApplied = 0
-    let modificateursApplied = 0
+    let sansApplied = 0
+    let extrasApplied = 0
 
     for (const order of orders) {
       const channel = getChannel(order)
@@ -370,39 +356,76 @@ Deno.serve(async (req) => {
           continue
         }
 
-        // Build a Set of modifier IDs selected for this item
-        const selectedModifierIds = new Set<number>()
-        for (const m of (item.modifiers || [])) {
-          selectedModifierIds.add(m.id)
-        }
-
-        // Determine variante coefficient (default: 1.0)
+        // Classify modifiers by name/price
         let varianteCoefficient = 1.0
-        if (recette.variantes && recette.variantes.length > 0) {
-          for (const v of recette.variantes) {
-            if (v.zelty_option_value_id && selectedModifierIds.has(v.zelty_option_value_id)) {
-              varianteCoefficient = v.coefficient
-              variantesApplied++
-              break
-            }
+        const sansNames: string[] = []   // normalized ingredient names to exclude
+        const extraNames: string[] = []  // normalized product/ingredient names to add
+
+        for (const mod of (item.modifiers || [])) {
+          const modName = (mod.name || '').trim()
+          const normalized = normalize(modName)
+          const hasPrice = (mod.price?.original_amount_inc_tax || 0) > 0
+
+          if (normalized === 'normal') {
+            varianteCoefficient = 1.0
+            variantesApplied++
+          } else if (normalized === 'grand') {
+            varianteCoefficient = 1.5
+            variantesApplied++
+          } else if (normalized.startsWith('sans ')) {
+            sansNames.push(normalized.substring(5))
+            sansApplied++
+          } else if (hasPrice) {
+            // Paid modifier = extra (e.g., "Cheddar fumé", "Poulet")
+            extraNames.push(normalized)
+            extrasApplied++
           }
         }
 
-        // Decompose base recipe with variante coefficient applied
+        // Decompose base recipe with variante coefficient
         const portionMultiplier = varianteCoefficient / Math.max(1, recette.nb_portions)
         const itemDecrements = decomposeRecette(recette.id, portionMultiplier, channel)
 
-        // Apply modificateurs (extras add stock, "sans" reduce stock)
-        if (recette.modificateurs && recette.modificateurs.length > 0) {
-          for (const mod of recette.modificateurs) {
-            if (mod.zelty_option_value_id && selectedModifierIds.has(mod.zelty_option_value_id)) {
-              applyModificateur(mod, itemDecrements)
-              modificateursApplied++
+        // Apply "sans": set matching ingredient decrement to 0
+        for (const sansName of sansNames) {
+          for (const [ingId] of itemDecrements) {
+            const ingInfo = ingredientById.get(ingId)
+            if (ingInfo && namesMatch(normalize(ingInfo.nom), sansName)) {
+              itemDecrements.set(ingId, 0)
             }
           }
         }
 
-        // Add this item's decrements to the global total
+        // Apply extras: find matching recette or ingredient, add its portion
+        for (const extraName of extraNames) {
+          let found = false
+
+          // Try 1: find a recette matching the extra name → decompose 1 portion
+          for (const [rName, r] of recetteByName) {
+            if (namesMatch(rName, extraName)) {
+              const extraDec = decomposeRecette(r.id, 1 / Math.max(1, r.nb_portions), channel)
+              for (const [ingId, qty] of extraDec) {
+                itemDecrements.set(ingId, (itemDecrements.get(ingId) || 0) + qty)
+              }
+              found = true
+              break
+            }
+          }
+
+          // Try 2: find ingredient in current recipe and add same qty again (double it)
+          if (!found) {
+            for (const [ingId, qty] of [...itemDecrements.entries()]) {
+              const ingInfo = ingredientById.get(ingId)
+              if (ingInfo && qty > 0 && namesMatch(normalize(ingInfo.nom), extraName)) {
+                itemDecrements.set(ingId, qty * 2)
+                found = true
+                break
+              }
+            }
+          }
+        }
+
+        // Accumulate into global decrements
         for (const [ingId, qty] of itemDecrements) {
           allDecrements.set(ingId, (allDecrements.get(ingId) || 0) + qty)
         }
@@ -562,7 +585,8 @@ Deno.serve(async (req) => {
         itemsProcessed,
         itemsUnmatched,
         variantesApplied,
-        modificateursApplied,
+        sansApplied,
+        extrasApplied,
         ingredientsDecremented: decrementCount,
         nbTickets,
         repartition: { contexte, updated: repartitionUpdated, dayTotalCA: Math.round(dayTotalCA) },
