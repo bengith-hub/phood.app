@@ -241,6 +241,73 @@ function coefficientClass(coeff: number): string {
   return 'coeff-neutral'
 }
 
+// --- Precision helpers (forecast vs actual) ---
+
+function dayPrecisionPct(fc: ForecastResult): number | null {
+  if (fc.ca_realise === null || fc.ca_realise === 0) return null
+  const error = Math.abs(fc.ca_prevision - fc.ca_realise) / fc.ca_realise
+  return Math.round((1 - error) * 100)
+}
+
+function dayEcartPct(fc: ForecastResult): string | null {
+  if (fc.ca_realise === null || fc.ca_prevision === 0) return null
+  const pct = ((fc.ca_realise - fc.ca_prevision) / fc.ca_prevision) * 100
+  const sign = pct >= 0 ? '+' : ''
+  return `${sign}${pct.toFixed(0)}%`
+}
+
+function ecartClass(fc: ForecastResult): string {
+  if (fc.ca_realise === null || fc.ca_prevision === 0) return ''
+  const pct = Math.abs((fc.ca_realise - fc.ca_prevision) / fc.ca_prevision) * 100
+  if (pct <= 5) return 'ecart-good'
+  if (pct <= 15) return 'ecart-ok'
+  return 'ecart-bad'
+}
+
+function precisionColor(precision: number): string {
+  if (precision >= 85) return 'var(--color-success)'
+  if (precision >= 70) return 'var(--color-warning)'
+  return 'var(--color-danger)'
+}
+
+function weekPrecision(week: (ForecastResult | null)[]): { precision: number; caPrevu: number; caRealise: number } | null {
+  let totalPrevu = 0
+  let totalRealise = 0
+  let sumError = 0
+  let count = 0
+  for (const fc of week) {
+    if (!fc || fc.ca_realise === null || fc.ca_realise === 0) continue
+    totalPrevu += fc.ca_prevision
+    totalRealise += fc.ca_realise
+    sumError += Math.abs(fc.ca_prevision - fc.ca_realise) / fc.ca_realise
+    count++
+  }
+  if (count === 0) return null
+  const precision = Math.round((1 - sumError / count) * 100)
+  return { precision: Math.max(0, Math.min(100, precision)), caPrevu: totalPrevu, caRealise: totalRealise }
+}
+
+const monthPrecision = computed(() => {
+  let sumError = 0
+  let count = 0
+  let caPrevu = 0
+  let caRealise = 0
+  for (const fc of monthForecasts.value) {
+    if (fc.ca_realise === null || fc.ca_realise === 0) continue
+    sumError += Math.abs(fc.ca_prevision - fc.ca_realise) / fc.ca_realise
+    caPrevu += fc.ca_prevision
+    caRealise += fc.ca_realise
+    count++
+  }
+  if (count < 3) return null // need at least 3 days
+  const precision = Math.round((1 - sumError / count) * 100)
+  return { precision: Math.max(0, Math.min(100, precision)), caPrevu, caRealise, count }
+})
+
+const currentWeekPrecision = computed(() => {
+  return weekPrecision(forecasts.value.map(f => f))
+})
+
 function evolutionN1(forecast: ForecastResult): string | null {
   if (forecast.ca_n1 === null || forecast.ca_n1 === 0) return null
   const pct = ((forecast.ca_prevision - forecast.ca_n1) / forecast.ca_n1) * 100
@@ -680,11 +747,23 @@ watch(
               {{ monthAvgConfidence }}%
             </span>
           </div>
-          <div v-if="precisionS1" class="summary-card">
+          <div v-if="monthPrecision" class="summary-card">
+            <span class="summary-card-label">Precision du mois</span>
+            <span
+              class="summary-card-value"
+              :style="{ color: precisionColor(monthPrecision.precision) }"
+            >
+              {{ monthPrecision.precision }}%
+            </span>
+            <div class="summary-card-sub">
+              <span class="summary-sub-text">sur {{ monthPrecision.count }} jours</span>
+            </div>
+          </div>
+          <div v-else-if="precisionS1" class="summary-card">
             <span class="summary-card-label">Precision S-1</span>
             <span
               class="summary-card-value"
-              :style="{ color: precisionS1.precision >= 85 ? 'var(--color-success)' : precisionS1.precision >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }"
+              :style="{ color: precisionColor(precisionS1.precision) }"
             >
               {{ precisionS1.precision }}%
             </span>
@@ -737,7 +816,8 @@ watch(
                 <div v-if="!store.isJourFerme(fc.jour_semaine)" class="month-cell-body">
                   <span v-if="fc.ca_realise !== null" class="month-cell-ca month-cell-ca--realise">{{ formatEuros(fc.ca_realise) }}</span>
                   <span v-else class="month-cell-ca">{{ formatEuros(fc.ca_prevision) }}</span>
-                  <div class="month-cell-confidence">
+                  <span v-if="dayEcartPct(fc)" class="month-cell-ecart" :class="ecartClass(fc)">{{ dayEcartPct(fc) }}</span>
+                  <div v-else class="month-cell-confidence">
                     <div class="mini-confidence-bar">
                       <div
                         class="mini-confidence-fill"
@@ -774,6 +854,13 @@ watch(
             <!-- Week total -->
             <div class="month-cell month-cell--total">
               <span class="month-week-total">{{ formatEuros(weekSubtotal(week)) }}</span>
+              <span
+                v-if="weekPrecision(week)"
+                class="month-week-precision"
+                :style="{ color: precisionColor(weekPrecision(week)!.precision) }"
+              >
+                {{ weekPrecision(week)!.precision }}%
+              </span>
             </div>
           </div>
         </div>
@@ -817,11 +904,23 @@ watch(
             <span class="summary-card-label">N-1 semaine</span>
             <span class="summary-card-value">{{ weekN1Total !== null ? formatEuros(weekN1Total) : '--' }}</span>
           </div>
-          <div v-if="precisionS1" class="summary-card">
+          <div v-if="currentWeekPrecision" class="summary-card">
+            <span class="summary-card-label">Precision semaine</span>
+            <span
+              class="summary-card-value"
+              :style="{ color: precisionColor(currentWeekPrecision.precision) }"
+            >
+              {{ currentWeekPrecision.precision }}%
+            </span>
+            <div class="summary-card-sub">
+              <span class="summary-sub-text">{{ formatEuros(currentWeekPrecision.caPrevu) }} prevu / {{ formatEuros(currentWeekPrecision.caRealise) }} realise</span>
+            </div>
+          </div>
+          <div v-else-if="precisionS1" class="summary-card">
             <span class="summary-card-label">Precision S-1</span>
             <span
               class="summary-card-value"
-              :style="{ color: precisionS1.precision >= 85 ? 'var(--color-success)' : precisionS1.precision >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }"
+              :style="{ color: precisionColor(precisionS1.precision) }"
             >
               {{ precisionS1.precision }}%
             </span>
@@ -874,6 +973,7 @@ watch(
                 <span v-if="fc.ca_realise !== null" class="ca-value ca-value--realise">{{ formatEuros(fc.ca_realise) }}</span>
                 <span v-else class="ca-value">{{ formatEuros(fc.ca_prevision) }}</span>
                 <span v-if="fc.ca_realise !== null" class="ca-sub">prevu: {{ formatEuros(fc.ca_prevision) }}</span>
+                <span v-if="dayEcartPct(fc)" class="day-ecart" :class="ecartClass(fc)">{{ dayEcartPct(fc) }}</span>
               </div>
 
               <!-- N-1 comparison -->
@@ -1757,6 +1857,34 @@ watch(
   font-weight: 700;
   padding: 0px 4px;
   border-radius: 3px;
+}
+
+/* --- Ecart precision (month cells) --- */
+.month-cell-ecart {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  margin-top: 2px;
+  text-align: center;
+}
+
+.ecart-good { color: var(--color-success); }
+.ecart-ok { color: var(--color-warning); }
+.ecart-bad { color: var(--color-danger); }
+
+.month-week-precision {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+/* --- Ecart precision (week day cards) --- */
+.day-ecart {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 2px;
 }
 
 .month-cell-ferme {
