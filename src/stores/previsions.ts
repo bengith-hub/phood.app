@@ -22,7 +22,7 @@ function toLocalDateStr(d: Date): string {
 
 export interface ForecastFactor {
   label: string
-  type: 'meteo' | 'evenement' | 'tendance' | 'rupture_meteo' | 'temperature'
+  type: 'meteo' | 'evenement' | 'tendance' | 'rupture_meteo' | 'temperature' | 'superformance'
   coefficient: number
   detail: string
 }
@@ -371,6 +371,51 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     })
   }
 
+  // --- Exponential weights for same-weekday averaging (most recent first) ---
+  const EW_WEIGHTS = [0.35, 0.25, 0.20, 0.12, 0.08]
+
+  function calculateBaseCA(targetDate: Date): { baseCA: number; baseTickets: number; dataPoints: number } {
+    const jourSemaine = targetDate.getDay()
+    const history = getSameDayHistory(targetDate, 8)
+    const recent = history.slice(0, 5)
+
+    if (recent.length > 0) {
+      const weights = EW_WEIGHTS.slice(0, recent.length)
+      const wSum = weights.reduce((a, b) => a + b, 0)
+
+      let baseCA = 0
+      let baseTickets = 0
+      for (let i = 0; i < recent.length; i++) {
+        const w = weights[i]! / wSum
+        baseCA += recent[i]!.ca_ttc * w
+        baseTickets += recent[i]!.nb_tickets * w
+      }
+
+      return { baseCA, baseTickets, dataPoints: recent.length }
+    }
+
+    // Fallback: any same day-of-week data
+    const allSameDow = ventes.value.filter(v => {
+      const d = new Date(v.date + 'T00:00:00')
+      return d.getDay() === jourSemaine && v.cloture_validee
+    })
+    if (allSameDow.length > 0) {
+      const baseCA = allSameDow.reduce((s, v) => s + v.ca_ttc, 0) / allSameDow.length
+      const baseTickets = allSameDow.reduce((s, v) => s + v.nb_tickets, 0) / allSameDow.length
+      return { baseCA, baseTickets, dataPoints: allSameDow.length }
+    }
+
+    // Ultimate fallback: global average
+    const validated = ventes.value.filter(v => v.cloture_validee)
+    if (validated.length > 0) {
+      const baseCA = validated.reduce((s, v) => s + v.ca_ttc, 0) / validated.length
+      const baseTickets = validated.reduce((s, v) => s + v.nb_tickets, 0) / validated.length
+      return { baseCA, baseTickets, dataPoints: 0 }
+    }
+
+    return { baseCA: 0, baseTickets: 0, dataPoints: 0 }
+  }
+
   function calculateWeatherCoefficient(
     meteoDay: MeteoDaily | null,
     factors: ForecastFactor[]
@@ -379,7 +424,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     let coeff = 1
 
     if (meteoDay.precipitation_mm !== null && meteoDay.precipitation_mm > 5) {
-      const precipCoeff = 1.15
+      const precipCoeff = 1.12
       coeff *= precipCoeff
       factors.push({
         label: 'Pluie forte',
@@ -390,7 +435,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     }
 
     if (meteoDay.couverture_nuageuse_pct !== null && meteoDay.couverture_nuageuse_pct > 80) {
-      const cloudCoeff = 1.10
+      const cloudCoeff = 1.08
       coeff *= cloudCoeff
       factors.push({
         label: 'Ciel couvert',
@@ -402,7 +447,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
     if (meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 21600) {
       const sunHours = meteoDay.ensoleillement_secondes / 3600
-      const sunCoeff = 0.90
+      const sunCoeff = 0.92
       coeff *= sunCoeff
       factors.push({
         label: 'Grand soleil',
@@ -413,6 +458,63 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     }
 
     return coeff
+  }
+
+  /**
+   * Compute weather coefficient for a given date without pushing to factors array.
+   * Used internally by superformance to isolate weather effect on past days.
+   */
+  function getWeatherCoeffForDate(dateStr: string): number {
+    const meteoDay = meteoParDate.value.get(dateStr)
+    if (!meteoDay) return 1
+    const d = new Date(dateStr + 'T00:00:00')
+    const dummy: ForecastFactor[] = []
+    const wCoeff = calculateWeatherCoefficient(meteoDay, dummy)
+    const tCoeff = calculateTemperatureCoefficient(meteoDay, d, dummy)
+    return wCoeff * tCoeff
+  }
+
+  /**
+   * Calculate superformance: recent cross-day momentum on weather-adjusted residuals.
+   * Looks at ALL days (not just same weekday) over the last 14 days.
+   * Uses exponentially decaying weights with half-life of 5 days.
+   * Returns a ratio (e.g., 0.06 means +6% above expected).
+   */
+  function calculateSuperformance(targetDate: Date): { value: number; daysUsed: number } {
+    const LOOKBACK_DAYS = 14
+    const HALF_LIFE = 5
+    const lambda = Math.LN2 / HALF_LIFE
+
+    let weightedSum = 0
+    let weightSum = 0
+    let daysUsed = 0
+
+    for (let i = 1; i <= LOOKBACK_DAYS; i++) {
+      const d = new Date(targetDate)
+      d.setDate(d.getDate() - i)
+      const dStr = toLocalDateStr(d)
+
+      const vente = ventesParDate.value.get(dStr)
+      if (!vente || !vente.cloture_validee || vente.ca_ttc <= 0) continue
+
+      // Expected CA for that day (base only, no superformance)
+      const { baseCA } = calculateBaseCA(d)
+      if (baseCA <= 0) continue
+
+      // Weather adjustment for that day to isolate non-weather residual
+      const weatherAdj = getWeatherCoeffForDate(dStr)
+      const expected = baseCA * weatherAdj
+
+      const ratio = vente.ca_ttc / expected - 1
+
+      const weight = Math.exp(-lambda * i)
+      weightedSum += ratio * weight
+      weightSum += weight
+      daysUsed++
+    }
+
+    if (weightSum < 0.5) return { value: 0, daysUsed: 0 }
+    return { value: weightedSum / weightSum, daysUsed }
   }
 
   function detectWeatherBreak(
@@ -524,64 +626,15 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
     const factors: ForecastFactor[] = []
 
-    const history = getSameDayHistory(targetDate, 8)
-    const recentHistory = history.slice(0, 4)
+    // Layer 1: Exponentially weighted same-weekday base
+    const { baseCA, baseTickets, dataPoints } = calculateBaseCA(targetDate)
 
-    let baseCA = 0
-    let baseTickets = 0
-    let confidence = 0
-
-    if (recentHistory.length > 0) {
-      baseCA = recentHistory.reduce((sum, v) => sum + v.ca_ttc, 0) / recentHistory.length
-      baseTickets = recentHistory.reduce((sum, v) => sum + v.nb_tickets, 0) / recentHistory.length
-      confidence = Math.min(95, 50 + recentHistory.length * 10)
-
-      if (recentHistory.length >= 3) {
-        const firstHalf = recentHistory.slice(Math.floor(recentHistory.length / 2))
-        const secondHalf = recentHistory.slice(0, Math.floor(recentHistory.length / 2))
-        const avgFirst = firstHalf.reduce((s, v) => s + v.ca_ttc, 0) / firstHalf.length
-        const avgSecond = secondHalf.reduce((s, v) => s + v.ca_ttc, 0) / secondHalf.length
-
-        if (avgFirst > 0) {
-          const trendRatio = avgSecond / avgFirst
-          if (Math.abs(trendRatio - 1) > 0.03) {
-            const dampedTrend = 1 + (trendRatio - 1) * 0.5
-            factors.push({
-              label: dampedTrend > 1 ? 'Tendance hausse' : 'Tendance baisse',
-              type: 'tendance',
-              coefficient: dampedTrend,
-              detail: `Evolution recente: ${((trendRatio - 1) * 100).toFixed(1)}% sur les dernieres semaines`,
-            })
-          }
-        }
-      }
-    } else {
-      const allSameDow = ventes.value.filter(v => {
-        const d = new Date(v.date + 'T00:00:00')
-        return d.getDay() === jourSemaine && v.cloture_validee
-      })
-      if (allSameDow.length > 0) {
-        baseCA = allSameDow.reduce((s, v) => s + v.ca_ttc, 0) / allSameDow.length
-        baseTickets = allSameDow.reduce((s, v) => s + v.nb_tickets, 0) / allSameDow.length
-        confidence = 25
-      } else {
-        const validated = ventes.value.filter(v => v.cloture_validee)
-        if (validated.length > 0) {
-          baseCA = validated.reduce((s, v) => s + v.ca_ttc, 0) / validated.length
-          baseTickets = validated.reduce((s, v) => s + v.nb_tickets, 0) / validated.length
-        }
-        confidence = 10
-      }
-    }
-
-    // Météo: use real forecast if available, else seasonal fallback for future dates
+    // Layer 3 (weather — computed before Layer 2 to isolate weather effect)
     const realMeteo = meteoParDate.value.get(dateStr) || null
     const horizon = daysFromToday(dateStr)
     let meteoDay: MeteoDaily | null = realMeteo
-    const hasRealMeteo = realMeteo !== null
 
     if (!realMeteo && horizon > 0 && horizon <= 30) {
-      // Use seasonal averages as fallback for dates beyond Open-Meteo range
       meteoDay = buildSeasonalMeteo(dateStr)
     }
 
@@ -589,6 +642,18 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     detectWeatherBreak(dateStr, factors)
     calculateTemperatureCoefficient(meteoDay, targetDate, factors)
 
+    // Layer 2: Superformance (cross-day momentum on weather-adjusted residuals)
+    const superf = calculateSuperformance(targetDate)
+    if (Math.abs(superf.value) > 0.02) {
+      factors.push({
+        label: superf.value > 0 ? 'Superformance recente' : 'Sous-performance recente',
+        type: 'superformance',
+        coefficient: 1 + superf.value,
+        detail: `${superf.value > 0 ? '+' : ''}${(superf.value * 100).toFixed(1)}% vs attendu sur les ${superf.daysUsed} derniers jours`,
+      })
+    }
+
+    // Events
     const dayEvents = getEventsForDate(dateStr)
     for (const evt of dayEvents) {
       factors.push({
@@ -599,14 +664,20 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       })
     }
 
-    // Apply météo confidence penalty based on data source quality
+    // Confidence score
+    const hasRealMeteo = realMeteo !== null
+    let confidence = Math.min(75, 30 + dataPoints * 12)
+    if (meteoDay) confidence += 10
+    if (superf.daysUsed >= 7) confidence += 10
+    const n1Vente = getN1Comparison(targetDate)
+    if (n1Vente) confidence += 5
+    confidence = Math.min(95, confidence)
+    if (dataPoints === 0) confidence = 10
     confidence = Math.max(10, confidence + meteoConfidencePenalty(dateStr, hasRealMeteo))
 
     const totalCoeff = factors.reduce((acc, f) => acc * f.coefficient, 1)
     const caPrevision = Math.round(baseCA * totalCoeff)
     const nbTicketsPrevision = Math.round(baseTickets * totalCoeff)
-
-    const n1Vente = getN1Comparison(targetDate)
 
     // For past dates, include actual CA if available
     const todayStr = toLocalDateStr(new Date())

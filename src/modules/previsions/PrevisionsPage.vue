@@ -1182,6 +1182,7 @@ watch(
                       : step.type === 'tendance' ? 'Tendance'
                       : step.type === 'rupture_meteo' ? 'Rupture'
                       : step.type === 'temperature' ? 'Temperature'
+                      : step.type === 'superformance' ? 'Momentum'
                       : '' }}
                   </span>
                   <span class="waterfall-label">{{ step.label }}</span>
@@ -2099,6 +2100,7 @@ watch(
 .factor-type-tendance { background: #e5e7eb; color: #374151; }
 .factor-type-rupture_meteo { background: #fee2e2; color: #991b1b; }
 .factor-type-temperature { background: #fce7f3; color: #9d174d; }
+.factor-type-superformance { background: #d1fae5; color: #065f46; }
 
 /* --- Waterfall chart --- */
 .waterfall {
