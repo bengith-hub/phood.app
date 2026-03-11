@@ -468,7 +468,7 @@ async function syncCalendars() {
   calendarSyncStatus.value = 'Synchronisation des calendriers (feries, vacances, soldes)...'
   try {
     const stats = await syncCalendriers()
-    calendarSyncStatus.value = `Calendriers mis a jour : ${stats.joursFeries} feries, ${stats.vacances} vacances, ${stats.soldes} soldes`
+    calendarSyncStatus.value = `Calendriers mis a jour : ${stats.joursFeries} feries, ${stats.vacances} vacances, ${stats.soldes} soldes, ${stats.ramadan} ramadan`
     await store.fetchEvenements()
     recalculateForecasts()
     recalculateMonthForecasts()

@@ -1,10 +1,12 @@
 /**
- * Calendriers automatiques — Jours fériés, vacances scolaires, soldes
+ * Calendriers automatiques — Jours fériés, vacances scolaires, soldes, Ramadan
  * Spec: CLAUDE.md section "Calendriers auto"
  *
  * - Jours fériés: 11 fixes + mobiles (Pâques via Meeus/Jones/Butcher)
- * - Vacances scolaires: API data.education.gouv.fr (Zone A = Bordeaux)
+ * - Vacances scolaires: API data.education.gouv.fr (3 zones: A=Bordeaux 1.10, B+C=passage 1.05)
  * - Soldes: calcul local (2ème mercredi janvier, dernier mercredi juin, 4 semaines)
+ * - Ramadan: dates approx. via calcul Hijri (coeff 0.88, soit -12%)
+ * - Aïd el-Fitr: 2 jours après le Ramadan (coeff 1.0, neutre)
  */
 
 import { restCall } from './rest-client'
@@ -93,7 +95,49 @@ function getSoldes(year: number): { debut: Date; fin: Date; nom: string }[] {
   ]
 }
 
-// --- Vacances scolaires Zone A (Bordeaux) via API ---
+// --- Ramadan & Aïd el-Fitr ---
+// Approximate Hijri → Gregorian conversion for Ramadan start dates.
+// Based on known dates + lunar year (~354.37 days). Accuracy: ±1-2 days.
+// Actual dates depend on moon sighting, but this is good enough for forecasting.
+
+const RAMADAN_KNOWN_DATES: Record<number, { start: string; end: string }> = {
+  2024: { start: '2024-03-11', end: '2024-04-09' },
+  2025: { start: '2025-03-01', end: '2025-03-29' },
+  2026: { start: '2026-02-18', end: '2026-03-19' },
+  2027: { start: '2027-02-08', end: '2027-03-08' },
+  2028: { start: '2028-01-28', end: '2028-02-25' },
+  2029: { start: '2029-01-16', end: '2029-02-13' },
+  2030: { start: '2030-01-06', end: '2030-02-03' },
+}
+
+function getRamadan(year: number): { debut: string; fin: string } | null {
+  const known = RAMADAN_KNOWN_DATES[year]
+  if (known) return { debut: known.start, fin: known.end }
+
+  // Fallback: approximate from 2025 known date using lunar year drift (~10.63 days/year)
+  const refYear = 2025
+  const refStart = new Date(2025, 2, 1) // March 1, 2025
+  const yearsDiff = year - refYear
+  const drift = Math.round(yearsDiff * -10.63)
+  const approxStart = new Date(refStart)
+  approxStart.setDate(approxStart.getDate() + drift)
+  const approxEnd = new Date(approxStart)
+  approxEnd.setDate(approxEnd.getDate() + 29)
+  return { debut: toDateStr(approxStart), fin: toDateStr(approxEnd) }
+}
+
+function getAidElFitr(year: number): { debut: string; fin: string } | null {
+  const ramadan = getRamadan(year)
+  if (!ramadan) return null
+  const endDate = new Date(ramadan.fin + 'T00:00:00')
+  const aidStart = new Date(endDate)
+  aidStart.setDate(aidStart.getDate() + 1)
+  const aidEnd = new Date(aidStart)
+  aidEnd.setDate(aidEnd.getDate() + 1) // 2 days
+  return { debut: toDateStr(aidStart), fin: toDateStr(aidEnd) }
+}
+
+// --- Vacances scolaires 3 zones (A=Bordeaux, B, C) via API ---
 
 interface VacancesApiRecord {
   fields: {
@@ -105,13 +149,13 @@ interface VacancesApiRecord {
   }
 }
 
-async function fetchVacancesScolaires(year: number): Promise<{ debut: string; fin: string; nom: string }[]> {
-  // API data.education.gouv.fr — Zone A = Bordeaux
+async function fetchVacancesScolaires(year: number, zone: 'A' | 'B' | 'C'): Promise<{ debut: string; fin: string; nom: string }[]> {
   const startYear = `${year}-09-01`
   const endYear = `${year + 1}-08-31`
+  const locations: Record<string, string> = { A: 'Bordeaux', B: 'Lille', C: 'Paris' }
 
   try {
-    const url = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-calendrier-scolaire&rows=50&refine.zones=Zone+A&refine.location=Bordeaux&sort=start_date&q=start_date>=${startYear}+AND+start_date<=${endYear}`
+    const url = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-calendrier-scolaire&rows=50&refine.zones=Zone+${zone}&refine.location=${locations[zone]}&sort=start_date&q=start_date>=${startYear}+AND+start_date<=${endYear}`
     const response = await fetch(url)
     if (!response.ok) throw new Error(`API error: ${response.status}`)
     const data = await response.json() as { records: VacancesApiRecord[] }
@@ -122,7 +166,7 @@ async function fetchVacancesScolaires(year: number): Promise<{ debut: string; fi
       nom: r.fields.description,
     }))
   } catch (err) {
-    console.warn('Failed to fetch vacances scolaires:', err)
+    console.warn(`Failed to fetch vacances scolaires Zone ${zone}:`, err)
     return []
   }
 }
@@ -139,10 +183,11 @@ export async function syncCalendriers(year?: number): Promise<{
   joursFeries: number
   vacances: number
   soldes: number
+  ramadan: number
 }> {
   const targetYear = year ?? new Date().getFullYear()
   const years = [targetYear, targetYear + 1] // Current + next year
-  const stats = { joursFeries: 0, vacances: 0, soldes: 0 }
+  const stats = { joursFeries: 0, vacances: 0, soldes: 0, ramadan: 0 }
 
   for (const y of years) {
     // 1. Jours fériés — batch upsert
@@ -177,21 +222,64 @@ export async function syncCalendriers(year?: number): Promise<{
       console.warn('Failed to sync soldes:', err)
     }
 
-    // 3. Vacances scolaires — batch upsert
-    const vacances = await fetchVacancesScolaires(y)
-    if (vacances.length > 0) {
+    // 3. Vacances scolaires — 3 zones
+    // Zone A (Bordeaux, local) = coeff 1.10 — Zones B & C (passage) = coeff 1.05
+    const zoneConfigs: { zone: 'A' | 'B' | 'C'; coefficient: number; suffix: string }[] = [
+      { zone: 'A', coefficient: 1.10, suffix: '' },
+      { zone: 'B', coefficient: 1.05, suffix: ' (Zone B)' },
+      { zone: 'C', coefficient: 1.05, suffix: ' (Zone C)' },
+    ]
+    for (const zc of zoneConfigs) {
+      const vacances = await fetchVacancesScolaires(y, zc.zone)
+      if (vacances.length > 0) {
+        try {
+          await restCall('POST', 'evenements?on_conflict=nom,date_debut', vacances.map(v => ({
+            nom: v.nom + zc.suffix,
+            type: 'vacances',
+            date_debut: v.debut,
+            date_fin: v.fin,
+            coefficient: zc.coefficient,
+            recurrent: false,
+          })), { prefer: 'resolution=merge-duplicates' })
+          stats.vacances += vacances.length
+        } catch (err) {
+          console.warn(`Failed to sync vacances Zone ${zc.zone}:`, err)
+        }
+      }
+    }
+
+    // 4. Ramadan — coeff 0.88 (impact négatif -12% en centre commercial)
+    const ramadan = getRamadan(y)
+    if (ramadan) {
       try {
-        await restCall('POST', 'evenements?on_conflict=nom,date_debut', vacances.map(v => ({
-          nom: v.nom,
-          type: 'vacances',
-          date_debut: v.debut,
-          date_fin: v.fin,
-          coefficient: 1.10,
+        await restCall('POST', 'evenements?on_conflict=nom,date_debut', [{
+          nom: `Ramadan ${y}`,
+          type: 'custom',
+          date_debut: ramadan.debut,
+          date_fin: ramadan.fin,
+          coefficient: 0.88,
           recurrent: false,
-        })), { prefer: 'resolution=merge-duplicates' })
-        stats.vacances += vacances.length
+        }], { prefer: 'resolution=merge-duplicates' })
+        stats.ramadan++
       } catch (err) {
-        console.warn('Failed to sync vacances:', err)
+        console.warn('Failed to sync Ramadan:', err)
+      }
+    }
+
+    // 5. Aïd el-Fitr — coeff 1.0 (neutre, pas de pic observé)
+    const aid = getAidElFitr(y)
+    if (aid) {
+      try {
+        await restCall('POST', 'evenements?on_conflict=nom,date_debut', [{
+          nom: `Aïd el-Fitr ${y}`,
+          type: 'custom',
+          date_debut: aid.debut,
+          date_fin: aid.fin,
+          coefficient: 1.0,
+          recurrent: false,
+        }], { prefer: 'resolution=merge-duplicates' })
+      } catch (err) {
+        console.warn('Failed to sync Aïd el-Fitr:', err)
       }
     }
   }
