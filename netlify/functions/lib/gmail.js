@@ -1,8 +1,11 @@
 /**
  * Shared Gmail sending utility via Google Service Account
  *
- * Requires:
- * - GOOGLE_SERVICE_ACCOUNT_BASE64 env variable (base64-encoded JSON key)
+ * Requires ONE of these env configurations:
+ * 1. GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY (preferred — smaller, stays under 4KB Lambda limit)
+ * 2. GOOGLE_SERVICE_ACCOUNT_BASE64 (fallback — base64-encoded full JSON key)
+ *
+ * Plus:
  * - Domain-wide delegation enabled in Google Workspace Admin
  * - Gmail API enabled in GCP project
  * - Scope: https://www.googleapis.com/auth/gmail.send
@@ -30,18 +33,34 @@ async function sendEmail({ to, subject, html, cc, bcc, from_name, attachments })
   const { google } = require('googleapis');
   const MailComposer = require('nodemailer/lib/mail-composer');
 
-  const base64Creds = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
-  if (!base64Creds) {
-    throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_BASE64 environment variable');
+  // Prefer split env vars (smaller, avoids 4KB Lambda limit)
+  let clientEmail = process.env.GOOGLE_SA_CLIENT_EMAIL;
+  let privateKey = process.env.GOOGLE_SA_PRIVATE_KEY;
+
+  if (!clientEmail || !privateKey) {
+    // Fallback: full base64-encoded service account JSON
+    const base64Creds = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
+    if (!base64Creds) {
+      throw new Error(
+        'Missing Google credentials. Set GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY, ' +
+        'or GOOGLE_SERVICE_ACCOUNT_BASE64'
+      );
+    }
+    const credentials = JSON.parse(
+      Buffer.from(base64Creds, 'base64').toString()
+    );
+    clientEmail = credentials.client_email;
+    privateKey = credentials.private_key;
   }
 
-  const credentials = JSON.parse(
-    Buffer.from(base64Creds, 'base64').toString()
-  );
+  // Netlify env vars may escape \n as literal backslash-n — restore real newlines
+  if (privateKey && !privateKey.includes('\n')) {
+    privateKey = privateKey.replace(/\\n/g, '\n');
+  }
 
   const auth = new google.auth.JWT({
-    email: credentials.client_email,
-    key: credentials.private_key,
+    email: clientEmail,
+    key: privateKey,
     scopes: ['https://www.googleapis.com/auth/gmail.send'],
     subject: FROM_EMAIL,
   });
