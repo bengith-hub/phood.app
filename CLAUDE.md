@@ -24,7 +24,7 @@ Tous les modules principaux sont implementes et fonctionnels. Voir section "Stat
 | CRON | Supabase Edge Functions (Deno) | pg_cron -> pg_net -> 6 Edge Functions. 4 jobs quotidiens (06:00-07:30) + backup |
 | IA | OpenAI API (GPT-4.1-mini) | Lecture BL, detection allergenes + extraction ingredients (`contient`), extraction prix, parsing recettes. Structured output JSON strict. Fallback : GPT-4.1 standard |
 | Caisse | Zelty API v2.10 | Bearer token. Import CA historique (`/orders`, `/closures`) + sync quotidien |
-| Email | Resend API (primaire) / Gmail API v1 (fallback) | Envoi via `team.begles@phood-restaurant.fr`. Fallback Gmail : Service Account + Domain-Wide Delegation + MIME via nodemailer/MailComposer |
+| Email | Gmail API v1 (Service Account) | Envoi via `team.begles@phood-restaurant.fr`. Service Account + Domain-Wide Delegation + MIME via nodemailer/MailComposer. Auto-BCC sender sur chaque email. Emails visibles dans "Envoyés" Gmail |
 | Comptabilite | PennyLane API v2 | Token entreprise lecture seule. Changelog polling quotidien. Detection depannage + rapprochement factures/BL + cout reel |
 | Calendrier | Google Calendar API v3 | Meme service account que Gmail. Creation/update evenements livraison a l'envoi/reception commande |
 | Horaires | Google Places API (New) | Cle API simple. Place ID Begles : `ChIJRRTmT5gmVQ0Rk4sBmRERCLI`. Remplace GBP API (acces refuse par Google) |
@@ -120,10 +120,11 @@ src/
   router/index.ts                  # Routes with auth guard + lazy loading
 
 netlify/functions/                 # 13 Netlify Serverless Functions
+  lib/gmail.js                     # Shared Gmail sending utility (Service Account + MailComposer)
   analyze-bl.js                    # BL photo -> OpenAI Vision -> structured JSON comparison
   analyze-packaging.js             # Packaging photo -> allergen + ingredient extraction
   google-calendar.js               # Create/update delivery events in Google Calendar
-  send-email.js                    # Email via Resend API (primary) or Gmail Service Account (fallback)
+  send-email.js                    # Email via Gmail API (Service Account + Domain-Wide Delegation)
   parse-recette.js                 # Recipe text -> IA ingredient parsing
   sync-zelty-ca-daily.js           # Scheduled: daily CA import from Zelty closures
   backfill-zelty-ca.js             # Manual: bulk import Zelty CA for date range
@@ -181,7 +182,11 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 ### 5. Previsions (IMPLEMENTE)
 - Meteo inversee (centre commercial : pluie = +clients)
 - Coefficients : meteo, evenements mobiles, rupture meteo (acclimatation), temperatures extremes non-lineaires
-- Comparaison N-1 par jour de semaine (pas par date calendaire) — affichee sur chaque carte jour + total semaine
+- **Fermetures fixes** : 1er janvier, 1er mai, 25 decembre → CA prevu = 0 EUR (fonction `isDateFermeture()`)
+- **Indices saisonniers lisses** : Interpolation lineaire ancree mid-month (jour 15) entre mois adjacents, remplace les sauts en marche d'escalier
+- **Superformance** : Capee a +-15%, denominateur inclut DOW + position mois pour eviter le double-comptage
+- **Calibration** : Facteur x0.96 compensant le biais positif systematique (+4.5%) du stacking de coefficients
+- Comparaison N-1 par jour de semaine (pas par date calendaire) — **toujours affichee** (meme sans donnees : "--"), avec tooltip montrant la date exacte comparee au survol
 - Navigation semaine par semaine (fleches + bouton "Aujourd'hui") avec recalcul previsions
 - Precision S-1 : `1 - avg(|CA_prevu - CA_realise| / CA_realise)` affichee en carte resumee
 - Temperatures min/max affichees sur chaque carte jour
@@ -212,10 +217,10 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 
 ## Integrations -- Auth & Endpoints cles
 
-### Google Cloud (un seul projet)
-- **Service Account + Domain-Wide Delegation** pour Gmail (fallback) + Calendar (scopes : `gmail.send`, `calendar`)
+### Google Cloud (projet phood-app-489413)
+- **Service Account** (`team-phood-begles@phood-app-489413.iam.gserviceaccount.com`) + **Domain-Wide Delegation** pour Gmail + Calendar (scopes : `gmail.send`, `calendar`)
 - **Places API (New)** pour horaires d'ouverture (cle API simple, pas d'OAuth). Remplace GBP API v1 dont l'acces a ete refuse par Google
-- Cle JSON service account -> variable d'env Netlify (base64)
+- Cle JSON service account -> variable d'env Netlify `GOOGLE_SERVICE_ACCOUNT_BASE64` (base64)
 
 ### Zelty (caisse)
 - Base URL : `https://api.zelty.fr/2.10/`
@@ -248,13 +253,16 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 - RPC : `increment_stock()`, `decrement_stock()`, `recalibrate_stock()`
 - RLS enabled sur toutes les 28 tables
 
-### Resend (email principal)
-- API Key : `RESEND_API_KEY` en variable d'env Netlify
-- Sender : `team.begles@phood-restaurant.fr` (domaine verifie)
-- Fallback automatique vers Gmail Service Account si RESEND_API_KEY absent
+### Gmail API (email)
+- Service Account avec Domain-Wide Delegation (scope `gmail.send`)
+- Sender : `team.begles@phood-restaurant.fr`
+- Module partage : `netlify/functions/lib/gmail.js` (utilise par `send-email.js` et `check-alerts.js`)
+- Auto-BCC : `team.begles@phood-restaurant.fr` recoit une copie de chaque email envoye
+- Emails visibles dans le dossier "Envoyes" de la boite Gmail
+- Resend supprime (mars 2026)
 
 ### Calendriers automatiques
-- **Jours feries** : Calcul local JS (~40 lignes). 11 fixes + mobiles (algorithme Meeus/Jones/Butcher pour Paques)
+- **Jours feries** : Calcul local JS (~40 lignes). 11 fixes + mobiles (algorithme Meeus/Jones/Butcher pour Paques). Coefficient 0.7 sauf fermetures fixes (1er jan, 1er mai, 25 dec) = coefficient 0
 - **Vacances scolaires** : API `data.education.gouv.fr` (Zone A = Bordeaux). 1 appel/an
 - **Soldes** : Calcul local (2eme mercredi janvier, dernier mercredi juin, 4 semaines). Table d'override pour exceptions
 
@@ -265,6 +273,7 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 - **Commission plateforme livraison sur TTC** (pas HT) -- piege TVA, formule : `Revenu net = Prix HT - (Prix TTC x commission%)`
 - **Uber Eats multi-tier** : marketplace 30%/33% (Uber One), agregateur 15%/18%, click&collect 15%/18%, preferentiel 26%/28%. Price cap +15%. Worst-case (33%) par defaut
 - **Cout matiere** : toujours fournisseur prefere, auto-updated via BDL validation (pas de selection manuelle type isUsedForCost)
+- **Fermetures fixes** : 1er janvier, 1er mai, 25 decembre -> toujours ferme (CA prevu = 0). Coefficient 0 dans evenements. Exclus des calculs historiques (indices, DOW, superformance)
 - **Evenements mobiles** : Paques, vacances scolaires, soldes -> compares a leur equivalent N-1
 - **Rupture meteo** : Coefficient d'amortissement quand transition brutale (ex : pluie 5j -> beau temps). Calibre sur historique
 - **Temperatures extremes** : Coefficient non-lineaire (courbe en cloche). Base sur ecart aux normales saisonnieres
