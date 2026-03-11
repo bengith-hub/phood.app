@@ -317,6 +317,14 @@ function evolutionN1Class(forecast: ForecastResult): string {
   return 'evo-neutral'
 }
 
+function n1Tooltip(forecast: ForecastResult): string {
+  if (!forecast.date_n1) return 'Meme jour de semaine, annee precedente'
+  const d = new Date(forecast.date_n1 + 'T00:00:00')
+  const jour = JOURS_LONGS[d.getDay()]
+  const dateStr = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+  return `Comparaison : ${jour} ${dateStr}`
+}
+
 function toggleFactors(index: number): void {
   expandedFactorsIndex.value = expandedFactorsIndex.value === index ? null : index
 }
@@ -971,7 +979,7 @@ watch(
               </div>
 
               <!-- N-1 comparison -->
-              <div class="day-n1">
+              <div class="day-n1" :title="n1Tooltip(fc)">
                 <span class="n1-label">N-1 :</span>
                 <span class="n1-value">{{ fc.ca_n1 !== null ? formatEuros(fc.ca_n1) : '--' }}</span>
                 <span
@@ -1122,10 +1130,10 @@ watch(
               </div>
             </div>
 
-            <!-- N-1 comparison -->
-            <div v-if="selectedForecast.ca_n1 !== null" class="detail-n1">
+            <!-- N-1 comparison — always visible -->
+            <div class="detail-n1" :title="n1Tooltip(selectedForecast)">
               <span class="n1-label-full">Meme jour N-1 :</span>
-              <span class="n1-value-full">{{ formatEuros(selectedForecast.ca_n1) }}</span>
+              <span class="n1-value-full">{{ selectedForecast.ca_n1 !== null ? formatEuros(selectedForecast.ca_n1) : '--' }}</span>
               <span
                 v-if="evolutionN1(selectedForecast)"
                 class="n1-evo n1-evo--large"

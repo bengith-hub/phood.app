@@ -39,6 +39,7 @@ export interface ForecastResult {
   meteo: MeteoDaily | null
   evenements: Evenement[]
   ca_n1: number | null
+  date_n1: string | null    // Date of the N-1 same-weekday comparison
   ca_realise: number | null // Actual CA for past dates
 }
 
@@ -230,7 +231,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     for (const v of ventes.value) {
       if (!v.cloture_validee || v.ca_ttc <= 0) continue
       const d = new Date(v.date + 'T00:00:00')
-      if (isJourFerme(d.getDay())) continue
+      if (isJourFerme(d.getDay()) || isDateFermeture(v.date)) continue
 
       const month = d.getMonth()
       if (!monthData[month]) monthData[month] = { sum: 0, count: 0 }
@@ -281,7 +282,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       if (v.date < cutoff) continue
       const d = new Date(v.date + 'T00:00:00')
       const dow = d.getDay()
-      if (isJourFerme(dow)) continue
+      if (isJourFerme(dow) || isDateFermeture(v.date)) continue
 
       // Compute predicted CA WITHOUT dow correction
       const { baseCA } = calculateBaseCA(d)
@@ -383,7 +384,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       if (v.date < cutoff) continue
       const d = new Date(v.date + 'T00:00:00')
       const dow = d.getDay()
-      if (isJourFerme(dow)) continue
+      if (isJourFerme(dow) || isDateFermeture(v.date)) continue
 
       const { baseCA } = calculateBaseCA(d)
       if (baseCA <= 0) continue
@@ -513,7 +514,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       const dStr = toLocalDateStr(d)
       const dow = d.getDay()
 
-      if (isJourFerme(dow)) continue
+      if (isJourFerme(dow) || isDateFermeture(dStr)) continue
 
       const vente = ventesParDate.value.get(dStr)
       if (!vente || !vente.cloture_validee || vente.ca_ttc <= 0) continue
@@ -718,21 +719,20 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return results
   }
 
-  function getN1Comparison(targetDate: Date): VenteHistorique | null {
+  function getN1Comparison(targetDate: Date): { vente: VenteHistorique | null; date: string } {
     const oneYearAgo = new Date(targetDate)
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
     const targetDow = targetDate.getDay()
-    const targetMonth = oneYearAgo.getMonth()
 
     let best: VenteHistorique | null = null
+    let bestDate = toLocalDateStr(oneYearAgo)
     let bestDiff = Infinity
 
-    for (let offset = -3; offset <= 3; offset++) {
+    // Search ±7 days for same weekday (always finds at least one at offset 0 or ±7)
+    for (let offset = -7; offset <= 7; offset++) {
       const checkDate = new Date(oneYearAgo)
       checkDate.setDate(checkDate.getDate() + offset)
       if (checkDate.getDay() !== targetDow) continue
-      // Stay within the same month to avoid cross-month comparisons
-      if (checkDate.getMonth() !== targetMonth) continue
 
       const checkStr = toLocalDateStr(checkDate)
       const vente = ventesParDate.value.get(checkStr)
@@ -741,11 +741,25 @@ export const usePrevisionsStore = defineStore('previsions', () => {
         if (diff < bestDiff) {
           bestDiff = diff
           best = vente
+          bestDate = checkStr
         }
       }
     }
 
-    return best
+    // If no vente found, still return the closest same-weekday date for display
+    if (!best) {
+      // Find the closest same-weekday date (offset 0 or ±7)
+      for (const off of [0, -7, 7]) {
+        const d = new Date(oneYearAgo)
+        d.setDate(d.getDate() + off)
+        if (d.getDay() === targetDow) {
+          bestDate = toLocalDateStr(d)
+          break
+        }
+      }
+    }
+
+    return { vente: best, date: bestDate }
   }
 
   function getEventsForDate(dateStr: string): Evenement[] {
@@ -1075,13 +1089,21 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return 1
   }
 
+  // Fixed closure dates: restaurant always closed (1er janvier, 1er mai, 25 décembre)
+  function isDateFermeture(dateStr: string): boolean {
+    const d = new Date(dateStr + 'T00:00:00')
+    const month = d.getMonth() // 0-indexed
+    const day = d.getDate()
+    return (month === 0 && day === 1) || (month === 4 && day === 1) || (month === 11 && day === 25)
+  }
+
   function calculateForecast(dateStr: string): ForecastResult {
     const targetDate = new Date(dateStr + 'T00:00:00')
     const jourSemaine = targetDate.getDay()
 
-    // If the restaurant is closed on this day of week, return 0
-    if (isJourFerme(jourSemaine)) {
-      const n1Vente = getN1Comparison(targetDate)
+    // If the restaurant is closed on this day of week OR on a fixed closure date, return 0
+    if (isJourFerme(jourSemaine) || isDateFermeture(dateStr)) {
+      const n1 = getN1Comparison(targetDate)
       const todayStr = toLocalDateStr(new Date())
       const venteActuelle = dateStr < todayStr ? ventesParDate.value.get(dateStr) : null
       return {
@@ -1094,7 +1116,8 @@ export const usePrevisionsStore = defineStore('previsions', () => {
         factors: [],
         meteo: meteoParDate.value.get(dateStr) || null,
         evenements: getEventsForDate(dateStr),
-        ca_n1: n1Vente?.ca_ttc ?? null,
+        ca_n1: n1.vente?.ca_ttc ?? null,
+        date_n1: n1.date,
         ca_realise: venteActuelle && venteActuelle.cloture_validee ? venteActuelle.ca_ttc : null,
       }
     }
@@ -1191,8 +1214,8 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     let confidence = Math.min(75, 30 + dataPoints * 12)
     if (meteoDay) confidence += 10
     if (superf.daysUsed >= 7) confidence += 10
-    const n1Vente = getN1Comparison(targetDate)
-    if (n1Vente) confidence += 5
+    const n1 = getN1Comparison(targetDate)
+    if (n1.vente) confidence += 5
     confidence = Math.min(95, confidence)
     if (dataPoints === 0) confidence = 10
     confidence = Math.max(10, confidence + meteoConfidencePenalty(dateStr, hasRealMeteo))
@@ -1221,7 +1244,8 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       factors,
       meteo: meteoDay,
       evenements: dayEvents,
-      ca_n1: n1Vente?.ca_ttc ?? null,
+      ca_n1: n1.vente?.ca_ttc ?? null,
+      date_n1: n1.date,
       ca_realise: caRealise,
     }
   }

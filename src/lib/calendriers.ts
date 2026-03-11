@@ -221,12 +221,14 @@ export async function syncCalendriers(year?: number): Promise<{
     // 1. Jours fériés — batch upsert
     const feries = getJoursFeries(y)
     try {
+      // Fermetures fixes: 1er janvier et 25 décembre → coefficient 0 (fermé)
+      const fermeturesFixes = ['Jour de l\'an', 'Fête du Travail', 'Noël']
       await restCall('POST', 'evenements?on_conflict=nom,date_debut', feries.map(f => ({
         nom: f.nom,
         type: 'ferie',
         date_debut: toDateStr(f.date),
         date_fin: toDateStr(f.date),
-        coefficient: 0.7,
+        coefficient: fermeturesFixes.includes(f.nom) ? 0 : 0.7,
         recurrent: true,
       })), { prefer: 'resolution=merge-duplicates' })
       stats.joursFeries += feries.length
@@ -356,13 +358,14 @@ export function isJourFerie(dateStr: string): boolean {
  * Get the Evenement[] for jours fériés as typed objects (for previsions module)
  */
 export function getJoursFeriesAsEvenements(year: number): Evenement[] {
+  const fermeturesFixes = ['Jour de l\'an', 'Fête du Travail', 'Noël']
   return getJoursFeries(year).map(f => ({
     id: `ferie-${toDateStr(f.date)}`,
     nom: f.nom,
     type: 'ferie' as const,
     date_debut: toDateStr(f.date),
     date_fin: toDateStr(f.date),
-    coefficient: 0.7,
+    coefficient: fermeturesFixes.includes(f.nom) ? 0 : 0.7,
     recurrent: true,
     notes: null,
     created_at: '',
