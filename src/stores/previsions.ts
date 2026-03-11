@@ -991,53 +991,14 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return { value: weightedSum / weightSum, daysUsed }
   }
 
+  // DÉSACTIVÉ 2026-03-11 — Analyse sur 10 mois (61 occurrences) montre que le
+  // facteur x0.85 est injustifié. Écart réel observé: +5.5% (soleil→pluie)
+  // et -3.5% (pluie→soleil). Non statistiquement significatif (t=1.14).
+  // En centre commercial, la pluie après le beau temps ramène du monde.
   function detectWeatherBreak(
-    targetDateStr: string,
-    factors: ForecastFactor[]
+    _targetDateStr: string,
+    _factors: ForecastFactor[]
   ): number {
-    const targetDate = new Date(targetDateStr + 'T00:00:00')
-    const recentDays: MeteoDaily[] = []
-
-    for (let i = 1; i <= 7; i++) {
-      const d = new Date(targetDate)
-      d.setDate(d.getDate() - i)
-      const dStr = toLocalDateStr(d)
-      const m = meteoParDate.value.get(dStr)
-      if (m) recentDays.push(m)
-    }
-
-    if (recentDays.length < 5) return 1
-
-    const targetMeteo = meteoParDate.value.get(targetDateStr)
-    if (!targetMeteo) return 1
-
-    const recentRainyCount = recentDays.filter(
-      d => d.precipitation_mm !== null && d.precipitation_mm > 2
-    ).length
-    const recentSunnyCount = recentDays.filter(
-      d => d.ensoleillement_secondes !== null && d.ensoleillement_secondes > 18000
-    ).length
-
-    const targetIsRainy = targetMeteo.precipitation_mm !== null && targetMeteo.precipitation_mm > 2
-    const targetIsSunny = targetMeteo.ensoleillement_secondes !== null &&
-      targetMeteo.ensoleillement_secondes > 18000
-
-    const hasSunToRainBreak = recentSunnyCount >= 5 && targetIsRainy
-    const hasRainToSunBreak = recentRainyCount >= 5 && targetIsSunny
-
-    if (hasSunToRainBreak || hasRainToSunBreak) {
-      const damping = 0.85
-      factors.push({
-        label: 'Rupture meteo',
-        type: 'rupture_meteo',
-        coefficient: damping,
-        detail: hasSunToRainBreak
-          ? 'Passage soleil vers pluie apres 5+ jours — comportement incertain'
-          : 'Passage pluie vers soleil apres 5+ jours — comportement incertain',
-      })
-      return damping
-    }
-
     return 1
   }
 
