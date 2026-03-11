@@ -5,7 +5,7 @@
  * - Jours fériés: 11 fixes + mobiles (Pâques via Meeus/Jones/Butcher)
  * - Vacances scolaires: API data.education.gouv.fr (3 zones: A=Bordeaux 1.10, B+C=passage 1.05)
  * - Soldes: calcul local (2ème mercredi janvier, dernier mercredi juin, 4 semaines)
- * - Ramadan: dates approx. via calcul Hijri (coeff 0.88, soit -12%)
+ * - Ramadan: API Aladhan (calendrier Hijri) + fallback calcul lunaire (coeff 0.88, soit -12%)
  * - Aïd el-Fitr: 2 jours après le Ramadan (coeff 1.0, neutre)
  */
 
@@ -95,29 +95,59 @@ function getSoldes(year: number): { debut: Date; fin: Date; nom: string }[] {
   ]
 }
 
-// --- Ramadan & Aïd el-Fitr ---
-// Approximate Hijri → Gregorian conversion for Ramadan start dates.
-// Based on known dates + lunar year (~354.37 days). Accuracy: ±1-2 days.
-// Actual dates depend on moon sighting, but this is good enough for forecasting.
+// --- Ramadan & Aïd el-Fitr via Aladhan API ---
+// API: https://aladhan.com/islamic-calendar-api (free, no key needed)
+// Ramadan = month 9 in Hijri calendar
+// Gregorian year → approximate Hijri year, then fetch month 9
 
-const RAMADAN_KNOWN_DATES: Record<number, { start: string; end: string }> = {
-  2024: { start: '2024-03-11', end: '2024-04-09' },
-  2025: { start: '2025-03-01', end: '2025-03-29' },
-  2026: { start: '2026-02-18', end: '2026-03-19' },
-  2027: { start: '2027-02-08', end: '2027-03-08' },
-  2028: { start: '2028-01-28', end: '2028-02-25' },
-  2029: { start: '2029-01-16', end: '2029-02-13' },
-  2030: { start: '2030-01-06', end: '2030-02-03' },
+function gregorianYearToHijriYear(gYear: number): number {
+  // Approximate: Hijri year ≈ (Gregorian year - 622) * (33/32)
+  // Fine-tuned: 2025 = ~1446, 2026 = ~1447
+  return Math.round((gYear - 622) * 33 / 32)
 }
 
-function getRamadan(year: number): { debut: string; fin: string } | null {
-  const known = RAMADAN_KNOWN_DATES[year]
-  if (known) return { debut: known.start, fin: known.end }
+interface AladhanDay {
+  gregorian: { date: string } // DD-MM-YYYY format
+}
 
-  // Fallback: approximate from 2025 known date using lunar year drift (~10.63 days/year)
-  const refYear = 2025
-  const refStart = new Date(2025, 2, 1) // March 1, 2025
-  const yearsDiff = year - refYear
+async function fetchRamadanDates(year: number): Promise<{ debut: string; fin: string } | null> {
+  const hijriYear = gregorianYearToHijriYear(year)
+  // Try hijriYear and hijriYear+1 since Ramadan may span Gregorian years differently
+  for (const hy of [hijriYear, hijriYear - 1, hijriYear + 1]) {
+    try {
+      const resp = await fetch(`https://api.aladhan.com/v1/hToGCalendar/9/${hy}`, {
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!resp.ok) continue
+      const data = await resp.json() as { data: AladhanDay[] }
+      if (!data.data || data.data.length === 0) continue
+
+      const firstDay = data.data[0]!.gregorian.date // DD-MM-YYYY
+      const lastDay = data.data[data.data.length - 1]!.gregorian.date
+
+      // Convert DD-MM-YYYY → YYYY-MM-DD
+      const toIso = (d: string) => {
+        const [dd, mm, yyyy] = d.split('-')
+        return `${yyyy}-${mm}-${dd}`
+      }
+      const debut = toIso(firstDay)
+      const fin = toIso(lastDay)
+
+      // Check if this Ramadan falls in the target Gregorian year
+      if (debut.startsWith(String(year))) {
+        return { debut, fin }
+      }
+    } catch {
+      // API timeout or error, try next hijri year
+    }
+  }
+  return null
+}
+
+// Fallback: lunar year drift approximation if API is unavailable
+function getRamadanFallback(year: number): { debut: string; fin: string } {
+  const refStart = new Date(2025, 2, 1) // March 1, 2025 (known Ramadan start)
+  const yearsDiff = year - 2025
   const drift = Math.round(yearsDiff * -10.63)
   const approxStart = new Date(refStart)
   approxStart.setDate(approxStart.getDate() + drift)
@@ -126,9 +156,7 @@ function getRamadan(year: number): { debut: string; fin: string } | null {
   return { debut: toDateStr(approxStart), fin: toDateStr(approxEnd) }
 }
 
-function getAidElFitr(year: number): { debut: string; fin: string } | null {
-  const ramadan = getRamadan(year)
-  if (!ramadan) return null
+function getAidElFitrFromRamadan(ramadan: { debut: string; fin: string }): { debut: string; fin: string } {
   const endDate = new Date(ramadan.fin + 'T00:00:00')
   const aidStart = new Date(endDate)
   aidStart.setDate(aidStart.getDate() + 1)
@@ -249,38 +277,35 @@ export async function syncCalendriers(year?: number): Promise<{
     }
 
     // 4. Ramadan — coeff 0.88 (impact négatif -12% en centre commercial)
-    const ramadan = getRamadan(y)
-    if (ramadan) {
-      try {
-        await restCall('POST', 'evenements?on_conflict=nom,date_debut', [{
-          nom: `Ramadan ${y}`,
-          type: 'custom',
-          date_debut: ramadan.debut,
-          date_fin: ramadan.fin,
-          coefficient: 0.88,
-          recurrent: false,
-        }], { prefer: 'resolution=merge-duplicates' })
-        stats.ramadan++
-      } catch (err) {
-        console.warn('Failed to sync Ramadan:', err)
-      }
+    // Fetch from Aladhan API, fallback to lunar approximation
+    const ramadan = await fetchRamadanDates(y) ?? getRamadanFallback(y)
+    try {
+      await restCall('POST', 'evenements?on_conflict=nom,date_debut', [{
+        nom: `Ramadan ${y}`,
+        type: 'custom',
+        date_debut: ramadan.debut,
+        date_fin: ramadan.fin,
+        coefficient: 0.88,
+        recurrent: false,
+      }], { prefer: 'resolution=merge-duplicates' })
+      stats.ramadan++
+    } catch (err) {
+      console.warn('Failed to sync Ramadan:', err)
     }
 
     // 5. Aïd el-Fitr — coeff 1.0 (neutre, pas de pic observé)
-    const aid = getAidElFitr(y)
-    if (aid) {
-      try {
-        await restCall('POST', 'evenements?on_conflict=nom,date_debut', [{
-          nom: `Aïd el-Fitr ${y}`,
-          type: 'custom',
-          date_debut: aid.debut,
-          date_fin: aid.fin,
-          coefficient: 1.0,
-          recurrent: false,
-        }], { prefer: 'resolution=merge-duplicates' })
-      } catch (err) {
-        console.warn('Failed to sync Aïd el-Fitr:', err)
-      }
+    const aid = getAidElFitrFromRamadan(ramadan)
+    try {
+      await restCall('POST', 'evenements?on_conflict=nom,date_debut', [{
+        nom: `Aïd el-Fitr ${y}`,
+        type: 'custom',
+        date_debut: aid.debut,
+        date_fin: aid.fin,
+        coefficient: 1.0,
+        recurrent: false,
+      }], { prefer: 'resolution=merge-duplicates' })
+    } catch (err) {
+      console.warn('Failed to sync Aïd el-Fitr:', err)
     }
   }
 
