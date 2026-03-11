@@ -509,6 +509,11 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
         <h1>{{ isNew ? 'Nouvelle recette' : nom }}</h1>
       </div>
       <div v-if="!isNew && isAdmin" class="header-actions">
+        <label class="toggle-actif">
+          <input type="checkbox" v-model="actif" class="toggle-check" />
+          <span class="toggle-slider" />
+          <span class="toggle-label">{{ actif ? 'Actif' : 'Inactif' }}</span>
+        </label>
         <button
           class="btn-delete"
           @click.stop="confirmDelete"
@@ -1021,6 +1026,58 @@ h1 {
 
 .header-actions {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Toggle actif/inactif */
+.toggle-actif {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-check {
+  display: none;
+}
+
+.toggle-slider {
+  width: 44px;
+  height: 24px;
+  background: #D1D5DB;
+  border-radius: 12px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.toggle-check:checked + .toggle-slider {
+  background: var(--color-primary, #E85D2C);
+}
+
+.toggle-check:checked + .toggle-slider::after {
+  transform: translateX(20px);
+}
+
+.toggle-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary, #4B5563);
 }
 
 .btn-delete {

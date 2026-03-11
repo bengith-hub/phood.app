@@ -47,7 +47,6 @@ function toLocalDateStr(d: Date): string {
 }
 const dateLivraison = ref('')
 const dateLivraisonError = ref('')
-const notes = ref('')
 const searchQuery = ref('')
 const showStockDetails = ref(false)
 const dateFinCouverture = ref('')
@@ -180,7 +179,6 @@ const nbArticles = computed(() => {
 const autoSaveData = computed(() => ({
   fournisseur_id: selectedFournisseurId.value || null,
   date_livraison_prevue: dateLivraison.value || null,
-  notes: notes.value || null,
   montant_total_ht: totalHT.value,
   montant_total_ttc: totalTTC.value,
 }))
@@ -429,7 +427,6 @@ async function handleSaveDraft() {
   await commandesStore.saveLignes(commandeId.value, lignesArray)
   await commandesStore.updateCommande(commandeId.value, {
     date_livraison_prevue: dateLivraison.value || null,
-    notes: notes.value || null,
   })
 }
 
@@ -448,7 +445,6 @@ onMounted(async () => {
     if (commande.value) {
       selectedFournisseurId.value = commande.value.fournisseur_id
       dateLivraison.value = commande.value.date_livraison_prevue || ''
-      notes.value = commande.value.notes || ''
 
       // Load existing lines with conditionnement_idx protection (FIX 10)
       const existingLignes = await commandesStore.fetchLignes(commandeId.value)
@@ -706,12 +702,6 @@ watch(selectedFournisseurId, async (newId) => {
             />
           </div>
         </div>
-      </div>
-
-      <!-- Notes -->
-      <div class="notes-section">
-        <label>Notes</label>
-        <textarea v-model="notes" rows="2" placeholder="Instructions spéciales..." :disabled="!isDraft" />
       </div>
 
       <!-- Actions -->
@@ -1118,28 +1108,6 @@ h1 {
 .qty-input::-webkit-outer-spin-button,
 .qty-input::-webkit-inner-spin-button {
   -webkit-appearance: none;
-}
-
-/* Notes */
-.notes-section {
-  margin-top: 16px;
-}
-
-.notes-section label {
-  font-size: 15px;
-  font-weight: 600;
-  display: block;
-  margin-bottom: 6px;
-}
-
-.notes-section textarea {
-  width: 100%;
-  border: 2px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 12px 16px;
-  font-size: 16px;
-  resize: vertical;
-  background: var(--bg-surface);
 }
 
 /* Actions */

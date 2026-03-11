@@ -190,8 +190,7 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   // ═══════════════════════════════════════════════════════
   // COMMENTAIRE (optional)
   // ═══════════════════════════════════════════════════════
-  // Combine commande.notes + extra commentaire from send screen
-  const allNotes = [commande.notes, data.commentaire].filter(Boolean).join('\n')
+  const allNotes = data.commentaire || ''
 
   // Always show the section header (empty = ready for handwritten notes)
   doc.setFillColor(245, 245, 245)

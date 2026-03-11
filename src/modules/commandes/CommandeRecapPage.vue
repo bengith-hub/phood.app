@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { restCall, storageUpload, storagePublicUrl } from '@/lib/rest-client'
 import { useCommandesStore } from '@/stores/commandes'
@@ -37,31 +37,57 @@ const photoInputRef = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
 const sendError = ref<string | null>(null)
 
+// PDF preview
+const pdfPreviewUrl = ref<string | null>(null)
+const pdfGenerating = ref(false)
+
 const etablissement = computed<EtablissementInfo>(() => getEtablissement(config.value))
 
 const nbArticles = computed(() => lignes.value.length)
 const totalColis = computed(() => lignes.value.reduce((sum, l) => sum + l.quantite, 0))
 const totalHT = computed(() => commande.value?.montant_total_ht || 0)
 
-// Group lines by mercuriale category
-const lignesGrouped = computed(() => {
-  const groups = new Map<string, { merc: Mercuriale; ligne: CommandeLigne }[]>()
-  for (const l of lignes.value) {
-    const merc = mercurialeStore.getById(l.mercuriale_id)
-    const cat = merc?.categorie || 'Autres'
-    if (!groups.has(cat)) groups.set(cat, [])
-    groups.get(cat)!.push({ merc: merc!, ligne: l })
+function toLocalDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+async function generatePdfPreview() {
+  if (!commande.value || !fournisseur.value) return
+  pdfGenerating.value = true
+  try {
+    const commandeData: Commande = {
+      ...commande.value,
+      date_commande: commande.value.date_commande || toLocalDateStr(new Date()),
+    }
+    const pdf = await generateCommandePdf({
+      commande: commandeData,
+      lignes: lignes.value,
+      fournisseur: fournisseur.value,
+      getMercuriale: (id: string) => mercurialeStore.getById(id),
+      etablissement: etablissement.value,
+      commentaire: commentaire.value || undefined,
+    })
+    // Revoke previous URL
+    if (pdfPreviewUrl.value) URL.revokeObjectURL(pdfPreviewUrl.value)
+    pdfPreviewUrl.value = pdf.output('bloburl') as string
+  } catch (e) {
+    console.error('PDF preview generation error:', e)
+  } finally {
+    pdfGenerating.value = false
   }
-  return groups
+}
+
+// Debounced regeneration when commentaire changes
+let commentaireTimer: ReturnType<typeof setTimeout> | null = null
+watch(commentaire, () => {
+  if (commentaireTimer) clearTimeout(commentaireTimer)
+  commentaireTimer = setTimeout(() => generatePdfPreview(), 800)
 })
 
-function getCondLabel(merc: Mercuriale | undefined, idx: number): string {
-  if (!merc) return ''
-  const conds = merc.conditionnements
-  if (!conds || conds.length === 0) return merc.unite_stock
-  const cond = conds[idx] ?? conds[0]
-  return cond?.nom ?? merc.unite_stock
-}
+onUnmounted(() => {
+  if (pdfPreviewUrl.value) URL.revokeObjectURL(pdfPreviewUrl.value)
+  if (commentaireTimer) clearTimeout(commentaireTimer)
+})
 
 onMounted(async () => {
   try {
@@ -94,6 +120,9 @@ onMounted(async () => {
     const etabEmail = getEtablissement(cfgData).email
     if (etabEmail && !ccList.includes(etabEmail)) ccList.push(etabEmail)
     copies.value = ccList
+
+    // Generate initial PDF preview
+    await generatePdfPreview()
   } catch (e) {
     console.error('CommandeRecapPage load error:', e)
   } finally {
@@ -121,10 +150,6 @@ function removePhoto(index: number) {
   const photo = photos.value[index]
   if (photo) URL.revokeObjectURL(photo.preview)
   photos.value.splice(index, 1)
-}
-
-function toLocalDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -201,9 +226,7 @@ async function handleEnvoyer() {
 
     const notesHtml = commentaire.value
       ? `<p><em>Notes : ${commentaire.value}</em></p>`
-      : commande.value.notes
-        ? `<p><em>Notes : ${commande.value.notes}</em></p>`
-        : ''
+      : ''
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px;">
@@ -279,56 +302,26 @@ async function handleEnvoyer() {
 
     <template v-else-if="commande && fournisseur">
       <div class="recap-layout">
-        <!-- Left: Récapitulatif -->
+        <!-- Left: Aperçu PDF -->
         <div class="recap-left">
-          <h2>Récapitulatif de commande</h2>
+          <h2>Aperçu du bon de commande</h2>
           <div class="recap-meta">
             <span class="recap-numero">{{ commande.numero }}</span>
             <span class="recap-sep">—</span>
             <span class="recap-fournisseur">{{ fournisseur.nom }}</span>
-          </div>
-          <div v-if="commande.date_livraison_prevue" class="recap-date">
-            Livraison :
-            {{ new Date(commande.date_livraison_prevue).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }) }}
+            <span class="recap-sep">—</span>
+            <span class="recap-total">{{ totalHT.toFixed(2) }} EUR HT</span>
           </div>
 
-          <!-- Products table grouped by category -->
-          <div v-for="[cat, items] in lignesGrouped" :key="cat" class="recap-category">
-            <div class="cat-header">{{ cat }}</div>
-            <table class="recap-table">
-              <thead>
-                <tr>
-                  <th class="col-sku">SKU</th>
-                  <th class="col-nom">Nom</th>
-                  <th class="col-cond">Cond.</th>
-                  <th class="col-qty">Qté</th>
-                  <th class="col-pu">Prix u. HT</th>
-                  <th class="col-total">Total HT</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="{ merc, ligne } in items" :key="ligne.mercuriale_id">
-                  <td class="col-sku">{{ merc?.ref_fournisseur || '' }}</td>
-                  <td class="col-nom">{{ merc?.designation || '—' }}</td>
-                  <td class="col-cond">{{ getCondLabel(merc, ligne.conditionnement_idx) }}</td>
-                  <td class="col-qty">{{ ligne.quantite }}</td>
-                  <td class="col-pu">{{ ligne.prix_unitaire_ht.toFixed(2) }}</td>
-                  <td class="col-total">{{ ligne.montant_ht.toFixed(2) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Totals -->
-          <div class="recap-totals">
-            <div class="totals-row summary">
-              <span>Lignes : {{ nbArticles }} &nbsp; Colis : {{ totalColis }}</span>
-              <span>{{ totalHT.toFixed(2) }} EUR</span>
-            </div>
-            <div class="totals-row grand-total">
-              <span>Total HT</span>
-              <span>{{ totalHT.toFixed(2) }} EUR</span>
-            </div>
+          <div class="pdf-preview-container">
+            <div v-if="pdfGenerating" class="pdf-loading">Génération du PDF...</div>
+            <iframe
+              v-else-if="pdfPreviewUrl"
+              :src="pdfPreviewUrl"
+              class="pdf-iframe"
+              title="Aperçu du bon de commande PDF"
+            />
+            <div v-else class="pdf-loading">Chargement...</div>
           </div>
         </div>
 
@@ -427,13 +420,16 @@ async function handleEnvoyer() {
   align-items: flex-start;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .recap-layout {
     grid-template-columns: 1fr;
   }
+  .pdf-iframe {
+    height: 60vh;
+  }
 }
 
-/* Left: Récapitulatif */
+/* Left: Aperçu PDF */
 .recap-left h2,
 .recap-right h2 {
   font-size: 20px;
@@ -445,7 +441,7 @@ async function handleEnvoyer() {
 .recap-meta {
   font-size: 16px;
   color: var(--text-secondary, #4B5563);
-  margin-bottom: 4px;
+  margin-bottom: 12px;
 }
 .recap-numero {
   font-weight: 700;
@@ -457,92 +453,34 @@ async function handleEnvoyer() {
 .recap-fournisseur {
   font-weight: 600;
 }
-
-.recap-date {
-  font-size: 15px;
-  color: var(--text-secondary, #4B5563);
-  margin-bottom: 16px;
-}
-
-.recap-category {
-  margin-bottom: 16px;
-}
-
-.cat-header {
-  font-size: 14px;
+.recap-total {
   font-weight: 700;
-  text-transform: uppercase;
-  color: #fff;
-  background: var(--text-secondary, #4B5563);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm, 8px) var(--radius-sm, 8px) 0 0;
-}
-
-.recap-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-  border: 1px solid var(--border, #D1D5DB);
-  border-top: none;
-}
-
-.recap-table thead {
-  background: #F9FAFB;
-}
-
-.recap-table th {
-  text-align: left;
-  padding: 8px 10px;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-secondary, #4B5563);
-  border-bottom: 1px solid var(--border, #D1D5DB);
-}
-
-.recap-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid #F3F4F6;
   color: var(--text-primary, #1F2937);
 }
 
-.col-sku { width: 80px; }
-.col-cond { width: 120px; }
-.col-qty { width: 50px; text-align: center; }
-.col-pu { width: 80px; text-align: right; }
-.col-total { width: 80px; text-align: right; font-weight: 600; }
-
-.recap-table th.col-qty,
-.recap-table th.col-pu,
-.recap-table th.col-total {
-  text-align: right;
-}
-
-.recap-totals {
-  margin-top: 4px;
+.pdf-preview-container {
   border: 1px solid var(--border, #D1D5DB);
-  border-radius: 0 0 var(--radius-sm, 8px) var(--radius-sm, 8px);
+  border-radius: var(--radius-sm, 8px);
   overflow: hidden;
+  background: #f5f5f5;
+  min-height: 500px;
 }
 
-.totals-row {
+.pdf-iframe {
+  width: 100%;
+  height: 80vh;
+  min-height: 500px;
+  border: none;
+  display: block;
+}
+
+.pdf-loading {
   display: flex;
-  justify-content: space-between;
-  padding: 8px 12px;
-  font-size: 14px;
-}
-
-.totals-row.summary {
-  background: #F3F4F6;
-  color: var(--text-secondary, #4B5563);
-  font-weight: 500;
-}
-
-.totals-row.grand-total {
-  background: #F9FAFB;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
   font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary, #1F2937);
-  border-top: 1px solid var(--border, #D1D5DB);
+  color: var(--text-secondary, #4B5563);
 }
 
 /* Right: Email form */
