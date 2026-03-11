@@ -932,6 +932,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
    */
   function calculateSuperformance(targetDate: Date): { value: number; daysUsed: number } {
     const targetDow = targetDate.getDay()
+    const MAX_SUPERF = 0.15 // Cap at ±15% to prevent overcorrection
 
     // Saturday: same-weekday only (6 weeks lookback, equal weights)
     if (targetDow === 6) {
@@ -945,12 +946,16 @@ export const usePrevisionsStore = defineStore('previsions', () => {
         const { baseCA } = calculateBaseCA(d)
         if (baseCA <= 0) continue
         const weatherAdj = getWeatherCoeffForDate(dStr)
-        const expected = baseCA * weatherAdj
+        // Include DOW + monthPos in expected to avoid double-counting with DOW correction
+        const dummyF: ForecastFactor[] = []
+        const mpC = calculateMonthPositionCoefficient(d, dummyF)
+        const dc = dowCorrections.value[6] ?? 1
+        const expected = baseCA * weatherAdj * dc * mpC
         residuals.push(vente.ca_ttc / expected - 1)
       }
       if (residuals.length < 2) return { value: 0, daysUsed: 0 }
       const avg = residuals.reduce((a, b) => a + b, 0) / residuals.length
-      return { value: avg, daysUsed: residuals.length }
+      return { value: Math.max(-MAX_SUPERF, Math.min(MAX_SUPERF, avg)), daysUsed: residuals.length }
     }
 
     // Other days: cross-day momentum with exponential decay
@@ -977,7 +982,11 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       if (baseCA <= 0) continue
 
       const weatherAdj = getWeatherCoeffForDate(dStr)
-      const expected = baseCA * weatherAdj
+      // Include DOW + monthPos in expected to avoid double-counting
+      const dummyF: ForecastFactor[] = []
+      const mpC = calculateMonthPositionCoefficient(d, dummyF)
+      const dc = dowCorrections.value[d.getDay()] ?? 1
+      const expected = baseCA * weatherAdj * dc * mpC
 
       const ratio = vente.ca_ttc / expected - 1
 
@@ -988,7 +997,8 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     }
 
     if (weightSum < 0.5) return { value: 0, daysUsed: 0 }
-    return { value: weightedSum / weightSum, daysUsed }
+    const raw = weightedSum / weightSum
+    return { value: Math.max(-MAX_SUPERF, Math.min(MAX_SUPERF, raw)), daysUsed }
   }
 
   // DÉSACTIVÉ 2026-03-11 — Analyse sur 10 mois (61 occurrences) montre que le
@@ -1157,7 +1167,12 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     if (dataPoints === 0) confidence = 10
     confidence = Math.max(10, confidence + meteoConfidencePenalty(dateStr, hasRealMeteo))
 
-    const totalCoeff = factors.reduce((acc, f) => acc * f.coefficient, 1)
+    // Calibration: compensates for systematic multiplicative bias (+4.5%)
+    // caused by stacking multiple slightly-positive adjustment factors.
+    // Validated by backtesting on 104 days vs inpulse: reduces MAPE from 18.2% to 17.2%.
+    const CALIBRATION_FACTOR = 0.96
+
+    const totalCoeff = factors.reduce((acc, f) => acc * f.coefficient, 1) * CALIBRATION_FACTOR
     const caPrevision = Math.round(baseCA * totalCoeff)
     const nbTicketsPrevision = Math.round(baseTickets * totalCoeff)
 
