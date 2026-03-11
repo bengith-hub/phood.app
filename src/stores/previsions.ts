@@ -792,7 +792,6 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
   function calculateBaseCA(targetDate: Date): { baseCA: number; baseTickets: number; dataPoints: number } {
     const jourSemaine = targetDate.getDay()
-    const targetMonth = targetDate.getMonth()
     const targetSeasonal = getSmoothedSeasonalIndex(toLocalDateStr(targetDate))
 
     const history = getSameDayHistory(targetDate, 8)
@@ -806,7 +805,6 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       let baseTickets = 0
       for (let i = 0; i < recent.length; i++) {
         const w = weights[i]! / wSum
-        const histDate = new Date(recent[i]!.date + 'T00:00:00')
         const histSeasonal = getSmoothedSeasonalIndex(recent[i]!.date)
 
         // Deseasonalize historical value, then reseasonalize for target date

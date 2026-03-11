@@ -8,7 +8,7 @@ import { useMercurialeStore } from '@/stores/mercuriale'
 import { generateCommandePdf } from '@/lib/pdf-commande'
 import { getEtablissement, emailSubjectPrefix, emailFooter } from '@/lib/email-templates'
 import EmailTagInput from '@/components/EmailTagInput.vue'
-import type { Config, Commande, CommandeLigne, Fournisseur, Mercuriale, EtablissementInfo } from '@/types/database'
+import type { Config, Commande, CommandeLigne, Fournisseur, EtablissementInfo } from '@/types/database'
 
 const route = useRoute()
 const router = useRouter()
@@ -44,7 +44,6 @@ const pdfGenerating = ref(false)
 const etablissement = computed<EtablissementInfo>(() => getEtablissement(config.value))
 
 const nbArticles = computed(() => lignes.value.length)
-const totalColis = computed(() => lignes.value.reduce((sum, l) => sum + l.quantite, 0))
 const totalHT = computed(() => commande.value?.montant_total_ht || 0)
 
 function toLocalDateStr(d: Date): string {
@@ -69,7 +68,7 @@ async function generatePdfPreview() {
     })
     // Revoke previous URL
     if (pdfPreviewUrl.value) URL.revokeObjectURL(pdfPreviewUrl.value)
-    pdfPreviewUrl.value = pdf.output('bloburl') as string
+    pdfPreviewUrl.value = pdf.output('bloburl') as unknown as string
   } catch (e) {
     console.error('PDF preview generation error:', e)
   } finally {
