@@ -118,7 +118,8 @@ function onPhotosSelected(e: Event) {
 }
 
 function removePhoto(index: number) {
-  URL.revokeObjectURL(photos.value[index].preview)
+  const photo = photos.value[index]
+  if (photo) URL.revokeObjectURL(photo.preview)
   photos.value.splice(index, 1)
 }
 
