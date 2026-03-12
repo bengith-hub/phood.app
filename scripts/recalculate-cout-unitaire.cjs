@@ -71,6 +71,19 @@ function getFacturationConditioning(merc) {
 
 function calculateCoutUnitaire(merc, ingredientUniteStock) {
   if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0
+
+  // Explicit conversion: e.g. 5 kg = 1000 unite
+  if (merc.conversion_quantite && merc.conversion_quantite > 0 && merc.conversion_unite) {
+    const convUnite = merc.conversion_unite.toLowerCase()
+    const isu = ingredientUniteStock.toLowerCase()
+    const coeff = merc.coefficient_conversion || 1
+    const prixColis = merc.prix_unitaire_ht * coeff
+    const coutParConvUnit = prixColis / merc.conversion_quantite
+    if (convUnite === isu) return coutParConvUnit
+    const factor = getUnitFactor(convUnite, isu)
+    return factor > 0 ? coutParConvUnit / factor : 0
+  }
+
   const fact = getFacturationConditioning(merc)
   const fu = fact.unite.toLowerCase()
   const isu = ingredientUniteStock.toLowerCase()
@@ -110,7 +123,7 @@ async function main() {
   // Fetch all mercuriale products
   const { data: mercuriale, error: mercErr } = await supabase
     .from('mercuriale')
-    .select('id, prix_unitaire_ht, coefficient_conversion, conditionnements, unite_stock, unite_facturation, unite_commande, designation')
+    .select('id, prix_unitaire_ht, coefficient_conversion, conditionnements, unite_stock, unite_facturation, unite_commande, conversion_quantite, conversion_unite, designation')
 
   if (mercErr) {
     console.error('Error fetching mercuriale:', mercErr.message)

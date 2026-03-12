@@ -129,15 +129,37 @@ export function getFacturationConditioning(
  *   → facturation = {quantite: 1, unite: 'kg'}
  *   → 6.831 / (1 × 1000) = 0.006831 €/g
  *
+ * Conversion case (cross-dimension with explicit conversion):
+ *   Sucre dose: prix=3.275€/kg, coeff=5, conversion: 5kg = 1000 unite
+ *   → prix_colis = 3.275 × 5 = 16.375€
+ *   → cout/dosette = 16.375 / 1000 = 0.016375 €/dosette
+ *
  * Bridge case: facturation is count-based (unite/piece) but ingredient in weight/volume
  *   → Use coefficient_conversion + unite_commande to bridge dimensions
  *   → E.g. bidon 3kg at 2.81€/bidon → 2.81 / (1 × 3 × 1000) = 0.000937 €/g
  */
 export function calculateCoutUnitaire(
-  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_facturation' | 'unite_commande'>,
+  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_facturation' | 'unite_commande' | 'conversion_quantite' | 'conversion_unite'>,
   ingredientUniteStock: string,
 ): number {
   if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0
+
+  // Explicit conversion: e.g. 5 kg = 1000 unite
+  // prix_colis = prix_unitaire × coefficient_conversion
+  // cout_per_unit = prix_colis / conversion_quantite
+  if (merc.conversion_quantite && merc.conversion_quantite > 0 && merc.conversion_unite) {
+    const convUnite = merc.conversion_unite.toLowerCase()
+    const isu = ingredientUniteStock.toLowerCase()
+    const coeff = merc.coefficient_conversion || 1
+    const prixColis = merc.prix_unitaire_ht * coeff
+    const coutParConvUnit = prixColis / merc.conversion_quantite
+    // If conversion unite matches ingredient stock unit, done
+    if (convUnite === isu) return coutParConvUnit
+    // Otherwise convert (e.g. conversion in kg but stock in g)
+    const factor = getUnitFactor(convUnite, isu)
+    return factor > 0 ? coutParConvUnit / factor : 0
+  }
+
   const fact = getFacturationConditioning(merc)
 
   const fu = fact.unite.toLowerCase()

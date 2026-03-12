@@ -132,6 +132,36 @@ function formatConditionnement(cond: Conditionnement) {
   return `${cond.nom} (${cond.quantite} ${cond.unite})`
 }
 
+// Conversion equivalence text (like inpulse: "5 kg = 1000 unite")
+const conversionLabel = computed(() => {
+  const p = editingProduct.value
+  if (!p) return ''
+  const q = p.conversion_quantite
+  const u = p.conversion_unite
+  const coeff = p.coefficient_conversion || 0
+  const uf = p.unite_facturation || p.unite_commande || ''
+  if (!q || q <= 0 || !u) return ''
+  return `${coeff} ${uf} = ${q} ${u}`
+})
+
+// Whether conversion section should be shown (cross-dimension: facturation weight/volume but ingredient count, or vice-versa)
+const showConversion = computed(() => {
+  const p = editingProduct.value
+  if (!p) return false
+  // Always show if conversion already filled
+  if (p.conversion_quantite && p.conversion_unite) return true
+  // Show if facturation unit and linked ingredient unit are in different dimensions
+  const uf = (p.unite_facturation || p.unite_commande || '').toLowerCase()
+  const ingId = p.ingredient_restaurant_id
+  if (!ingId) return false
+  const ing = ingredientsStore.getById(ingId)
+  if (!ing) return false
+  const isu = ing.unite_stock.toLowerCase()
+  const isUfWeight = ['g', 'kg', 'ml', 'cl', 'l'].includes(uf)
+  const isIsuWeight = ['g', 'kg', 'ml', 'cl', 'l'].includes(isu)
+  return isUfWeight !== isIsuWeight
+})
+
 function formatPrix(merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'unite_facturation' | 'conditionnements' | 'unite_stock' | 'unite_commande' | 'coefficient_conversion'>) {
   const prix = merc.prix_unitaire_ht ?? 0
   const fact = getFacturationConditioning(merc)
@@ -460,6 +490,9 @@ onMounted(async () => {
               <span class="product-price">{{ formatPrix(p) }}</span>
               <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
             </div>
+            <div v-if="p.conversion_quantite && p.conversion_unite" class="product-conversion">
+              {{ p.coefficient_conversion }} {{ p.unite_facturation || p.unite_commande }} = {{ p.conversion_quantite }} {{ p.conversion_unite }}
+            </div>
             <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
               <span
                 v-for="(c, i) in (p.conditionnements as Conditionnement[])"
@@ -581,6 +614,30 @@ onMounted(async () => {
             <div class="field">
               <label>Coefficient conversion</label>
               <input v-model.number="editingProduct.coefficient_conversion" type="number" step="0.001" min="0" />
+            </div>
+
+            <!-- Conversion (cross-dimension: e.g. 5 kg = 1000 unite) -->
+            <div v-if="showConversion" class="field full conversion-section">
+              <label>Conversion</label>
+              <div class="conversion-row">
+                <span class="conversion-from">{{ editingProduct.coefficient_conversion || '?' }} {{ editingProduct.unite_facturation || editingProduct.unite_commande || '?' }}</span>
+                <span class="conversion-eq">=</span>
+                <input
+                  v-model.number="editingProduct.conversion_quantite"
+                  type="number"
+                  step="1"
+                  min="0"
+                  placeholder="Quantit&eacute;"
+                  class="conversion-input"
+                />
+                <select v-model="editingProduct.conversion_unite" class="conversion-select">
+                  <option :value="null">Unit&eacute;</option>
+                  <option v-for="u in UNITES" :key="u" :value="u">{{ u }}</option>
+                </select>
+              </div>
+              <div v-if="conversionLabel" class="conversion-hint">
+                {{ conversionLabel }}
+              </div>
             </div>
 
             <!-- Conditionnements -->
@@ -1089,6 +1146,16 @@ h1 {
 .product-details { display: flex; gap: 12px; margin-bottom: 6px; }
 .product-price { font-size: 18px; font-weight: 700; color: var(--color-primary); }
 .product-tva { font-size: 13px; color: var(--text-tertiary); align-self: center; }
+.product-conversion {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 10%, var(--bg-surface));
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  margin-top: 2px;
+}
 .product-cond { display: flex; gap: 6px; flex-wrap: wrap; }
 .cond-badge { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--bg-main); color: var(--text-secondary); }
 .cond-badge.primary { background: var(--color-primary); color: white; font-weight: 600; }
@@ -1175,6 +1242,58 @@ h1 {
   font-size: 16px;
 }
 .checkbox-label input { width: 20px; height: 20px; cursor: pointer; }
+
+/* Conversion section */
+.conversion-section {
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 25%, var(--border));
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+.conversion-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.conversion-from {
+  font-weight: 600;
+  font-size: 16px;
+  min-width: 60px;
+  white-space: nowrap;
+}
+.conversion-eq {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text-secondary);
+}
+.conversion-input {
+  width: 100px;
+  height: 44px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-size: 16px;
+  text-align: center;
+}
+.conversion-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+.conversion-select {
+  height: 44px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-size: 15px;
+  min-width: 90px;
+}
+.conversion-hint {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
 
 /* Conditionnement editing */
 .cond-edit-row {

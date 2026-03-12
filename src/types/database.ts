@@ -142,6 +142,8 @@ export interface Mercuriale {
   unite_stock: string
   unite_facturation: string | null
   coefficient_conversion: number
+  conversion_quantite: number | null
+  conversion_unite: string | null
   nombre_portions: number | null
   stock_tampon: { semaine: number; weekend: number; vacances: number } | null
   photo_url: string | null
