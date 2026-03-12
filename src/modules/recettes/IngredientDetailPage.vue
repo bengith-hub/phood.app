@@ -5,7 +5,7 @@ import { useIngredientsStore } from '@/stores/ingredients'
 import { useMercurialeStore } from '@/stores/mercuriale'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import type { IngredientRestaurant, Allergene } from '@/types/database'
-import { calculateCoutUnitaire } from '@/lib/unit-conversion'
+import { calculateCoutUnitaire, getFacturationConditioning } from '@/lib/unit-conversion'
 
 const route = useRoute()
 const router = useRouter()
@@ -225,7 +225,7 @@ onMounted(async () => {
             :key="m.id"
             :value="m.id"
           >
-            {{ m.designation }} — {{ getFournisseurNom(m.fournisseur_id) }} ({{ m.prix_unitaire_ht.toFixed(2) }} €)
+            {{ m.designation }} — {{ getFournisseurNom(m.fournisseur_id) }} ({{ m.prix_unitaire_ht }} €/{{ getFacturationConditioning(m).unite }})
           </option>
         </select>
         <div v-if="mercurialeSku" class="supplier-sku">SKU : {{ mercurialeSku }}</div>

@@ -5,6 +5,7 @@ import { useMercurialeStore } from '@/stores/mercuriale'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import { useIngredientsStore } from '@/stores/ingredients'
 import type { Mercuriale, Conditionnement } from '@/types/database'
+import { getFacturationConditioning } from '@/lib/unit-conversion'
 
 const route = useRoute()
 const mercurialeStore = useMercurialeStore()
@@ -27,6 +28,11 @@ const pendingPhotoProductId = ref<string | null>(null)
 const showEditor = ref(false)
 const editingProduct = ref<Partial<Mercuriale> | null>(null)
 const saving = ref(false)
+const editorFactUnit = computed(() => {
+  if (!editingProduct.value) return '€'
+  const fact = getFacturationConditioning(editingProduct.value as Pick<Mercuriale, 'conditionnements' | 'unite_stock' | 'coefficient_conversion'>)
+  return fact.unite
+})
 
 // Bulk selection mode
 const selectionMode = ref(false)
@@ -131,16 +137,14 @@ function formatConditionnement(cond: Conditionnement) {
   return `${cond.nom} (${cond.quantite} ${cond.unite})`
 }
 
-function formatPrix(prix: number, unite: string, conditionnements?: Conditionnement[]) {
-  // prix_unitaire_ht = prix par conditionnement de commande
-  // Afficher le type de conditionnement (colis, carton, sachet...) au lieu de l'unité de stock
-  const cmd = conditionnements?.find(c => c.utilise_commande)
-  if (cmd && cmd.quantite > 1 && cmd.nom) {
-    // Extraire le type: "Colis de 500pcs" → "colis", "carton de 5kg" → "carton"
-    const label = (cmd.nom.split(/[\s_]/)[0] ?? '').toLowerCase()
-    return `${prix.toFixed(2)} €/${label}`
-  }
-  return `${prix.toFixed(2)} €/${unite}`
+function formatPrix(merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'conditionnements' | 'unite_stock' | 'coefficient_conversion'>) {
+  const prix = merc.prix_unitaire_ht ?? 0
+  const fact = getFacturationConditioning(merc)
+  // Adaptive decimals: show up to 4 if needed
+  const formatted = prix === Math.round(prix * 100) / 100
+    ? prix.toFixed(2)
+    : prix.toFixed(4).replace(/0+$/, '')
+  return `${formatted} €/${fact.unite}`
 }
 
 // Photo upload
@@ -466,7 +470,7 @@ onMounted(async () => {
               <span v-else class="badge-unlinked">Non relié</span>
             </div>
             <div class="product-details">
-              <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock, p.conditionnements as Conditionnement[]) }}</span>
+              <span class="product-price">{{ formatPrix(p) }}</span>
               <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
             </div>
             <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
@@ -564,7 +568,7 @@ onMounted(async () => {
 
             <!-- Prix -->
             <div class="field">
-              <label>Prix unitaire HT (&euro;)</label>
+              <label>Prix unitaire HT (&euro;/{{ editorFactUnit }})</label>
               <input v-model.number="editingProduct.prix_unitaire_ht" type="number" step="any" min="0" />
             </div>
             <div class="field">
