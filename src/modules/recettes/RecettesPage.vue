@@ -172,7 +172,7 @@ onMounted(async () => {
     <div v-if="showHelp" class="help-banner">
       <div class="help-title">{{ TAB_HELP[tab]?.title }}</div>
       <div class="help-desc">{{ TAB_HELP[tab]?.desc }}</div>
-      <div v-if="TAB_HELP[tab]?.extra" class="help-extra" v-html="TAB_HELP[tab].extra"></div>
+      <div v-if="TAB_HELP[tab]?.extra" class="help-extra" v-html="TAB_HELP[tab]!.extra"></div>
       <div class="help-schema" v-html="TAB_HELP[tab]?.schema"></div>
     </div>
 
