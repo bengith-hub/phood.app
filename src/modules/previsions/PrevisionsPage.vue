@@ -325,6 +325,11 @@ function n1Tooltip(forecast: ForecastResult): string {
   return `Comparaison : ${jour} ${dateStr}`
 }
 
+function n1DateLabel(dateN1: string): string {
+  const d = new Date(dateN1 + 'T00:00:00')
+  return `(${JOURS_COURTS[d.getDay()]} ${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })})`
+}
+
 function toggleFactors(index: number): void {
   expandedFactorsIndex.value = expandedFactorsIndex.value === index ? null : index
 }
@@ -979,7 +984,7 @@ watch(
               </div>
 
               <!-- N-1 comparison -->
-              <div class="day-n1" :title="n1Tooltip(fc)">
+              <div class="day-n1">
                 <span class="n1-label">N-1 :</span>
                 <span class="n1-value">{{ fc.ca_n1 !== null ? formatEuros(fc.ca_n1) : '--' }}</span>
                 <span
@@ -989,6 +994,7 @@ watch(
                 >
                   {{ evolutionN1(fc) }}
                 </span>
+                <span v-if="fc.date_n1" class="n1-date-sub">{{ n1DateLabel(fc.date_n1) }}</span>
               </div>
 
               <!-- Confidence -->
@@ -1131,7 +1137,7 @@ watch(
             </div>
 
             <!-- N-1 comparison — always visible -->
-            <div class="detail-n1" :title="n1Tooltip(selectedForecast)">
+            <div class="detail-n1">
               <span class="n1-label-full">Meme jour N-1 :</span>
               <span class="n1-value-full">{{ selectedForecast.ca_n1 !== null ? formatEuros(selectedForecast.ca_n1) : '--' }}</span>
               <span
@@ -1140,6 +1146,9 @@ watch(
                 :class="evolutionN1Class(selectedForecast)"
               >
                 {{ evolutionN1(selectedForecast) }}
+              </span>
+              <span v-if="selectedForecast.date_n1" class="n1-date-detail">
+                {{ n1DateLabel(selectedForecast.date_n1) }}
               </span>
             </div>
 
@@ -2010,6 +2019,12 @@ watch(
   flex-wrap: wrap;
 }
 
+.n1-date-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  width: 100%;
+}
+
 .n1-label {
   font-size: 12px;
   color: var(--text-tertiary);
@@ -2414,10 +2429,17 @@ watch(
 .detail-n1 {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+}
+
+.n1-date-detail {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  width: 100%;
 }
 
 .n1-label-full {
