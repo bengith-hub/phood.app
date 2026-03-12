@@ -6,6 +6,7 @@ import { useFournisseursStore } from '@/stores/fournisseurs'
 import { restCall } from '@/lib/rest-client'
 import { loadConfig } from '@/lib/create-notification'
 import type { IngredientRestaurant, Mercuriale, HistoriquePrix } from '@/types/database'
+import { calculateCoutUnitaire } from '@/lib/unit-conversion'
 
 const ingredientsStore = useIngredientsStore()
 const mercurialeStore = useMercurialeStore()
@@ -65,7 +66,16 @@ function getMercurialesByIngredient(ingredientId: string): Mercuriale[] {
 
 async function setAsPreferred(ingredientId: string, mercurialeId: string) {
   try {
-    await ingredientsStore.save({ id: ingredientId, fournisseur_prefere_id: mercurialeId } as Partial<IngredientRestaurant> & { id: string })
+    const merc = mercurialeStore.getById(mercurialeId)
+    const ing = ingredientsStore.getById(ingredientId)
+    const newCout = merc && ing ? calculateCoutUnitaire(merc, ing.unite_stock) : 0
+    await ingredientsStore.save({
+      id: ingredientId,
+      fournisseur_prefere_id: mercurialeId,
+      cout_unitaire: newCout,
+      cout_source: 'mercuriale',
+      cout_maj_date: new Date().toISOString(),
+    } as Partial<IngredientRestaurant> & { id: string })
   } catch (e: unknown) {
     alert(e instanceof Error ? e.message : 'Erreur changement fournisseur préféré')
   }

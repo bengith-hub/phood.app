@@ -5,6 +5,7 @@ import { useIngredientsStore } from '@/stores/ingredients'
 import { useMercurialeStore } from '@/stores/mercuriale'
 import { useFournisseursStore } from '@/stores/fournisseurs'
 import type { IngredientRestaurant, Allergene } from '@/types/database'
+import { calculateCoutUnitaire } from '@/lib/unit-conversion'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,9 +34,18 @@ async function changePreferredSupplier(mercurialeId: string | null) {
   if (isNew.value) return
   form.value.fournisseur_prefere_id = mercurialeId
   try {
-    await store.save({ id: ingredientId.value, fournisseur_prefere_id: mercurialeId } as Partial<IngredientRestaurant> & { id: string })
-    // Update local enriched data
     const merc = mercurialeId ? mercurialeStore.getById(mercurialeId) : null
+    // Recalculate cout_unitaire from the new preferred supplier
+    const newCout = merc ? calculateCoutUnitaire(merc, form.value.unite_stock || 'kg') : 0
+    form.value.cout_unitaire = newCout
+    await store.save({
+      id: ingredientId.value,
+      fournisseur_prefere_id: mercurialeId,
+      cout_unitaire: newCout,
+      cout_source: 'mercuriale',
+      cout_maj_date: new Date().toISOString(),
+    } as Partial<IngredientRestaurant> & { id: string })
+    // Update local enriched data
     mercurialeDesignation.value = merc?.designation ?? null
     mercurialeSku.value = merc?.ref_fournisseur ?? null
     mercurialePhotoUrl.value = merc?.photo_url ?? null
@@ -79,6 +89,13 @@ const ALL_ALLERGENES: { key: Allergene; label: string }[] = [
   { key: 'lupin', label: 'Lupin' },
   { key: 'mollusques', label: 'Mollusques' },
 ]
+
+/** Format cost with enough precision (up to 4 decimals for g/mL) */
+function formatCout(val: number): string {
+  if (val >= 0.01) return val.toFixed(2)
+  if (val >= 0.001) return val.toFixed(3)
+  return val.toFixed(4)
+}
 
 function toggleAllergene(key: Allergene) {
   const list = form.value.allergenes as Allergene[]
@@ -283,7 +300,7 @@ onMounted(async () => {
       <!-- Cost info (read-only) -->
       <div v-if="!isNew && form.cout_unitaire" class="info-row">
         <span class="info-label">Coût unitaire</span>
-        <span class="info-value">{{ (form.cout_unitaire ?? 0).toFixed(2) }} €/{{ form.unite_stock }}</span>
+        <span class="info-value">{{ formatCout(form.cout_unitaire ?? 0) }} €/{{ form.unite_stock }}</span>
       </div>
     </div>
 

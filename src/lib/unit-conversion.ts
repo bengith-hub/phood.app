@@ -18,6 +18,20 @@ export function getUnitFactor(condUnite: string, stockUnite: string): number {
   if (cu === 'l' && su === 'cl') return 100
   if (cu === 'cl' && su === 'l') return 0.01
 
+  // Cross-dimension: volume ↔ weight (assume density ≈ 1, i.e. 1 L ≈ 1 kg)
+  if (cu === 'l' && su === 'g') return 1000
+  if (cu === 'g' && su === 'l') return 0.001
+  if (cu === 'l' && su === 'kg') return 1
+  if (cu === 'kg' && su === 'l') return 1
+  if (cu === 'ml' && su === 'g') return 1
+  if (cu === 'g' && su === 'ml') return 1
+  if (cu === 'kg' && su === 'ml') return 1000
+  if (cu === 'ml' && su === 'kg') return 0.001
+  if (cu === 'cl' && su === 'g') return 10
+  if (cu === 'g' && su === 'cl') return 0.1
+  if (cu === 'kg' && su === 'cl') return 100
+  if (cu === 'cl' && su === 'kg') return 0.01
+
   // Same unit or count-based (unite, piece, botte) → no conversion
   return 1
 }
@@ -64,4 +78,26 @@ export function fromStockUnits(
   const factor = getUnitFactor(condUnite, stockUnite)
   if (coefficient === 0 || factor === 0) return 0
   return qtyStock / (coefficient * factor)
+}
+
+/**
+ * Calculate cout_unitaire (cost per stock unit) for an ingredient
+ * from its preferred mercuriale product.
+ *
+ * Formula: prix_unitaire_ht / (coefficient_conversion × unitFactor)
+ *
+ * Example: Chicken Wings colis 5kg at 6.83€, ingredient stock in g
+ *   → 6.83 / (5 × 1000) = 0.001366 €/g
+ */
+export function calculateCoutUnitaire(
+  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock'>,
+  ingredientUniteStock: string,
+): number {
+  if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0
+  const condUnite = getConditioningUnit(merc)
+  const coeff = merc.coefficient_conversion || 1
+  const factor = getUnitFactor(condUnite, ingredientUniteStock)
+  const divisor = coeff * factor
+  if (divisor <= 0) return 0
+  return merc.prix_unitaire_ht / divisor
 }

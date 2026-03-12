@@ -9,7 +9,7 @@ import { restCall, storageUpload } from '@/lib/rest-client'
 import { compressImage, blobToBase64 } from '@/lib/image-compress'
 import { createNotificationForAdmins, loadConfig } from '@/lib/create-notification'
 import { getEtablissement, emailSubjectPrefix, emailFooter } from '@/lib/email-templates'
-import { toStockUnits, getConditioningUnit } from '@/lib/unit-conversion'
+import { toStockUnits, getConditioningUnit, calculateCoutUnitaire } from '@/lib/unit-conversion'
 import type { Commande, CommandeLigne, AnomalieType, AvoirLigne } from '@/types/database'
 
 const commandesStore = useCommandesStore()
@@ -475,6 +475,20 @@ async function detectPriceChanges(lignes: ReceptionLigneEdit[]) {
         await restCall('PATCH', `mercuriale?id=eq.${l.mercuriale_id}`, {
           prix_unitaire_ht: l.prix_bl,
         }).catch(() => {})
+
+        // Recalculate cout_unitaire for ingredients using this mercuriale as preferred
+        const affectedIngredients = ingredientsStore.ingredients.filter(
+          ing => ing.fournisseur_prefere_id === l.mercuriale_id,
+        )
+        for (const ing of affectedIngredients) {
+          const updatedMerc = { ...merc, prix_unitaire_ht: l.prix_bl }
+          const newCout = calculateCoutUnitaire(updatedMerc, ing.unite_stock)
+          await restCall('PATCH', `ingredients_restaurant?id=eq.${ing.id}`, {
+            cout_unitaire: newCout,
+            cout_source: 'mercuriale',
+            cout_maj_date: new Date().toISOString(),
+          }).catch(() => {})
+        }
       }
 
       if (ecartPct > seuil) {
