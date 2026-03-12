@@ -136,12 +136,12 @@ function formatConditionnement(cond: Conditionnement) {
 const conversionLabel = computed(() => {
   const p = editingProduct.value
   if (!p) return ''
+  const sq = p.conversion_source_quantite
+  const su = p.conversion_source_unite
   const q = p.conversion_quantite
   const u = p.conversion_unite
-  const coeff = p.coefficient_conversion || 0
-  const uf = p.unite_facturation || p.unite_commande || ''
-  if (!q || q <= 0 || !u) return ''
-  return `${coeff} ${uf} = ${q} ${u}`
+  if (!sq || sq <= 0 || !su || !q || q <= 0 || !u) return ''
+  return `${sq} ${su} = ${q} ${u}`
 })
 
 // Whether conversion section should be shown (cross-dimension: facturation weight/volume but ingredient count, or vice-versa)
@@ -159,7 +159,13 @@ const showConversion = computed(() => {
   const isu = ing.unite_stock.toLowerCase()
   const isUfWeight = ['g', 'kg', 'ml', 'cl', 'l'].includes(uf)
   const isIsuWeight = ['g', 'kg', 'ml', 'cl', 'l'].includes(isu)
-  return isUfWeight !== isIsuWeight
+  const needed = isUfWeight !== isIsuWeight
+  // Pre-fill source side if empty and conversion is needed
+  if (needed && !p.conversion_source_quantite) {
+    p.conversion_source_quantite = p.coefficient_conversion || 1
+    p.conversion_source_unite = p.unite_facturation || p.unite_commande || 'kg'
+  }
+  return needed
 })
 
 function formatPrix(merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'unite_facturation' | 'conditionnements' | 'unite_stock' | 'unite_commande' | 'coefficient_conversion'>) {
@@ -490,8 +496,8 @@ onMounted(async () => {
               <span class="product-price">{{ formatPrix(p) }}</span>
               <span v-if="p.tva" class="product-tva">TVA {{ p.tva }}%</span>
             </div>
-            <div v-if="p.conversion_quantite && p.conversion_unite" class="product-conversion">
-              {{ p.coefficient_conversion }} {{ p.unite_facturation || p.unite_commande }} = {{ p.conversion_quantite }} {{ p.conversion_unite }}
+            <div v-if="p.conversion_quantite && p.conversion_unite && p.conversion_source_quantite" class="product-conversion">
+              {{ p.conversion_source_quantite }} {{ p.conversion_source_unite }} = {{ p.conversion_quantite }} {{ p.conversion_unite }}
             </div>
             <div v-if="p.conditionnements && (p.conditionnements as Conditionnement[]).length > 0" class="product-cond">
               <span
@@ -620,14 +626,25 @@ onMounted(async () => {
             <div v-if="showConversion" class="field full conversion-section">
               <label>Conversion</label>
               <div class="conversion-row">
-                <span class="conversion-from">{{ editingProduct.coefficient_conversion || '?' }} {{ editingProduct.unite_facturation || editingProduct.unite_commande || '?' }}</span>
+                <input
+                  v-model.number="editingProduct.conversion_source_quantite"
+                  type="number"
+                  step="any"
+                  min="0"
+                  placeholder="Qt&eacute;"
+                  class="conversion-input"
+                />
+                <select v-model="editingProduct.conversion_source_unite" class="conversion-select">
+                  <option :value="null">Unit&eacute;</option>
+                  <option v-for="u in UNITES" :key="u" :value="u">{{ u }}</option>
+                </select>
                 <span class="conversion-eq">=</span>
                 <input
                   v-model.number="editingProduct.conversion_quantite"
                   type="number"
-                  step="1"
+                  step="any"
                   min="0"
-                  placeholder="Quantit&eacute;"
+                  placeholder="Qt&eacute;"
                   class="conversion-input"
                 />
                 <select v-model="editingProduct.conversion_unite" class="conversion-select">

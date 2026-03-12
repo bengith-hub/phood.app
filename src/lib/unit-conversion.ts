@@ -139,20 +139,19 @@ export function getFacturationConditioning(
  *   → E.g. bidon 3kg at 2.81€/bidon → 2.81 / (1 × 3 × 1000) = 0.000937 €/g
  */
 export function calculateCoutUnitaire(
-  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_facturation' | 'unite_commande' | 'conversion_quantite' | 'conversion_unite'>,
+  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_facturation' | 'unite_commande' | 'conversion_source_quantite' | 'conversion_source_unite' | 'conversion_quantite' | 'conversion_unite'>,
   ingredientUniteStock: string,
 ): number {
   if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0
 
-  // Explicit conversion: e.g. 5 kg = 1000 unite
-  // prix_colis = prix_unitaire × coefficient_conversion
-  // cout_per_unit = prix_colis / conversion_quantite
-  if (merc.conversion_quantite && merc.conversion_quantite > 0 && merc.conversion_unite) {
+  // Explicit conversion: e.g. "5 kg = 1000 unite"
+  // Formula: cout = prix × source_qty / target_qty
+  // Then apply unitFactor to convert to ingredient stock unit
+  if (merc.conversion_quantite && merc.conversion_quantite > 0 && merc.conversion_unite
+    && merc.conversion_source_quantite && merc.conversion_source_quantite > 0) {
     const convUnite = merc.conversion_unite.toLowerCase()
     const isu = ingredientUniteStock.toLowerCase()
-    const coeff = merc.coefficient_conversion || 1
-    const prixColis = merc.prix_unitaire_ht * coeff
-    const coutParConvUnit = prixColis / merc.conversion_quantite
+    const coutParConvUnit = merc.prix_unitaire_ht * merc.conversion_source_quantite / merc.conversion_quantite
     // If conversion unite matches ingredient stock unit, done
     if (convUnite === isu) return coutParConvUnit
     // Otherwise convert (e.g. conversion in kg but stock in g)

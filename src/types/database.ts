@@ -142,6 +142,8 @@ export interface Mercuriale {
   unite_stock: string
   unite_facturation: string | null
   coefficient_conversion: number
+  conversion_source_quantite: number | null
+  conversion_source_unite: string | null
   conversion_quantite: number | null
   conversion_unite: string | null
   nombre_portions: number | null
