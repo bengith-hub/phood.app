@@ -144,12 +144,15 @@ const conversionLabel = computed(() => {
   return `${sq} ${su} = ${q} ${u}`
 })
 
-// Whether conversion section should be shown (cross-dimension: facturation weight/volume but ingredient count, or vice-versa)
+// Whether conversion section should be shown
+const forceShowConversion = ref(false)
 const showConversion = computed(() => {
   const p = editingProduct.value
   if (!p) return false
   // Always show if conversion already filled
   if (p.conversion_quantite && p.conversion_unite) return true
+  // Show if manually toggled
+  if (forceShowConversion.value) return true
   // Show if facturation unit and linked ingredient unit are in different dimensions
   const uf = (p.unite_facturation || p.unite_commande || '').toLowerCase()
   const ingId = p.ingredient_restaurant_id
@@ -159,14 +162,27 @@ const showConversion = computed(() => {
   const isu = ing.unite_stock.toLowerCase()
   const isUfWeight = ['g', 'kg', 'ml', 'cl', 'l'].includes(uf)
   const isIsuWeight = ['g', 'kg', 'ml', 'cl', 'l'].includes(isu)
-  const needed = isUfWeight !== isIsuWeight
-  // Pre-fill source side if empty and conversion is needed
-  if (needed && !p.conversion_source_quantite) {
+  return isUfWeight !== isIsuWeight
+})
+
+function toggleConversion() {
+  forceShowConversion.value = true
+  const p = editingProduct.value
+  if (p && !p.conversion_source_quantite) {
     p.conversion_source_quantite = p.coefficient_conversion || 1
     p.conversion_source_unite = p.unite_facturation || p.unite_commande || 'kg'
   }
-  return needed
-})
+}
+
+function clearConversion() {
+  const p = editingProduct.value
+  if (!p) return
+  p.conversion_source_quantite = null
+  p.conversion_source_unite = null
+  p.conversion_quantite = null
+  p.conversion_unite = null
+  forceShowConversion.value = false
+}
 
 function formatPrix(merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'unite_facturation' | 'conditionnements' | 'unite_stock' | 'unite_commande' | 'coefficient_conversion'>) {
   const prix = merc.prix_unitaire_ht ?? 0
@@ -210,6 +226,7 @@ function openEditor(product: Mercuriale) {
       : [],
   }
   isCreating.value = false
+  forceShowConversion.value = false
   showEditor.value = true
 }
 
@@ -235,6 +252,7 @@ function openCreator() {
     pertes_pct: null,
   }
   isCreating.value = true
+  forceShowConversion.value = false
   showEditor.value = true
 }
 
@@ -622,9 +640,12 @@ onMounted(async () => {
               <input v-model.number="editingProduct.coefficient_conversion" type="number" step="0.001" min="0" />
             </div>
 
-            <!-- Conversion (cross-dimension: e.g. 5 kg = 1000 unite) -->
+            <!-- Conversion (e.g. 1 kg = 66 unite, 5 kg = 1000 dosette) -->
             <div v-if="showConversion" class="field full conversion-section">
-              <label>Conversion</label>
+              <div class="conversion-header">
+                <label>Conversion d'unit&eacute;s</label>
+                <button type="button" class="btn-remove-conversion" @click="clearConversion">Supprimer</button>
+              </div>
               <div class="conversion-row">
                 <input
                   v-model.number="editingProduct.conversion_source_quantite"
@@ -655,6 +676,11 @@ onMounted(async () => {
               <div v-if="conversionLabel" class="conversion-hint">
                 {{ conversionLabel }}
               </div>
+            </div>
+            <div v-else class="field full">
+              <button type="button" class="btn-add-conversion" @click="toggleConversion">
+                + Ajouter une conversion d'unit&eacute;s
+              </button>
             </div>
 
             <!-- Conditionnements -->
@@ -1305,11 +1331,42 @@ h1 {
   font-size: 15px;
   min-width: 90px;
 }
+.conversion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.conversion-header label {
+  margin-bottom: 0;
+}
+.btn-remove-conversion {
+  background: none;
+  border: none;
+  color: var(--color-error, #ef4444);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
 .conversion-hint {
   margin-top: 8px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
+}
+.btn-add-conversion {
+  background: none;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+}
+.btn-add-conversion:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 /* Conditionnement editing */
