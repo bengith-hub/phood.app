@@ -51,10 +51,9 @@ function getUnitFactor(condUnite, stockUnite) {
 }
 
 function getFacturationConditioning(merc) {
+  // 1. Explicit unite_facturation field
+  if (merc.unite_facturation) return { quantite: 1, unite: merc.unite_facturation }
   const conds = merc.conditionnements || []
-  // 1. Explicit facturation flag
-  const factCond = conds.find(c => c.utilise_facturation)
-  if (factCond) return { quantite: factCond.quantite, unite: factCond.unite }
   // 2. For weight/volume: prix is per base unit (kg or L)
   const su = (merc.unite_stock || '').toLowerCase()
   const isWeightVolume = ['g', 'kg', 'ml', 'cl', 'l'].includes(su)
@@ -111,7 +110,7 @@ async function main() {
   // Fetch all mercuriale products
   const { data: mercuriale, error: mercErr } = await supabase
     .from('mercuriale')
-    .select('id, prix_unitaire_ht, coefficient_conversion, conditionnements, unite_stock, unite_commande, designation')
+    .select('id, prix_unitaire_ht, coefficient_conversion, conditionnements, unite_stock, unite_facturation, unite_commande, designation')
 
   if (mercErr) {
     console.error('Error fetching mercuriale:', mercErr.message)

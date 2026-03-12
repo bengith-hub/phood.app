@@ -84,31 +84,29 @@ export function fromStockUnits(
  * Get the facturation conditioning from a mercuriale product.
  *
  * Priority:
- * 1. Explicit utilise_facturation flag
- * 2. For weight/volume: base unit conditioning (quantite=1, e.g. "kg")
- * 3. Fallback: commande conditioning
+ * 1. Explicit unite_facturation field (e.g. 'kg', 'L', 'unite')
+ * 2. Heuristic: weight/volume → base unit (kg, L); count → commande conditioning
  *
- * prix_unitaire_ht is always expressed per facturation conditioning.
- * E.g. Chicken Wings: facturation = "kg" (qty=1) → prix = 6.831 €/kg
+ * prix_unitaire_ht is always expressed per facturation unit.
+ * E.g. Chicken Wings: unite_facturation = 'kg' → prix = 6.831 €/kg
  */
 export function getFacturationConditioning(
-  merc: Pick<Mercuriale, 'conditionnements' | 'unite_stock' | 'coefficient_conversion'>,
+  merc: Pick<Mercuriale, 'conditionnements' | 'unite_stock' | 'unite_facturation' | 'coefficient_conversion'>,
 ): { quantite: number; unite: string } {
-  const conds = merc.conditionnements ?? []
+  // 1. Explicit unite_facturation field
+  if (merc.unite_facturation) {
+    return { quantite: 1, unite: merc.unite_facturation }
+  }
 
-  // 1. Explicit facturation flag
-  const factCond = conds.find(c => c.utilise_facturation)
-  if (factCond) return { quantite: factCond.quantite, unite: factCond.unite }
+  const conds = merc.conditionnements ?? []
 
   // 2. For weight/volume products, the facturation is per base unit (kg, L)
   const su = (merc.unite_stock || '').toLowerCase()
   const isWeightVolume = ['g', 'kg', 'ml', 'cl', 'l'].includes(su)
 
   if (isWeightVolume) {
-    // Look for the base unit conditioning (quantite ≤ 1)
     const baseCond = conds.find(c => c.quantite <= 1 && !c.utilise_commande)
     if (baseCond) return { quantite: baseCond.quantite, unite: baseCond.unite }
-    // No base conditioning → prix is per base unit (kg or L)
     const baseUnit = ['g', 'kg'].includes(su) ? 'kg' : 'l'
     return { quantite: 1, unite: baseUnit }
   }
@@ -136,7 +134,7 @@ export function getFacturationConditioning(
  *   → E.g. bidon 3kg at 2.81€/bidon → 2.81 / (1 × 3 × 1000) = 0.000937 €/g
  */
 export function calculateCoutUnitaire(
-  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_commande'>,
+  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_facturation' | 'unite_commande'>,
   ingredientUniteStock: string,
 ): number {
   if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0

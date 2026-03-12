@@ -120,7 +120,6 @@ export interface Conditionnement {
   quantite: number
   unite: string
   utilise_commande?: boolean
-  utilise_facturation?: boolean
 }
 
 export interface Mercuriale {
@@ -141,6 +140,7 @@ export interface Mercuriale {
   dlc_ddm_jours: number | null
   pertes_pct: number | null
   unite_stock: string
+  unite_facturation: string | null
   coefficient_conversion: number
   nombre_portions: number | null
   stock_tampon: { semaine: number; weekend: number; vacances: number } | null

@@ -29,9 +29,8 @@ const showEditor = ref(false)
 const editingProduct = ref<Partial<Mercuriale> | null>(null)
 const saving = ref(false)
 const editorFactUnit = computed(() => {
-  if (!editingProduct.value) return '€'
-  const fact = getFacturationConditioning(editingProduct.value as Pick<Mercuriale, 'conditionnements' | 'unite_stock' | 'coefficient_conversion'>)
-  return fact.unite
+  if (!editingProduct.value) return ''
+  return editingProduct.value.unite_facturation || editingProduct.value.unite_commande || 'kg'
 })
 
 // Bulk selection mode
@@ -137,10 +136,9 @@ function formatConditionnement(cond: Conditionnement) {
   return `${cond.nom} (${cond.quantite} ${cond.unite})`
 }
 
-function formatPrix(merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'conditionnements' | 'unite_stock' | 'coefficient_conversion'>) {
+function formatPrix(merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'unite_facturation' | 'conditionnements' | 'unite_stock' | 'unite_commande' | 'coefficient_conversion'>) {
   const prix = merc.prix_unitaire_ht ?? 0
   const fact = getFacturationConditioning(merc)
-  // Adaptive decimals: show up to 4 if needed
   const formatted = prix === Math.round(prix * 100) / 100
     ? prix.toFixed(2)
     : prix.toFixed(4).replace(/0+$/, '')
@@ -275,7 +273,7 @@ function addConditionnement() {
   conds.push({
     nom: '',
     quantite: 1,
-    unite: editingProduct.value.unite_stock || 'kg',
+    unite: editingProduct.value.unite_commande || 'kg',
     utilise_commande: conds.length === 0,
   })
 }
@@ -293,13 +291,6 @@ function setConditionnementCommande(index: number) {
   }
 }
 
-function setConditionnementFacturation(index: number) {
-  const conds = editingProduct.value?.conditionnements as Conditionnement[] | undefined
-  if (!conds) return
-  for (let i = 0; i < conds.length; i++) {
-    conds[i]!.utilise_facturation = (i === index)
-  }
-}
 
 // Photo search functions
 function openPhotoSearch() {
@@ -568,8 +559,14 @@ onMounted(async () => {
 
             <!-- Prix -->
             <div class="field">
-              <label>Prix unitaire HT (&euro;/{{ editorFactUnit }})</label>
+              <label>Prix unitaire HT (&euro;)</label>
               <input v-model.number="editingProduct.prix_unitaire_ht" type="number" step="any" min="0" />
+            </div>
+            <div class="field">
+              <label>Unit&eacute; de facturation</label>
+              <select v-model="editingProduct.unite_facturation">
+                <option v-for="u in UNITES" :key="u" :value="u">{{ u }}</option>
+              </select>
             </div>
             <div class="field">
               <label>TVA (%)</label>
@@ -578,16 +575,10 @@ onMounted(async () => {
               </select>
             </div>
 
-            <!-- Unit&eacute;s -->
+            <!-- Commande -->
             <div class="field">
               <label>Unit&eacute; de commande</label>
               <select v-model="editingProduct.unite_commande">
-                <option v-for="u in UNITES" :key="u" :value="u">{{ u }}</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Unit&eacute; de stock</label>
-              <select v-model="editingProduct.unite_stock">
                 <option v-for="u in UNITES" :key="u" :value="u">{{ u }}</option>
               </select>
             </div>
@@ -610,10 +601,6 @@ onMounted(async () => {
                 <label class="cond-radio">
                   <input type="radio" name="cond-cmd" :checked="c.utilise_commande" @change="setConditionnementCommande(i)" />
                   Cmd
-                </label>
-                <label class="cond-radio">
-                  <input type="radio" name="cond-fact" :checked="c.utilise_facturation" @change="setConditionnementFacturation(i)" />
-                  Fact
                 </label>
                 <button type="button" class="btn-remove-cond" @click="removeConditionnement(i)">&times;</button>
               </div>
