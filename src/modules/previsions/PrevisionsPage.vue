@@ -317,14 +317,6 @@ function evolutionN1Class(forecast: ForecastResult): string {
   return 'evo-neutral'
 }
 
-function n1Tooltip(forecast: ForecastResult): string {
-  if (!forecast.date_n1) return 'Meme jour de semaine, annee precedente'
-  const d = new Date(forecast.date_n1 + 'T00:00:00')
-  const jour = JOURS_LONGS[d.getDay()]
-  const dateStr = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
-  return `Comparaison : ${jour} ${dateStr}`
-}
-
 function n1DateLabel(dateN1: string): string {
   const d = new Date(dateN1 + 'T00:00:00')
   return `(${JOURS_COURTS[d.getDay()]} ${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })})`
