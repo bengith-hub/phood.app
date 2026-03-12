@@ -167,6 +167,32 @@ function openEditor(product: Mercuriale) {
       ? JSON.parse(JSON.stringify(product.conditionnements))
       : [],
   }
+  isCreating.value = false
+  showEditor.value = true
+}
+
+const isCreating = ref(false)
+
+function openCreator() {
+  editingProduct.value = {
+    designation: '',
+    fournisseur_id: filterFournisseurId.value || (fournisseursStore.actifs[0]?.id ?? ''),
+    categorie: '',
+    ref_fournisseur: '',
+    prix_unitaire_ht: 0,
+    tva: 5.5,
+    unite_commande: 'kg',
+    unite_stock: 'kg',
+    coefficient_conversion: 1,
+    conditionnements: [],
+    actif: true,
+    photo_url: null,
+    notes: '',
+    notes_internes: '',
+    dlc_ddm_jours: null,
+    pertes_pct: null,
+  }
+  isCreating.value = true
   showEditor.value = true
 }
 
@@ -179,10 +205,15 @@ function closeEditor() {
 }
 
 async function handleSave() {
-  if (!editingProduct.value?.id || !editingProduct.value.designation?.trim()) return
+  if (!editingProduct.value?.designation?.trim()) return
+  // For creation, fournisseur is required
+  if (isCreating.value && !editingProduct.value.fournisseur_id) {
+    alert('Veuillez sélectionner un fournisseur')
+    return
+  }
   saving.value = true
   try {
-    await mercurialeStore.save(editingProduct.value as Partial<Mercuriale> & { id: string })
+    await mercurialeStore.save(editingProduct.value as Partial<Mercuriale> & { id?: string })
     closeEditor()
   } catch (e: unknown) {
     alert(e instanceof Error ? e.message : 'Erreur de sauvegarde')
@@ -341,6 +372,7 @@ onMounted(async () => {
       >
         {{ selectionMode ? 'Annuler' : 'S\u00e9lectionner' }}
       </button>
+      <button class="btn-add-product" @click="openCreator" title="Ajouter un produit fournisseur">+</button>
     </div>
 
     <div v-if="mercurialeStore.loading" class="loading">Chargement...</div>
@@ -445,12 +477,23 @@ onMounted(async () => {
     <div v-if="showEditor && editingProduct" class="modal-overlay" @click.self="closeEditor">
       <div class="modal">
         <div class="modal-header">
-          <h2>Modifier produit</h2>
+          <h2>{{ isCreating ? 'Ajouter un produit' : 'Modifier produit' }}</h2>
           <button class="btn-close" @click="closeEditor">&times;</button>
         </div>
 
         <form @submit.prevent="handleSave" class="modal-body">
           <div class="form-grid">
+            <!-- Fournisseur (creation only) -->
+            <div v-if="isCreating" class="field full">
+              <label>Fournisseur *</label>
+              <select v-model="editingProduct.fournisseur_id" required>
+                <option value="" disabled>Choisir un fournisseur</option>
+                <option v-for="f in fournisseursStore.actifs" :key="f.id" :value="f.id">
+                  {{ f.nom }}
+                </option>
+              </select>
+            </div>
+
             <!-- Identification -->
             <div class="field full">
               <label>D&eacute;signation *</label>
@@ -607,7 +650,7 @@ onMounted(async () => {
 
           <div class="modal-actions">
             <button
-              v-if="editingProduct.id"
+              v-if="!isCreating && editingProduct.id"
               type="button"
               class="btn-danger"
               @click="handleDeleteProduct"
@@ -617,7 +660,7 @@ onMounted(async () => {
             <div class="spacer" />
             <button type="button" class="btn-secondary" @click="closeEditor">Annuler</button>
             <button type="submit" class="btn-primary" :disabled="saving || !editingProduct.designation?.trim()">
-              {{ saving ? 'Sauvegarde...' : 'Enregistrer' }}
+              {{ saving ? 'Sauvegarde...' : (isCreating ? 'Cr\u00e9er' : 'Enregistrer') }}
             </button>
           </div>
         </form>
@@ -713,6 +756,26 @@ h1 {
   border-color: var(--color-primary);
   color: var(--color-primary);
   background: rgba(234, 88, 12, 0.06);
+}
+
+.btn-add-product {
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: white;
+  font-size: 28px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(232, 93, 44, 0.3);
+}
+.btn-add-product:active {
+  background: #d4521f;
 }
 
 /* Select all bar */
