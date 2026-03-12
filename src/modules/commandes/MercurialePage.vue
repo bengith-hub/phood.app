@@ -289,6 +289,14 @@ function setConditionnementCommande(index: number) {
   }
 }
 
+function setConditionnementFacturation(index: number) {
+  const conds = editingProduct.value?.conditionnements as Conditionnement[] | undefined
+  if (!conds) return
+  for (let i = 0; i < conds.length; i++) {
+    conds[i]!.utilise_facturation = (i === index)
+  }
+}
+
 // Photo search functions
 function openPhotoSearch() {
   photoSearchQuery.value = editingProduct.value?.designation || ''
@@ -557,7 +565,7 @@ onMounted(async () => {
             <!-- Prix -->
             <div class="field">
               <label>Prix unitaire HT (&euro;)</label>
-              <input v-model.number="editingProduct.prix_unitaire_ht" type="number" step="0.01" min="0" />
+              <input v-model.number="editingProduct.prix_unitaire_ht" type="number" step="any" min="0" />
             </div>
             <div class="field">
               <label>TVA (%)</label>
@@ -598,6 +606,10 @@ onMounted(async () => {
                 <label class="cond-radio">
                   <input type="radio" name="cond-cmd" :checked="c.utilise_commande" @change="setConditionnementCommande(i)" />
                   Cmd
+                </label>
+                <label class="cond-radio">
+                  <input type="radio" name="cond-fact" :checked="c.utilise_facturation" @change="setConditionnementFacturation(i)" />
+                  Fact
                 </label>
                 <button type="button" class="btn-remove-cond" @click="removeConditionnement(i)">&times;</button>
               </div>

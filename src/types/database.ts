@@ -120,6 +120,7 @@ export interface Conditionnement {
   quantite: number
   unite: string
   utilise_commande?: boolean
+  utilise_facturation?: boolean
 }
 
 export interface Mercuriale {

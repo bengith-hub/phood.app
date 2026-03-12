@@ -81,23 +81,85 @@ export function fromStockUnits(
 }
 
 /**
+ * Get the facturation conditioning from a mercuriale product.
+ *
+ * Priority:
+ * 1. Explicit utilise_facturation flag
+ * 2. For weight/volume: base unit conditioning (quantite=1, e.g. "kg")
+ * 3. Fallback: commande conditioning
+ *
+ * prix_unitaire_ht is always expressed per facturation conditioning.
+ * E.g. Chicken Wings: facturation = "kg" (qty=1) → prix = 6.831 €/kg
+ */
+export function getFacturationConditioning(
+  merc: Pick<Mercuriale, 'conditionnements' | 'unite_stock' | 'coefficient_conversion'>,
+): { quantite: number; unite: string } {
+  const conds = merc.conditionnements ?? []
+
+  // 1. Explicit facturation flag
+  const factCond = conds.find(c => c.utilise_facturation)
+  if (factCond) return { quantite: factCond.quantite, unite: factCond.unite }
+
+  // 2. For weight/volume products, the facturation is per base unit (kg, L)
+  const su = (merc.unite_stock || '').toLowerCase()
+  const isWeightVolume = ['g', 'kg', 'ml', 'cl', 'l'].includes(su)
+
+  if (isWeightVolume) {
+    // Look for the base unit conditioning (quantite ≤ 1)
+    const baseCond = conds.find(c => c.quantite <= 1 && !c.utilise_commande)
+    if (baseCond) return { quantite: baseCond.quantite, unite: baseCond.unite }
+    // No base conditioning → prix is per base unit (kg or L)
+    const baseUnit = ['g', 'kg'].includes(su) ? 'kg' : 'l'
+    return { quantite: 1, unite: baseUnit }
+  }
+
+  // 3. Count products → facturation = commande conditioning
+  const cmdCond = conds.find(c => c.utilise_commande)
+  if (cmdCond) return { quantite: cmdCond.quantite, unite: cmdCond.unite }
+
+  return { quantite: merc.coefficient_conversion || 1, unite: merc.unite_stock }
+}
+
+/**
  * Calculate cout_unitaire (cost per stock unit) for an ingredient
  * from its preferred mercuriale product.
  *
- * Formula: prix_unitaire_ht / (coefficient_conversion × unitFactor)
+ * prix_unitaire_ht is per facturation conditioning (e.g. €/kg).
+ * We convert to the ingredient's stock unit.
  *
- * Example: Chicken Wings colis 5kg at 6.83€, ingredient stock in g
- *   → 6.83 / (5 × 1000) = 0.001366 €/g
+ * Example: Chicken Wings at 6.831 €/kg, ingredient stock in g
+ *   → facturation = {quantite: 1, unite: 'kg'}
+ *   → 6.831 / (1 × 1000) = 0.006831 €/g
+ *
+ * Bridge case: facturation is count-based (unite/piece) but ingredient in weight/volume
+ *   → Use coefficient_conversion + unite_commande to bridge dimensions
+ *   → E.g. bidon 3kg at 2.81€/bidon → 2.81 / (1 × 3 × 1000) = 0.000937 €/g
  */
 export function calculateCoutUnitaire(
-  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock'>,
+  merc: Pick<Mercuriale, 'prix_unitaire_ht' | 'coefficient_conversion' | 'conditionnements' | 'unite_stock' | 'unite_commande'>,
   ingredientUniteStock: string,
 ): number {
   if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0
-  const condUnite = getConditioningUnit(merc)
-  const coeff = merc.coefficient_conversion || 1
-  const factor = getUnitFactor(condUnite, ingredientUniteStock)
-  const divisor = coeff * factor
+  const fact = getFacturationConditioning(merc)
+
+  const fu = fact.unite.toLowerCase()
+  const isu = ingredientUniteStock.toLowerCase()
+  const isFactCount = !['g', 'kg', 'ml', 'cl', 'l'].includes(fu)
+  const isIngWeightVolume = ['g', 'kg', 'ml', 'cl', 'l'].includes(isu)
+
+  // Bridge: facturation in count (unite/piece/bidon) but ingredient in weight/volume
+  if (isFactCount && isIngWeightVolume) {
+    const coeff = merc.coefficient_conversion || 1
+    // Use unite_commande (e.g. 'kg') for the dimensional conversion
+    const bridgeUnit = (merc.unite_commande || merc.unite_stock || 'kg').toLowerCase()
+    const factor = getUnitFactor(bridgeUnit, isu)
+    const divisor = fact.quantite * coeff * factor
+    return divisor > 0 ? merc.prix_unitaire_ht / divisor : 0
+  }
+
+  // Standard case: same dimension conversion
+  const factor = getUnitFactor(fu, isu)
+  const divisor = fact.quantite * factor
   if (divisor <= 0) return 0
   return merc.prix_unitaire_ht / divisor
 }

@@ -50,17 +50,43 @@ function getUnitFactor(condUnite, stockUnite) {
   return 1
 }
 
-function getConditioningUnit(merc) {
-  const cond = (merc.conditionnements || []).find(c => c.utilise_commande)
-  return cond ? cond.unite : merc.unite_stock
+function getFacturationConditioning(merc) {
+  const conds = merc.conditionnements || []
+  // 1. Explicit facturation flag
+  const factCond = conds.find(c => c.utilise_facturation)
+  if (factCond) return { quantite: factCond.quantite, unite: factCond.unite }
+  // 2. For weight/volume: prix is per base unit (kg or L)
+  const su = (merc.unite_stock || '').toLowerCase()
+  const isWeightVolume = ['g', 'kg', 'ml', 'cl', 'l'].includes(su)
+  if (isWeightVolume) {
+    const baseCond = conds.find(c => c.quantite <= 1 && !c.utilise_commande)
+    if (baseCond) return { quantite: baseCond.quantite, unite: baseCond.unite }
+    const baseUnit = ['g', 'kg'].includes(su) ? 'kg' : 'l'
+    return { quantite: 1, unite: baseUnit }
+  }
+  // 3. Count products: facturation = commande conditioning
+  const cmdCond = conds.find(c => c.utilise_commande)
+  if (cmdCond) return { quantite: cmdCond.quantite, unite: cmdCond.unite }
+  return { quantite: merc.coefficient_conversion || 1, unite: merc.unite_stock }
 }
 
 function calculateCoutUnitaire(merc, ingredientUniteStock) {
   if (!merc.prix_unitaire_ht || merc.prix_unitaire_ht <= 0) return 0
-  const condUnite = getConditioningUnit(merc)
-  const coeff = merc.coefficient_conversion || 1
-  const factor = getUnitFactor(condUnite, ingredientUniteStock)
-  const divisor = coeff * factor
+  const fact = getFacturationConditioning(merc)
+  const fu = fact.unite.toLowerCase()
+  const isu = ingredientUniteStock.toLowerCase()
+  const isFactCount = !['g', 'kg', 'ml', 'cl', 'l'].includes(fu)
+  const isIngWeightVolume = ['g', 'kg', 'ml', 'cl', 'l'].includes(isu)
+  // Bridge: facturation in count but ingredient in weight/volume
+  if (isFactCount && isIngWeightVolume) {
+    const coeff = merc.coefficient_conversion || 1
+    const bridgeUnit = (merc.unite_commande || merc.unite_stock || 'kg').toLowerCase()
+    const factor = getUnitFactor(bridgeUnit, isu)
+    const divisor = fact.quantite * coeff * factor
+    return divisor > 0 ? merc.prix_unitaire_ht / divisor : 0
+  }
+  const factor = getUnitFactor(fu, isu)
+  const divisor = fact.quantite * factor
   if (divisor <= 0) return 0
   return merc.prix_unitaire_ht / divisor
 }
@@ -85,7 +111,7 @@ async function main() {
   // Fetch all mercuriale products
   const { data: mercuriale, error: mercErr } = await supabase
     .from('mercuriale')
-    .select('id, prix_unitaire_ht, coefficient_conversion, conditionnements, unite_stock, designation')
+    .select('id, prix_unitaire_ht, coefficient_conversion, conditionnements, unite_stock, unite_commande, designation')
 
   if (mercErr) {
     console.error('Error fetching mercuriale:', mercErr.message)
@@ -125,12 +151,12 @@ async function main() {
     }
 
     const oldCout = ing.cout_unitaire || 0
-    const condUnite = getConditioningUnit(merc)
-    const factor = getUnitFactor(condUnite, ing.unite_stock)
+    const fact = getFacturationConditioning(merc)
+    const factor = getUnitFactor(fact.unite, ing.unite_stock)
 
     console.log(
       `  ${ing.nom}: ${oldCout.toFixed(6)} → ${newCout.toFixed(6)} €/${ing.unite_stock}` +
-      ` (${merc.designation}: ${merc.prix_unitaire_ht}€ / (${merc.coefficient_conversion} × ${factor}))`
+      ` (${merc.designation}: ${merc.prix_unitaire_ht}€/${fact.unite} / (${fact.quantite} × ${factor}))`
     )
 
     if (LIVE) {
