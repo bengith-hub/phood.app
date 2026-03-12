@@ -168,7 +168,7 @@ async function handleSignOut() {
 
     <!-- Main content -->
     <main class="main-content">
-      <router-view />
+      <router-view :key="$route.fullPath" />
     </main>
 
     <!-- Plus menu overlay -->
