@@ -81,6 +81,11 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     return items.value.find(m => m.id === id)
   }
 
+  /** All mercuriale products linked to a given ingredient (for preferred supplier selector) */
+  function getByIngredientId(ingredientId: string) {
+    return actifs.value.filter(m => m.ingredient_restaurant_id === ingredientId)
+  }
+
   function search(query: string) {
     const q = query.toLowerCase()
     return actifs.value.filter(m =>
@@ -175,5 +180,5 @@ export const useMercurialeStore = defineStore('mercuriale', () => {
     return photoUrl
   }
 
-  return { items, actifs, allCategories, loading, error, fetchAll, save, bulkSetActif, getById, byFournisseur, groupedByCategorie, search, uploadPhoto, uploadPhotoFromUrl, searchPhotos, deleteItem }
+  return { items, actifs, allCategories, loading, error, fetchAll, save, bulkSetActif, getById, getByIngredientId, byFournisseur, groupedByCategorie, search, uploadPhoto, uploadPhotoFromUrl, searchPhotos, deleteItem }
 })

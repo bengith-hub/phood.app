@@ -2,11 +2,15 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useIngredientsStore } from '@/stores/ingredients'
+import { useMercurialeStore } from '@/stores/mercuriale'
+import { useFournisseursStore } from '@/stores/fournisseurs'
 import type { IngredientRestaurant, Allergene } from '@/types/database'
 
 const route = useRoute()
 const router = useRouter()
 const store = useIngredientsStore()
+const mercurialeStore = useMercurialeStore()
+const fournisseursStore = useFournisseursStore()
 
 const saving = ref(false)
 const uploadingPhoto = ref(false)
@@ -14,6 +18,31 @@ const photoInputRef = ref<HTMLInputElement | null>(null)
 const mercurialePhotoUrl = ref<string | null>(null)
 const mercurialeSku = ref<string | null>(null)
 const mercurialeDesignation = ref<string | null>(null)
+
+/** Mercuriale products linked to this ingredient (for preferred supplier selector) */
+const linkedMercuriale = computed(() => {
+  if (isNew.value) return []
+  return mercurialeStore.getByIngredientId(ingredientId.value)
+})
+
+function getFournisseurNom(fournisseurId: string) {
+  return fournisseursStore.getById(fournisseurId)?.nom ?? 'Inconnu'
+}
+
+async function changePreferredSupplier(mercurialeId: string | null) {
+  if (isNew.value) return
+  form.value.fournisseur_prefere_id = mercurialeId
+  try {
+    await store.save({ id: ingredientId.value, fournisseur_prefere_id: mercurialeId } as Partial<IngredientRestaurant> & { id: string })
+    // Update local enriched data
+    const merc = mercurialeId ? mercurialeStore.getById(mercurialeId) : null
+    mercurialeDesignation.value = merc?.designation ?? null
+    mercurialeSku.value = merc?.ref_fournisseur ?? null
+    mercurialePhotoUrl.value = merc?.photo_url ?? null
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur changement fournisseur')
+  }
+}
 
 const ingredientId = computed(() => route.params.id as string)
 const isNew = computed(() => !ingredientId.value || ingredientId.value === 'new')
@@ -67,7 +96,7 @@ async function handleSave() {
   saving.value = true
   try {
     // Strip enriched fields that don't belong to the DB table
-    const { mercuriale_photo_url, mercuriale_sku, mercuriale_designation, ...cleanForm } = form.value as Record<string, unknown>
+    const { mercuriale_photo_url, mercuriale_sku, mercuriale_designation, fournisseur_nom, fournisseur_id: _fid, ...cleanForm } = form.value as Record<string, unknown>
     await store.save({
       ...cleanForm,
       id: isNew.value ? undefined : ingredientId.value,
@@ -113,7 +142,11 @@ async function handlePhotoSelected(event: Event) {
 }
 
 onMounted(async () => {
-  if (store.ingredients.length === 0) await store.fetchAll()
+  await Promise.all([
+    store.ingredients.length === 0 ? store.fetchAll() : Promise.resolve(),
+    mercurialeStore.items.length === 0 ? mercurialeStore.fetchAll() : Promise.resolve(),
+    fournisseursStore.fournisseurs.length === 0 ? fournisseursStore.fetchAll() : Promise.resolve(),
+  ])
   if (!isNew.value) {
     const existing = store.getById(ingredientId.value)
     if (existing) {
@@ -160,13 +193,31 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- Supplier info (from mercuriale) -->
-    <div v-if="mercurialeSku || mercurialeDesignation" class="supplier-info">
+    <!-- Supplier selector -->
+    <div v-if="!isNew" class="supplier-section">
       <span class="supplier-label">Fournisseur préféré</span>
-      <div class="supplier-detail">
-        <span v-if="mercurialeDesignation" class="supplier-designation">{{ mercurialeDesignation }}</span>
-        <span v-if="mercurialeSku" class="supplier-sku">SKU : {{ mercurialeSku }}</span>
+      <div v-if="linkedMercuriale.length > 0" class="supplier-selector">
+        <select
+          :value="form.fournisseur_prefere_id || ''"
+          class="field-input"
+          @change="changePreferredSupplier(($event.target as HTMLSelectElement).value || null)"
+        >
+          <option value="">— Aucun préféré —</option>
+          <option
+            v-for="m in linkedMercuriale"
+            :key="m.id"
+            :value="m.id"
+          >
+            {{ m.designation }} — {{ getFournisseurNom(m.fournisseur_id) }} ({{ m.prix_unitaire_ht.toFixed(2) }} €)
+          </option>
+        </select>
+        <div v-if="mercurialeSku" class="supplier-sku">SKU : {{ mercurialeSku }}</div>
       </div>
+      <div v-else class="supplier-empty">
+        <span>Aucun produit fournisseur relié à cet ingrédient</span>
+        <button class="btn-link" @click="router.push('/mercuriale')">Voir la mercuriale</button>
+      </div>
+      <div class="supplier-hint">Le fournisseur préféré détermine le coût unitaire de cet ingrédient.</div>
     </div>
 
     <!-- Form -->
@@ -326,8 +377,8 @@ h1 {
   50% { opacity: 1; }
 }
 
-/* Supplier info */
-.supplier-info {
+/* Supplier section */
+.supplier-section {
   background: var(--bg-main);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -335,30 +386,47 @@ h1 {
   margin-bottom: 20px;
 }
 .supplier-label {
+  display: block;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  margin-bottom: 8px;
 }
-.supplier-detail {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 4px;
-}
-.supplier-designation {
+.supplier-selector select {
+  width: 100%;
+  height: 48px;
   font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
 }
 .supplier-sku {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-primary);
-  background: rgba(232, 93, 44, 0.08);
-  padding: 2px 10px;
-  border-radius: 12px;
+  margin-top: 6px;
+}
+.supplier-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+.supplier-empty .btn-link {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+}
+.supplier-hint {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: 8px;
 }
 
 /* Form */

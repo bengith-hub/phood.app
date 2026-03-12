@@ -3,17 +3,20 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMercurialeStore } from '@/stores/mercuriale'
 import { useFournisseursStore } from '@/stores/fournisseurs'
+import { useIngredientsStore } from '@/stores/ingredients'
 import type { Mercuriale, Conditionnement } from '@/types/database'
 
 const route = useRoute()
 const mercurialeStore = useMercurialeStore()
 const fournisseursStore = useFournisseursStore()
+const ingredientsStore = useIngredientsStore()
 
 // Filters
 const search = ref('')
 const filterFournisseurId = ref<string | null>(null)
 const filterCategorie = ref<string | null>(null)
 const filterActif = ref(true)
+const showHelp = ref(false)
 
 // Photo upload
 const uploadingPhotoId = ref<string | null>(null)
@@ -117,6 +120,11 @@ const displayedProducts = computed(() => {
 
 function getFournisseurNom(fournisseurId: string): string {
   return fournisseursStore.getById(fournisseurId)?.nom || 'Inconnu'
+}
+
+function getIngredientNom(ingredientId: string | null): string | null {
+  if (!ingredientId) return null
+  return ingredientsStore.getById(ingredientId)?.nom ?? null
 }
 
 function formatConditionnement(cond: Conditionnement) {
@@ -322,6 +330,7 @@ onMounted(async () => {
   await Promise.all([
     fournisseursStore.fetchAll(),
     mercurialeStore.fetchAll(),
+    ingredientsStore.ingredients.length === 0 ? ingredientsStore.fetchAll() : Promise.resolve(),
   ])
 })
 </script>
@@ -329,6 +338,21 @@ onMounted(async () => {
 <template>
   <div class="mercuriale-page">
     <h1>Mercuriale</h1>
+
+    <!-- Contextual help banner -->
+    <button class="help-toggle" @click="showHelp = !showHelp">
+      <span class="help-icon">?</span>
+      <span>{{ showHelp ? 'Masquer l\'aide' : 'Comment ça marche ?' }}</span>
+    </button>
+    <div v-if="showHelp" class="help-banner">
+      <div class="help-title">Mercuriale = catalogue produits fournisseur</div>
+      <div class="help-desc">
+        Les produits que vous commandez chez vos fournisseurs (référence, prix, conditionnement).
+        Chaque produit doit être relié à un ingrédient restaurant pour le suivi de stock et le calcul de coût.
+        Un ingrédient peut avoir plusieurs fournisseurs, un seul est le « préféré » (utilisé pour le coût).
+      </div>
+      <div class="help-schema"><strong>PRODUIT FOURNISSEUR</strong> &rarr; Ingrédient &rarr; Recette vendue (Zelty)</div>
+    </div>
 
     <!-- Hidden file input for photo upload -->
     <input
@@ -428,6 +452,10 @@ onMounted(async () => {
               <span class="product-supplier">{{ getFournisseurNom(p.fournisseur_id) }}</span>
               <span v-if="p.categorie" class="product-category">{{ p.categorie }}</span>
               <span v-if="p.ref_fournisseur" class="product-sku">{{ p.ref_fournisseur }}</span>
+              <span v-if="getIngredientNom(p.ingredient_restaurant_id)" class="badge-linked" :title="'Relié à : ' + getIngredientNom(p.ingredient_restaurant_id)">
+                {{ getIngredientNom(p.ingredient_restaurant_id) }}
+              </span>
+              <span v-else class="badge-unlinked">Non relié</span>
             </div>
             <div class="product-details">
               <span class="product-price">{{ formatPrix(p.prix_unitaire_ht, p.unite_stock, p.conditionnements as Conditionnement[]) }}</span>
@@ -509,6 +537,21 @@ onMounted(async () => {
               <datalist id="cat-list">
                 <option v-for="c in mercurialeStore.allCategories" :key="c" :value="c" />
               </datalist>
+            </div>
+
+            <!-- Ingrédient relié -->
+            <div class="field full">
+              <label>Ingr&eacute;dient reli&eacute;</label>
+              <select v-model="editingProduct.ingredient_restaurant_id">
+                <option :value="null">&mdash; Non reli&eacute; &mdash;</option>
+                <option
+                  v-for="ing in ingredientsStore.actifs"
+                  :key="ing.id"
+                  :value="ing.id"
+                >
+                  {{ ing.nom }} ({{ ing.unite_stock }}){{ ing.categorie ? ` — ${ing.categorie}` : '' }}
+                </option>
+              </select>
             </div>
 
             <!-- Prix -->
@@ -673,6 +716,58 @@ onMounted(async () => {
 h1 {
   font-size: 28px;
   margin-bottom: 16px;
+}
+
+/* Help banner */
+.help-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-info, #3b82f6);
+  cursor: pointer;
+  padding: 0 0 10px;
+}
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-info, #3b82f6);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+}
+.help-banner {
+  background: color-mix(in srgb, var(--color-info, #3b82f6) 6%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-info, #3b82f6) 25%, var(--border));
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.help-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}
+.help-desc {
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.help-schema {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-info, #3b82f6);
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--color-info, #3b82f6) 15%, var(--border));
 }
 
 .visually-hidden {
@@ -971,6 +1066,26 @@ h1 {
   background: var(--bg-main);
   padding: 1px 6px;
   border-radius: 4px;
+}
+.badge-linked {
+  font-size: 11px;
+  font-weight: 600;
+  color: #166534;
+  background: #dcfce7;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.badge-unlinked {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9a3412;
+  background: #ffedd5;
+  padding: 2px 8px;
+  border-radius: 10px;
 }
 .product-details { display: flex; gap: 12px; margin-bottom: 6px; }
 .product-price { font-size: 18px; font-weight: 700; color: var(--color-primary); }

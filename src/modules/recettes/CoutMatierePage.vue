@@ -63,6 +63,14 @@ function getMercurialesByIngredient(ingredientId: string): Mercuriale[] {
   return mercurialeStore.actifs.filter(m => m.ingredient_restaurant_id === ingredientId)
 }
 
+async function setAsPreferred(ingredientId: string, mercurialeId: string) {
+  try {
+    await ingredientsStore.save({ id: ingredientId, fournisseur_prefere_id: mercurialeId } as Partial<IngredientRestaurant> & { id: string })
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur changement fournisseur préféré')
+  }
+}
+
 /** Weight/volume stock units where prix_unitaire_ht is per base unit (kg or L) */
 const WEIGHT_UNITS = new Set(['g', 'kg'])
 const VOLUME_UNITS = new Set(['mL', 'cl', 'L'])
@@ -378,6 +386,13 @@ onMounted(async () => {
                           <span class="dsc-name">{{ fp.fournisseurNom }}</span>
                           <span v-if="fp.isPreferred" class="dsc-tag preferred-tag">Pr&eacute;f&eacute;r&eacute;</span>
                           <span v-if="fp.prixNormalise <= row.meilleurPrix" class="dsc-tag cheapest-tag">Moins cher</span>
+                          <button
+                            v-if="!fp.isPreferred"
+                            class="btn-set-preferred"
+                            @click.stop="setAsPreferred(row.ingredient.id, fp.mercurialeId)"
+                          >
+                            D&eacute;finir comme pr&eacute;f&eacute;r&eacute;
+                          </button>
                         </div>
                         <div class="dsc-designation">{{ fp.designation }}</div>
                         <div class="dsc-prix">
@@ -770,6 +785,22 @@ h1 {
 .cheapest-tag {
   background: rgba(34, 197, 94, 0.1);
   color: var(--color-success);
+}
+
+.btn-set-preferred {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.btn-set-preferred:active {
+  background: var(--color-primary);
+  color: white;
 }
 
 .dsc-designation {

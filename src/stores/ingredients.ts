@@ -10,6 +10,8 @@ export interface IngredientEnriched extends IngredientRestaurant {
   mercuriale_photo_url?: string | null
   mercuriale_sku?: string | null
   mercuriale_designation?: string | null
+  fournisseur_nom?: string | null
+  fournisseur_id?: string | null
 }
 
 export const useIngredientsStore = defineStore('ingredients', () => {
@@ -27,23 +29,33 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     return [...cats].sort((a, b) => a.localeCompare(b))
   })
 
+  const fournisseurs = computed(() => {
+    const map = new Map<string, string>()
+    for (const i of ingredients.value) {
+      if (i.fournisseur_id && i.fournisseur_nom) map.set(i.fournisseur_id, i.fournisseur_nom)
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([id, nom]) => ({ id, nom }))
+  })
+
   async function fetchAll() {
     loading.value = true
     error.value = null
     try {
       if (navigator.onLine) {
         const data = await restFetchAll<Record<string, unknown>>(
-          'ingredients_restaurant?select=*,mercuriale_pref:fournisseur_prefere_id(ref_fournisseur,photo_url,designation)&order=nom',
+          'ingredients_restaurant?select=*,mercuriale_pref:fournisseur_prefere_id(ref_fournisseur,photo_url,designation,fournisseur_id,fournisseur:fournisseur_id(id,nom))&order=nom',
         )
         // Flatten mercuriale join data onto each ingredient
         const enriched: IngredientEnriched[] = (data ?? []).map((row) => {
-          const merc = row.mercuriale_pref as { ref_fournisseur?: string; photo_url?: string; designation?: string } | null
+          const merc = row.mercuriale_pref as { ref_fournisseur?: string; photo_url?: string; designation?: string; fournisseur_id?: string; fournisseur?: { id: string; nom: string } | null } | null
           const { mercuriale_pref: _, ...rest } = row
           return {
             ...rest,
             mercuriale_photo_url: merc?.photo_url ?? null,
             mercuriale_sku: merc?.ref_fournisseur ?? null,
             mercuriale_designation: merc?.designation ?? null,
+            fournisseur_id: merc?.fournisseur?.id ?? null,
+            fournisseur_nom: merc?.fournisseur?.nom ?? null,
           } as IngredientEnriched
         })
         ingredients.value = enriched
@@ -70,7 +82,8 @@ export const useIngredientsStore = defineStore('ingredients', () => {
       i.nom.toLowerCase().includes(q) ||
       i.categorie?.toLowerCase().includes(q) ||
       i.allergenes.some(a => a.toLowerCase().includes(q)) ||
-      i.contient?.toLowerCase().includes(q)
+      i.contient?.toLowerCase().includes(q) ||
+      i.mercuriale_designation?.toLowerCase().includes(q)
     )
   }
 
@@ -108,6 +121,13 @@ export const useIngredientsStore = defineStore('ingredients', () => {
   }
 
   async function remove(id: string) {
+    // Clean up FK references before deleting
+    await Promise.all([
+      restCall('DELETE', `stocks?ingredient_id=eq.${id}`),
+      restCall('DELETE', `recette_ingredients?ingredient_id=eq.${id}`),
+      restCall('DELETE', `inventaire_lignes?ingredient_id=eq.${id}`),
+      restCall('PATCH', `mercuriale?ingredient_restaurant_id=eq.${id}`, { ingredient_restaurant_id: null }),
+    ])
     await restCall('DELETE', `ingredients_restaurant?id=eq.${id}`)
     await fetchAll()
   }
@@ -120,5 +140,5 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     }
   }
 
-  return { ingredients, actifs, categories, loading, error, fetchAll, getById, search, save, uploadPhoto, remove, bulkSetActif }
+  return { ingredients, actifs, categories, fournisseurs, loading, error, fetchAll, getById, search, save, uploadPhoto, remove, bulkSetActif }
 })

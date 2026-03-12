@@ -11,21 +11,26 @@ const ingredientsStore = useIngredientsStore()
 const search = ref('')
 const tab = ref<'recettes' | 'ingredients' | 'sous_recettes'>('recettes')
 const catFilter = ref('')
+const fournisseurFilter = ref('')
 const showInactifs = ref(false)
 const showHelp = ref(false)
 
-const TAB_HELP: Record<string, { title: string; desc: string }> = {
+const TAB_HELP: Record<string, { title: string; desc: string; extra?: string; schema: string }> = {
   recettes: {
     title: 'Recettes = plats et produits vendus',
     desc: 'Les plats que vous vendez, avec leur composition en ingrédients et/ou sous-recettes. Peuvent être liées à la caisse Zelty pour la décrémentation auto du stock. Supportent les variantes de taille (Normal/Grand) et les modificateurs (extras, sans).',
+    extra: '<strong>Variantes</strong> = tailles (Normal x1, Grand x1.5) — <strong>Modificateurs</strong> = extras (+80g poulet) ou sans (-10g coriandre)',
+    schema: 'Produit fournisseur → Ingrédient → Sous-recette → <strong>RECETTE VENDUE (Zelty)</strong>',
   },
   sous_recettes: {
     title: 'Sous-recettes = préparations intermédiaires',
     desc: 'Marinades, sauces, bases... Elles ne sont jamais vendues directement et n\'ont pas de stock propre. Elles servent uniquement au calcul du coût matière et à la décrémentation récursive du stock aux ingrédients de base. Imbrication possible jusqu\'à 3 niveaux.',
+    schema: 'Produit fournisseur → Ingrédient → <strong>SOUS-RECETTE</strong> → Recette vendue',
   },
   ingredients: {
-    title: 'Ingrédients = ce que vous achetez et stockez',
-    desc: 'Liés aux produits fournisseurs (mercuriale). Le coût unitaire est calculé automatiquement depuis le fournisseur préféré. Les allergènes sont déclarés ici et remontent dans toutes les recettes qui les utilisent.',
+    title: 'Ingrédients = ce que vous stockez en cuisine',
+    desc: 'Chaque ingrédient est relié à un ou plusieurs produits fournisseurs (mercuriale) pour les commandes et le calcul de prix. Le coût unitaire est calculé automatiquement depuis le fournisseur préféré. Les allergènes déclarés ici remontent dans toutes les recettes.',
+    schema: 'Produit fournisseur → <strong>INGRÉDIENT</strong> → Sous-recette / Recette vendue (Zelty)',
   },
 }
 
@@ -92,13 +97,17 @@ const filteredIngredients = computed(() => {
   if (catFilter.value) {
     list = list.filter(i => i.categorie === catFilter.value)
   }
+  if (fournisseurFilter.value) {
+    list = list.filter(i => i.fournisseur_id === fournisseurFilter.value)
+  }
   const q = search.value.toLowerCase()
   if (q) {
     list = list.filter(i =>
       i.nom.toLowerCase().includes(q) ||
       i.categorie?.toLowerCase().includes(q) ||
       i.allergenes.some(a => a.toLowerCase().includes(q)) ||
-      i.contient?.toLowerCase().includes(q)
+      i.contient?.toLowerCase().includes(q) ||
+      i.mercuriale_designation?.toLowerCase().includes(q)
     )
   }
   return list
@@ -163,13 +172,8 @@ onMounted(async () => {
     <div v-if="showHelp" class="help-banner">
       <div class="help-title">{{ TAB_HELP[tab]?.title }}</div>
       <div class="help-desc">{{ TAB_HELP[tab]?.desc }}</div>
-      <div v-if="tab === 'recettes'" class="help-extra">
-        <strong>Variantes</strong> = tailles (Normal x1, Grand x1.5) &mdash;
-        <strong>Modificateurs</strong> = extras (+80g poulet) ou sans (-10g coriandre)
-      </div>
-      <div class="help-schema">
-        Recette (vendue) &rarr; Sous-recette (prep) &rarr; Ingrédient (acheté &amp; stocké)
-      </div>
+      <div v-if="TAB_HELP[tab]?.extra" class="help-extra" v-html="TAB_HELP[tab].extra"></div>
+      <div class="help-schema" v-html="TAB_HELP[tab]?.schema"></div>
     </div>
 
     <input
@@ -181,6 +185,10 @@ onMounted(async () => {
 
     <!-- Filters bar (all tabs) -->
     <div class="filters-bar">
+      <select v-if="tab === 'ingredients'" v-model="fournisseurFilter" class="filter-select">
+        <option value="">Tous fournisseurs</option>
+        <option v-for="f in ingredientsStore.fournisseurs" :key="f.id" :value="f.id">{{ f.nom }}</option>
+      </select>
       <select v-if="tab === 'ingredients'" v-model="catFilter" class="filter-select">
         <option value="">Toutes catégories</option>
         <option v-for="c in ingredientsStore.categories" :key="c" :value="c">{{ c }}</option>
