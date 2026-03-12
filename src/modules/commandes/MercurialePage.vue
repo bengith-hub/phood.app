@@ -28,10 +28,6 @@ const pendingPhotoProductId = ref<string | null>(null)
 const showEditor = ref(false)
 const editingProduct = ref<Partial<Mercuriale> | null>(null)
 const saving = ref(false)
-const editorFactUnit = computed(() => {
-  if (!editingProduct.value) return ''
-  return editingProduct.value.unite_facturation || editingProduct.value.unite_commande || 'kg'
-})
 
 // Bulk selection mode
 const selectionMode = ref(false)
