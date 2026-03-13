@@ -135,7 +135,7 @@ function handleSave() {
         </div>
         <label v-else class="photo-upload-btn">
           + Ajouter une photo
-          <input type="file" accept="image/*" capture="environment" hidden @change="handlePhoto">
+          <input type="file" accept="image/*" hidden @change="handlePhoto">
         </label>
 
         <!-- Ordre -->

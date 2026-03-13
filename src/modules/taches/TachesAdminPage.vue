@@ -245,7 +245,7 @@ onMounted(async () => {
         </div>
         <label v-else class="photo-upload-btn">
           + Ajouter une photo
-          <input type="file" accept="image/*" capture="environment" hidden @change="handlePrioPhoto">
+          <input type="file" accept="image/*" hidden @change="handlePrioPhoto">
         </label>
 
         <button
