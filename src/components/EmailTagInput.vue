@@ -97,14 +97,19 @@ function focusInput() {
 
 <style scoped>
 .email-tag-input {
-  border: 1px solid var(--color-border, #D1D5DB);
-  border-radius: var(--radius-sm, 8px);
-  padding: 6px 8px;
+  border: 1.5px solid var(--color-border, #D1D5DB);
+  border-radius: 10px;
+  padding: 8px 10px;
   cursor: text;
   background: #fff;
   min-height: 48px;
   display: flex;
   align-items: flex-start;
+  transition: border-color 0.2s;
+}
+.email-tag-input:focus-within {
+  border-color: var(--color-primary, #E85D2C);
+  box-shadow: 0 0 0 3px rgba(232, 93, 44, 0.08);
 }
 
 .tags-wrap {
@@ -118,46 +123,52 @@ function focusInput() {
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  background: #F3F4F6;
+  gap: 6px;
+  background: #F9FAFB;
   border: 1px solid #E5E7EB;
-  border-radius: 20px;
-  padding: 6px 8px 6px 12px;
-  font-size: 14px;
-  color: var(--color-text, #1F2937);
-  line-height: 1.2;
+  border-radius: 6px;
+  padding: 4px 6px 4px 10px;
+  font-size: 13px;
+  color: var(--color-text, #374151);
+  line-height: 1.3;
   white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tag:hover {
+  background: #F3F4F6;
+  border-color: #D1D5DB;
 }
 
 .tag-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  min-width: 24px;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
   border: none;
-  background: #D1D5DB;
-  border-radius: 50%;
-  font-size: 16px;
-  font-weight: 700;
-  color: #4B5563;
+  background: transparent;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9CA3AF;
   cursor: pointer;
   line-height: 1;
   padding: 0;
+  transition: background 0.15s, color 0.15s;
 }
 .tag-remove:hover {
-  background: #EF4444;
-  color: #fff;
+  background: #FEE2E2;
+  color: #EF4444;
 }
 
 .tag-input {
   flex: 1;
-  min-width: 160px;
+  min-width: 140px;
   border: none;
   outline: none;
-  font-size: 15px;
-  padding: 6px 4px;
+  font-size: 14px;
+  padding: 4px 4px;
   background: transparent;
   color: var(--color-text, #1F2937);
 }

@@ -192,24 +192,39 @@ export async function generateCommandePdf(data: PdfData): Promise<jsPDF> {
   // ═══════════════════════════════════════════════════════
   const allNotes = data.commentaire || ''
 
-  // Always show the section header (empty = ready for handwritten notes)
-  doc.setFillColor(245, 245, 245)
-  doc.roundedRect(margin, y, contentWidth, 7, 1, 1, 'F')
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(0)
-  doc.text('Commentaire :', margin + 4, y + 5)
-  y += 9
-
   if (allNotes) {
-    doc.setFontSize(8.5)
+    // Measure note text height first
+    doc.setFontSize(9)
+    const noteLines = doc.splitTextToSize(allNotes, contentWidth - 16)
+    const noteTextH = noteLines.length * 5
+    const boxH = Math.max(noteTextH + 16, 20) // padding top 8 + bottom 8
+
+    // Orange accent background box
+    doc.setFillColor(255, 247, 237) // warm orange-50 tint
+    doc.roundedRect(margin, y, contentWidth, boxH, 2, 2, 'F')
+
+    // Orange left border (accent stripe)
+    doc.setFillColor(...PHOOD_ORANGE)
+    doc.rect(margin, y, 3, boxH, 'F')
+
+    // Light border around
+    doc.setDrawColor(232, 150, 100)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(margin, y, contentWidth, boxH, 2, 2, 'S')
+
+    // Label
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...PHOOD_ORANGE)
+    doc.text('COMMENTAIRE', margin + 8, y + 6)
+
+    // Note text
+    doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
-    doc.setTextColor(60)
-    const noteLines = doc.splitTextToSize(allNotes, contentWidth - 10)
-    doc.text(noteLines, margin + 4, y + 4)
-    y += noteLines.length * 4 + 6
-  } else {
-    y += 8 // Empty space for handwritten notes
+    doc.setTextColor(40, 40, 40)
+    doc.text(noteLines, margin + 8, y + 12)
+
+    y += boxH + 6
   }
 
   // ═══════════════════════════════════════════════════════

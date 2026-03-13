@@ -704,26 +704,33 @@ watch(selectedFournisseurId, async (newId) => {
         </div>
       </div>
 
-      <!-- Actions -->
+      <!-- Actions (icon buttons like inpulse) -->
       <div class="actions-bar" v-if="isDraft">
         <button
           v-if="commandeId"
-          class="btn-danger-outline"
+          class="action-icon-btn action-delete"
           @click="handleDelete"
+          title="Supprimer le brouillon"
         >
-          Supprimer
-        </button>
-        <button class="btn-secondary" @click="handleSaveDraft">
-          Sauvegarder brouillon
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
         <button
-          class="btn-primary"
+          class="action-icon-btn action-save"
+          @click="handleSaveDraft"
+          title="Sauvegarder le brouillon"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        </button>
+        <button
+          v-if="isManagerOrAbove"
+          class="action-icon-btn action-send"
+          :class="{ 'has-badge': nbArticles > 0 }"
           :disabled="!francoAtteint || !dateLivraison || nbArticles === 0 || sending || (!commandeAutorisee.ok && !forceEnvoi)"
           @click="handleEnvoyer"
-          v-if="isManagerOrAbove"
-          :title="!dateLivraison ? 'Date de livraison requise' : !francoAtteint ? `Franco minimum non atteint (${francoMinimum.toFixed(2)} €)` : !commandeAutorisee.ok ? commandeAutorisee.message : ''"
+          :title="!dateLivraison ? 'Date de livraison requise' : !francoAtteint ? `Franco minimum non atteint (${francoMinimum.toFixed(2)} €)` : !commandeAutorisee.ok ? commandeAutorisee.message : 'Envoyer la commande'"
         >
-          {{ sending ? 'Envoi en cours...' : 'Envoyer la commande' }}
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>
+          <span v-if="nbArticles > 0" class="action-badge">{{ nbArticles }}</span>
         </button>
       </div>
       <div v-if="sendError" class="send-error">{{ sendError }}</div>
@@ -1110,7 +1117,7 @@ h1 {
   -webkit-appearance: none;
 }
 
-/* Actions */
+/* Actions — icon bar (inpulse style) */
 .actions-bar {
   display: flex;
   gap: 12px;
@@ -1121,8 +1128,89 @@ h1 {
   bottom: 0;
   background: var(--bg-main);
   padding-bottom: 16px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
 }
+
+.action-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid var(--border, #D1D5DB);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #6B7280;
+}
+.action-icon-btn:active {
+  transform: scale(0.95);
+}
+
+/* Delete / Cancel */
+.action-delete {
+  margin-right: auto;
+  border-color: #FCA5A5;
+  color: #EF4444;
+  background: #FFF5F5;
+}
+.action-delete:hover {
+  background: #FEE2E2;
+  border-color: #EF4444;
+}
+
+/* Save */
+.action-save {
+  border-color: #D1D5DB;
+  color: #374151;
+}
+.action-save:hover {
+  background: #F3F4F6;
+  border-color: #9CA3AF;
+}
+
+/* Send / Cart */
+.action-send {
+  background: var(--color-primary, #E85D2C);
+  border-color: var(--color-primary, #E85D2C);
+  color: #fff;
+}
+.action-send:hover:not(:disabled) {
+  background: #D4522A;
+  border-color: #D4522A;
+}
+.action-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.action-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  background: var(--color-primary, #E85D2C);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  line-height: 1;
+}
+.action-send .action-badge {
+  background: #fff;
+  color: var(--color-primary, #E85D2C);
+  border-color: var(--color-primary, #E85D2C);
+}
+
 .btn-danger-outline {
   background: transparent;
   color: #ef4444;
