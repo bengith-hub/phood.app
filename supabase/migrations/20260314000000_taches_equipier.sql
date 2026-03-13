@@ -69,6 +69,7 @@ CREATE POLICY "Admin deletes tache_instances" ON tache_instances FOR DELETE USIN
 -- ============================================================
 ALTER TABLE config ADD COLUMN IF NOT EXISTS destinataires_email_taches TEXT[] DEFAULT '{}';
 ALTER TABLE config ADD COLUMN IF NOT EXISTS plan_salle_url TEXT;
+ALTER TABLE config ADD COLUMN IF NOT EXISTS plan_terrasse_url TEXT;
 
 -- ============================================================
 -- Enable Realtime replication on tache_instances

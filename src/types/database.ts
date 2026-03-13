@@ -20,6 +20,7 @@ export interface Config {
   destinataires_email_alertes: string[]
   destinataires_email_taches: string[]
   plan_salle_url: string | null
+  plan_terrasse_url: string | null
   google_calendar_id: string | null
   // Établissement (restaurant identity)
   etablissement_nom: string | null

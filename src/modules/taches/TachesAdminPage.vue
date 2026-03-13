@@ -187,31 +187,33 @@ onMounted(async () => {
           :key="t.id"
           :class="['template-card', { inactive: !t.actif }]"
         >
-          <img v-if="t.photo_reference_url" :src="t.photo_reference_url" class="template-photo" alt="">
-          <div class="template-info">
-            <div class="template-header">
-              <span :class="['station-badge', t.station]">{{ t.station }}</span>
-              <span class="template-nom">{{ t.nom }}</span>
-              <span v-if="!t.actif" class="inactive-badge">Inactif</span>
-            </div>
-            <p v-if="t.description" class="template-desc">{{ t.description }}</p>
-            <div class="template-jours">
-              <span
-                v-for="(label, idx) in JOURS_SHORT"
-                :key="idx"
-                :class="['jour-chip', { active: t.jours_semaine.includes(idx) }]"
-              >{{ label }}</span>
+          <div class="template-top-row">
+            <img v-if="t.photo_reference_url" :src="t.photo_reference_url" class="template-photo" alt="">
+            <div class="template-info">
+              <div class="template-header">
+                <span :class="['station-badge', t.station]">{{ t.station }}</span>
+                <span class="template-nom">{{ t.nom }}</span>
+                <span v-if="!t.actif" class="inactive-badge">Inactif</span>
+              </div>
+              <p v-if="t.description" class="template-desc">{{ t.description }}</p>
+              <div class="template-jours">
+                <span
+                  v-for="(label, idx) in JOURS_SHORT"
+                  :key="idx"
+                  :class="['jour-chip', { active: t.jours_semaine.includes(idx) }]"
+                >{{ label }}</span>
+              </div>
             </div>
           </div>
           <div class="template-actions">
             <button class="action-btn" @click="openEditTemplate(t)" title="Modifier">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
             <button class="action-btn" @click="toggleActif(t)" :title="t.actif ? 'Désactiver' : 'Activer'">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" :stroke="t.actif ? '#16a34a' : '#9ca3af'" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" :stroke="t.actif ? '#16a34a' : '#9ca3af'" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
             <button class="action-btn danger" @click="handleDeleteTemplate(t)" title="Supprimer">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
             </button>
           </div>
         </div>
@@ -320,22 +322,27 @@ onMounted(async () => {
 /* Toolbar */
 .toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
   gap: 12px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
+}
+@media (min-width: 600px) {
+  .toolbar {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
 }
 .filter-btns {
   display: flex;
   gap: 6px;
 }
 .filter-btn {
-  padding: 8px 16px;
+  padding: 10px 18px;
   border: 1.5px solid var(--border, #D1D5DB);
   border-radius: 20px;
   background: white;
-  font-size: 14px;
+  font-size: 15px;
   cursor: pointer;
   color: var(--text-secondary, #4B5563);
 }
@@ -345,27 +352,44 @@ onMounted(async () => {
   color: var(--color-primary, #E85D2C);
 }
 .btn-add {
-  padding: 10px 20px;
+  padding: 14px 20px;
   border: none;
   border-radius: var(--radius-sm, 8px);
   background: var(--color-primary, #E85D2C);
   color: white;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
+  width: 100%;
+  min-height: 48px;
+}
+@media (min-width: 600px) {
+  .btn-add { width: auto; }
 }
 /* Template list */
 .template-list { display: flex; flex-direction: column; gap: 12px; }
 .template-card {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 12px;
   padding: 14px;
   background: var(--bg-surface, #fff);
   border: 1.5px solid var(--border, #D1D5DB);
   border-radius: var(--radius-md, 12px);
 }
+@media (min-width: 600px) {
+  .template-card {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+  }
+}
 .template-card.inactive { opacity: 0.5; }
+.template-top-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .template-photo {
   width: 72px;
   height: 54px;
@@ -408,10 +432,10 @@ onMounted(async () => {
   color: #9ca3af;
 }
 .jour-chip.active { background: var(--color-primary, #E85D2C); color: white; }
-.template-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.template-actions { display: flex; gap: 8px; }
 .action-btn {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -420,7 +444,7 @@ onMounted(async () => {
   background: white;
   cursor: pointer;
 }
-.action-btn.danger:hover { border-color: #dc2626; background: #fef2f2; }
+.action-btn.danger:active { border-color: #dc2626; background: #fef2f2; }
 .action-btn.danger svg { stroke: #dc2626; }
 /* Priority form */
 .prio-form { max-width: 500px; }
@@ -470,34 +494,40 @@ onMounted(async () => {
   border: 1px solid var(--border, #D1D5DB);
 }
 .photo-remove {
-  font-size: 14px;
+  font-size: 15px;
   color: #dc2626;
-  background: none;
-  border: none;
+  background: #fef2f2;
+  border: 1.5px solid #fca5a5;
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 16px;
   cursor: pointer;
-  text-decoration: underline;
+  font-weight: 600;
 }
 .photo-upload-btn {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  padding: 10px 16px;
+  justify-content: center;
+  padding: 16px 20px;
   border: 2px dashed var(--border, #D1D5DB);
   border-radius: var(--radius-sm, 8px);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--text-secondary, #4B5563);
+  min-height: 56px;
 }
 .btn-send {
   margin-top: 20px;
-  padding: 14px 32px;
+  padding: 16px 32px;
   border: none;
   border-radius: var(--radius-sm, 8px);
   background: #f97316;
   color: white;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
   cursor: pointer;
   width: 100%;
+  min-height: 56px;
 }
 .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
 .prio-msg { margin-top: 12px; font-size: 15px; color: #dc2626; }

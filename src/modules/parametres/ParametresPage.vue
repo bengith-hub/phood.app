@@ -148,6 +148,7 @@ async function saveConfig() {
       etablissement_creneaux_livraison: config.value.etablissement_creneaux_livraison,
       destinataires_email_taches: config.value.destinataires_email_taches,
       plan_salle_url: config.value.plan_salle_url,
+      plan_terrasse_url: config.value.plan_terrasse_url,
     })
     saveMsg.value = 'Enregistré'
     setTimeout(() => saveMsg.value = '', 3000)
@@ -1055,17 +1056,26 @@ function formatDuration(ms: number | null) {
           </div>
 
           <div class="settings-fieldset">
-            <legend class="fieldset-legend">Plan de salle</legend>
+            <legend class="fieldset-legend">Plans de salle</legend>
             <div class="field-row">
-              <label class="field-label">URL du plan (Canva public ou Google Drawings)</label>
+              <label class="field-label">URL du plan salle</label>
               <input
                 v-model="config.plan_salle_url"
                 type="url"
                 class="field-input"
                 placeholder="https://www.canva.com/design/..."
               >
-              <p class="field-hint">Affiché sur la tablette salle via l'icône plan en haut du kiosk tâches.</p>
             </div>
+            <div class="field-row">
+              <label class="field-label">URL du plan terrasse</label>
+              <input
+                v-model="config.plan_terrasse_url"
+                type="url"
+                class="field-input"
+                placeholder="https://www.canva.com/design/..."
+              >
+            </div>
+            <p class="field-hint">Affichés sur le kiosk tâches via l'icône plan. Utiliser un lien Canva public ou Google Drawings.</p>
           </div>
 
           <button class="btn-save" :disabled="saving" @click="saveConfig">

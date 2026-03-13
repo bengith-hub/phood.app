@@ -29,9 +29,15 @@ useTaskRealtime(station)
 // Current task index for carousel
 const currentIndex = ref(0)
 
-// Plan de salle URL from config
+// Plans de salle URLs from config
 const planSalleUrl = ref<string | null>(null)
-const showPlanSalle = ref(false)
+const planTerrasseUrl = ref<string | null>(null)
+const showPlan = ref(false)
+const activePlan = ref<'salle' | 'terrasse'>('salle')
+const hasAnyPlan = computed(() => !!planSalleUrl.value || !!planTerrasseUrl.value)
+const activePlanUrl = computed(() =>
+  activePlan.value === 'salle' ? planSalleUrl.value : planTerrasseUrl.value
+)
 
 // Bottom sheet state
 const showPhotoCapture = ref(false)
@@ -129,15 +135,16 @@ function toggleStation() {
   currentIndex.value = 0
 }
 
-// Fetch config for plan_salle_url
+// Fetch config for plan URLs
 async function fetchConfig() {
   try {
-    const config = await restCall<{ plan_salle_url: string | null }[]>(
+    const config = await restCall<{ plan_salle_url: string | null; plan_terrasse_url: string | null }[]>(
       'GET',
-      'config?select=plan_salle_url&limit=1'
+      'config?select=plan_salle_url,plan_terrasse_url&limit=1'
     )
     if (config?.[0]) {
       planSalleUrl.value = config[0].plan_salle_url
+      planTerrasseUrl.value = config[0].plan_terrasse_url
     }
   } catch { /* ignore */ }
 }
@@ -190,10 +197,10 @@ onUnmounted(() => document.removeEventListener('visibilitychange', handleVisibil
       <div class="header-right">
         <!-- Plan de salle button -->
         <button
-          v-if="planSalleUrl && activeStation === 'salle'"
+          v-if="hasAnyPlan"
           class="plan-btn"
-          title="Plan de salle"
-          @click="showPlanSalle = true"
+          title="Plans"
+          @click="showPlan = true"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -301,20 +308,36 @@ onUnmounted(() => document.removeEventListener('visibilitychange', handleVisibil
     </div>
 
     <!-- Plan de salle fullscreen overlay -->
-    <div v-if="showPlanSalle && planSalleUrl" class="plan-overlay" @click="showPlanSalle = false">
-      <button class="plan-close" @click="showPlanSalle = false">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
+    <div v-if="showPlan" class="plan-overlay">
+      <div class="plan-header">
+        <!-- Tab toggle (only if both plans exist) -->
+        <div v-if="planSalleUrl && planTerrasseUrl" class="plan-tabs">
+          <button
+            :class="['plan-tab', { active: activePlan === 'salle' }]"
+            @click="activePlan = 'salle'"
+          >Salle</button>
+          <button
+            :class="['plan-tab', { active: activePlan === 'terrasse' }]"
+            @click="activePlan = 'terrasse'"
+          >Terrasse</button>
+        </div>
+        <span v-else class="plan-title">{{ planSalleUrl ? 'Plan salle' : 'Plan terrasse' }}</span>
+        <button class="plan-close" @click="showPlan = false">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
       <iframe
-        :src="planSalleUrl"
+        v-if="activePlanUrl"
+        :key="activePlan"
+        :src="activePlanUrl"
         class="plan-iframe"
         frameborder="0"
         allowfullscreen
-        @click.stop
       />
+      <div v-else class="plan-empty">Aucun plan configuré pour cette vue.</div>
     </div>
   </div>
 </template>
@@ -567,18 +590,50 @@ onUnmounted(() => document.removeEventListener('visibilitychange', handleVisibil
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: rgba(0, 0, 0, 0.9);
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  flex-shrink: 0;
+}
+
+.plan-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.plan-tab {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.plan-tab.active {
+  background: white;
+  color: #111;
+}
+
+.plan-title {
+  color: white;
+  font-size: 18px;
+  font-weight: 600;
 }
 
 .plan-close {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  z-index: 201;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(255, 255, 255, 0.15);
   border: none;
   border-radius: 50%;
   width: 48px;
@@ -587,13 +642,22 @@ onUnmounted(() => document.removeEventListener('visibilitychange', handleVisibil
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .plan-iframe {
-  width: 95%;
-  height: 90%;
+  flex: 1;
+  width: 100%;
   border: none;
-  border-radius: 8px;
   background: white;
+}
+
+.plan-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 18px;
 }
 </style>
