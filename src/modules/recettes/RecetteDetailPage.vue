@@ -35,6 +35,74 @@ const photoUrl = ref<string | null>(null)
 const zeltyProductId = ref<string | null>(null)
 const actif = ref(true)
 
+// --- Zelty dropdown ---
+interface ZeltyDish { id: string; name: string; image: string | null }
+const zeltyDishes = ref<ZeltyDish[]>([])
+const zeltySearch = ref('')
+const showZeltyDropdown = ref(false)
+const zeltyLoading = ref(false)
+const zeltyLoaded = ref(false)
+
+async function fetchZeltyDishes() {
+  if (zeltyLoaded.value) return
+  zeltyLoading.value = true
+  try {
+    const resp = await fetch('/.netlify/functions/list-zelty-dishes')
+    if (resp.ok) {
+      zeltyDishes.value = await resp.json()
+      zeltyLoaded.value = true
+    }
+  } catch (e) {
+    console.error('Failed to load Zelty dishes:', e)
+  } finally {
+    zeltyLoading.value = false
+  }
+}
+
+const filteredZeltyDishes = computed(() => {
+  const usedIds = new Set<string>()
+  for (const r of recettesStore.recettes) {
+    if (r.zelty_product_id && r.id !== recetteId.value) {
+      usedIds.add(String(r.zelty_product_id))
+    }
+  }
+  let dishes = zeltyDishes.value.filter(d => !usedIds.has(d.id))
+  const q = zeltySearch.value.toLowerCase().trim()
+  if (q) {
+    dishes = dishes.filter(d => d.name.toLowerCase().includes(q))
+  }
+  return dishes.slice(0, 20)
+})
+
+const linkedZeltyName = computed(() => {
+  if (!zeltyProductId.value) return null
+  const dish = zeltyDishes.value.find(d => d.id === String(zeltyProductId.value))
+  return dish?.name || `ID ${zeltyProductId.value}`
+})
+
+function selectZeltyDish(dish: ZeltyDish) {
+  zeltyProductId.value = dish.id
+  if (!photoUrl.value && dish.image) {
+    photoUrl.value = dish.image
+  }
+  zeltySearch.value = ''
+  showZeltyDropdown.value = false
+}
+
+function unlinkZelty() {
+  zeltyProductId.value = null
+  zeltySearch.value = ''
+}
+
+function openZeltyDropdown() {
+  fetchZeltyDishes()
+  showZeltyDropdown.value = true
+}
+
+function closeZeltyDropdown() {
+  setTimeout(() => { showZeltyDropdown.value = false }, 200)
+}
+
 // Prix de vente multi-canal
 const prixSurPlaceTTC = ref<number>(0)
 const prixSurPlaceTVA = ref<number>(10)
@@ -441,6 +509,7 @@ onMounted(async () => {
     coutEmballage.value = r.cout_emballage ?? 0
     photoUrl.value = r.photo_url
     zeltyProductId.value = r.zelty_product_id
+    if (r.zelty_product_id) fetchZeltyDishes()
     actif.value = r.actif
     variantes.value = r.variantes ? [...r.variantes] : []
     modificateurs.value = r.modificateurs
@@ -558,9 +627,53 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
               type="text"
               placeholder="Nom de la recette"
               class="input"
-              :disabled="!!zeltyProductId"
             />
-            <span v-if="zeltyProductId" class="field-hint">Synchronisé depuis Zelty — nom non modifiable</span>
+          </div>
+          <!-- Zelty link -->
+          <div class="field full">
+            <label>Produit Zelty (caisse)</label>
+            <div v-if="zeltyProductId" class="zelty-linked">
+              <span class="zelty-linked-name">
+                <span class="zelty-badge">Zelty</span>
+                {{ linkedZeltyName }}
+              </span>
+              <button type="button" class="btn-unlink" @click="unlinkZelty">Délier</button>
+            </div>
+            <div v-else class="search-dropdown" @click.stop>
+              <input
+                v-model="zeltySearch"
+                type="text"
+                placeholder="Rechercher un produit Zelty..."
+                class="input"
+                @focus="openZeltyDropdown"
+                @blur="closeZeltyDropdown"
+              />
+              <div v-if="zeltyLoading" class="dropdown-list">
+                <div class="dropdown-item" style="justify-content:center;color:var(--text-tertiary);">
+                  Chargement...
+                </div>
+              </div>
+              <div v-else-if="showZeltyDropdown && filteredZeltyDishes.length > 0" class="dropdown-list">
+                <button
+                  v-for="dish in filteredZeltyDishes"
+                  :key="dish.id"
+                  type="button"
+                  class="dropdown-item"
+                  @mousedown.prevent="selectZeltyDish(dish)"
+                >
+                  <span>{{ dish.name }}</span>
+                  <span class="dd-meta">ID {{ dish.id }}</span>
+                </button>
+              </div>
+              <div v-else-if="showZeltyDropdown && zeltyLoaded && filteredZeltyDishes.length === 0" class="dropdown-list">
+                <div class="dropdown-item" style="color:var(--text-tertiary);justify-content:center;">
+                  Aucun produit disponible
+                </div>
+              </div>
+            </div>
+            <span v-if="zeltyProductId" class="field-hint">
+              Lié au produit Zelty — le stock sera décrémenté automatiquement.
+            </span>
           </div>
           <div class="info-fields-row">
             <div class="field">
@@ -1417,6 +1530,54 @@ h1 {
   gap: 10px;
   align-items: flex-start;
   margin-bottom: 12px;
+}
+
+/* Zelty link */
+.zelty-linked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  min-height: 48px;
+  gap: 12px;
+}
+
+.zelty-linked-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.zelty-badge {
+  display: inline-block;
+  background: #E85D2C;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.btn-unlink {
+  background: none;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 40px;
+  flex-shrink: 0;
 }
 
 .search-dropdown {

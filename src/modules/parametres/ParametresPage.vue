@@ -57,6 +57,34 @@ const zeltyDiagResults = ref<DiagEntry[]>([])
 const diagSelected = ref<Map<string, DiagSuggestion>>(new Map()) // recette_id → selected suggestion
 const diagLinked = ref<Set<string>>(new Set()) // recette_ids already linked
 const diagLinking = ref(false)
+
+// Zelty products sync
+const zeltyProductsSyncStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
+const zeltyProductsSyncMsg = ref('')
+
+async function startProductsSync() {
+  zeltyProductsSyncStatus.value = 'running'
+  zeltyProductsSyncMsg.value = ''
+  try {
+    const resp = await fetch('/.netlify/functions/sync-zelty-products', { method: 'POST' })
+    const data = await resp.json()
+    if (resp.ok) {
+      zeltyProductsSyncStatus.value = 'success'
+      if (data.new_created > 0) {
+        zeltyProductsSyncMsg.value = `${data.new_created} nouveau(x) produit(s) créé(s) : ${data.created.join(', ')}`
+      } else {
+        zeltyProductsSyncMsg.value = `Tout est à jour (${data.zelty_dishes_total} produits Zelty, ${data.existing_recipes} recettes liées)`
+      }
+    } else {
+      zeltyProductsSyncStatus.value = 'error'
+      zeltyProductsSyncMsg.value = data.error || 'Erreur inconnue'
+    }
+  } catch (err: any) {
+    zeltyProductsSyncStatus.value = 'error'
+    zeltyProductsSyncMsg.value = err.message || 'Erreur réseau'
+  }
+}
+
 const ventesCount = ref(0)
 const lastVenteDate = ref<string | null>(null)
 
@@ -861,6 +889,27 @@ function formatDuration(ms: number | null) {
           </div>
           <p v-if="zeltyBackfillMsg" class="backfill-msg" :class="zeltyBackfillStatus">
             {{ zeltyBackfillMsg }}
+          </p>
+        </div>
+
+        <!-- Products sync section -->
+        <div class="zelty-section">
+          <h3 class="section-title">Synchronisation produits Zelty</h3>
+          <p class="section-desc">
+            Détecte les nouveaux produits dans la caisse Zelty et crée automatiquement les recettes correspondantes.
+            Cette synchronisation tourne aussi automatiquement chaque jour à 7h (heure de Paris).
+          </p>
+          <div class="backfill-form">
+            <button
+              class="btn-sync"
+              :disabled="zeltyProductsSyncStatus === 'running'"
+              @click="startProductsSync"
+            >
+              {{ zeltyProductsSyncStatus === 'running' ? 'Synchronisation en cours...' : 'Synchroniser les produits' }}
+            </button>
+          </div>
+          <p v-if="zeltyProductsSyncMsg" class="backfill-msg" :class="zeltyProductsSyncStatus">
+            {{ zeltyProductsSyncMsg }}
           </p>
         </div>
 
