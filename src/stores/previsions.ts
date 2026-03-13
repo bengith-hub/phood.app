@@ -291,7 +291,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       // Apply weather + temperature + month position + events
       const meteoDay = meteoParDate.value.get(v.date) || null
       const dummyFactors: ForecastFactor[] = []
-      const wCoeff = calculateWeatherCoefficient(meteoDay, dummyFactors)
+      const wCoeff = calculateWeatherCoefficient(meteoDay, dummyFactors, dow)
       const tCoeff = calculateTemperatureCoefficient(meteoDay, d, dummyFactors)
       const mpCoeff = calculateMonthPositionCoefficient(d, dummyFactors)
       const evts = getEventsForDate(v.date)
@@ -391,7 +391,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
       const meteoDay = meteoParDate.value.get(v.date) || null
       const dummyFactors: ForecastFactor[] = []
-      const wCoeff = calculateWeatherCoefficient(meteoDay, dummyFactors)
+      const wCoeff = calculateWeatherCoefficient(meteoDay, dummyFactors, dow)
       const tCoeff = calculateTemperatureCoefficient(meteoDay, d, dummyFactors)
       const mpCoeff = calculateMonthPositionCoefficient(d, dummyFactors)
       const evts = getEventsForDate(v.date)
@@ -524,7 +524,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
       const meteoD = meteoParDate.value.get(dStr) || null
       const dummy: ForecastFactor[] = []
-      const wC = calculateWeatherCoefficient(meteoD, dummy)
+      const wC = calculateWeatherCoefficient(meteoD, dummy, dow)
       const tC = calculateTemperatureCoefficient(meteoD, d, dummy)
       const mpC = calculateMonthPositionCoefficient(d, dummy)
       const dowC = dowCorrections.value[dow] ?? 1
@@ -893,58 +893,72 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
   function calculateWeatherCoefficient(
     meteoDay: MeteoDaily | null,
-    factors: ForecastFactor[]
+    factors: ForecastFactor[],
+    dayOfWeek?: number
   ): number {
     if (!meteoDay) return 1
     let coeff = 1
 
     const precip = meteoDay.precipitation_mm ?? 0
+    const isSaturday = dayOfWeek === 6
 
-    // Graduated precipitation effect (centre commercial = rain = more clients)
+    // Weather conditions are MUTUALLY EXCLUSIVE for client behavior:
+    // Rain → people come to shopping center (boost)
+    // Sunshine → people stay outdoors (penalty)
+    // Overcast → more foot traffic (boost)
+    // Rain takes priority: if it rains, sunshine/clouds are irrelevant.
+    //
+    // Saturday coefficients are higher: 10-month backtest shows +12% (light) / +32% (heavy)
+    // vs weekday +2.5% (light) / +15% (heavy). Welch t-test significant (p<0.05).
+    const isRainy = precip >= 1
+
     if (precip > 5) {
-      // Strong rain: +7% (calibrated via grid search, was +12%)
-      const precipCoeff = 1.07
+      const precipCoeff = isSaturday ? 1.30 : 1.15
       coeff *= precipCoeff
       factors.push({
         label: 'Pluie forte',
         type: 'meteo',
         coefficient: precipCoeff,
-        detail: `${precip.toFixed(1)} mm de pluie — plus de clients au centre commercial`,
+        detail: `${precip.toFixed(1)} mm de pluie — ${isSaturday ? 'fort boost samedi' : 'plus de clients au'} centre commercial`,
       })
-    } else if (precip >= 1) {
-      // Light rain: +4% (observed +5.5% on 1-5mm, damped)
-      const precipCoeff = 1.04
-      coeff *= precipCoeff
-      factors.push({
-        label: 'Pluie legere',
-        type: 'meteo',
-        coefficient: precipCoeff,
-        detail: `${precip.toFixed(1)} mm de pluie — leger boost centre commercial`,
-      })
+    } else if (isRainy) {
+      const precipCoeff = isSaturday ? 1.10 : 1.0
+      if (precipCoeff !== 1.0) {
+        coeff *= precipCoeff
+        factors.push({
+          label: 'Pluie legere',
+          type: 'meteo',
+          coefficient: precipCoeff,
+          detail: `${precip.toFixed(1)} mm de pluie — ${isSaturday ? 'boost samedi' : 'leger boost'} centre commercial`,
+        })
+      }
     }
 
-    if (meteoDay.couverture_nuageuse_pct !== null && meteoDay.couverture_nuageuse_pct > 80) {
-      const cloudCoeff = 1.06
-      coeff *= cloudCoeff
-      factors.push({
-        label: 'Ciel couvert',
-        type: 'meteo',
-        coefficient: cloudCoeff,
-        detail: `Couverture nuageuse ${meteoDay.couverture_nuageuse_pct}% — plus de passage`,
-      })
-    }
+    // Cloud cover and sunshine only apply when NO rain (mutually exclusive with precipitation)
+    if (!isRainy) {
+      if (meteoDay.couverture_nuageuse_pct !== null && meteoDay.couverture_nuageuse_pct > 80) {
+        const cloudCoeff = 1.06
+        coeff *= cloudCoeff
+        factors.push({
+          label: 'Ciel couvert',
+          type: 'meteo',
+          coefficient: cloudCoeff,
+          detail: `Couverture nuageuse ${meteoDay.couverture_nuageuse_pct}% — plus de passage`,
+        })
+      }
 
-    // Sunshine threshold raised from 6h to 8h (optimal cut-off from data analysis)
-    if (meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 28800) {
-      const sunHours = meteoDay.ensoleillement_secondes / 3600
-      const sunCoeff = 0.93
-      coeff *= sunCoeff
-      factors.push({
-        label: 'Grand soleil',
-        type: 'meteo',
-        coefficient: sunCoeff,
-        detail: `${sunHours.toFixed(1)}h de soleil — moins de passage en centre commercial`,
-      })
+      // Sunshine threshold raised from 6h to 8h (optimal cut-off from data analysis)
+      if (meteoDay.ensoleillement_secondes !== null && meteoDay.ensoleillement_secondes > 28800) {
+        const sunHours = meteoDay.ensoleillement_secondes / 3600
+        const sunCoeff = 0.93
+        coeff *= sunCoeff
+        factors.push({
+          label: 'Grand soleil',
+          type: 'meteo',
+          coefficient: sunCoeff,
+          detail: `${sunHours.toFixed(1)}h de soleil — moins de passage en centre commercial`,
+        })
+      }
     }
 
     return coeff
@@ -959,7 +973,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     if (!meteoDay) return 1
     const d = new Date(dateStr + 'T00:00:00')
     const dummy: ForecastFactor[] = []
-    const wCoeff = calculateWeatherCoefficient(meteoDay, dummy)
+    const wCoeff = calculateWeatherCoefficient(meteoDay, dummy, d.getDay())
     const tCoeff = calculateTemperatureCoefficient(meteoDay, d, dummy)
     return wCoeff * tCoeff
   }
@@ -1136,7 +1150,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       meteoDay = buildSeasonalMeteo(dateStr)
     }
 
-    calculateWeatherCoefficient(meteoDay, factors)
+    calculateWeatherCoefficient(meteoDay, factors, jourSemaine)
     detectWeatherBreak(dateStr, factors)
     calculateTemperatureCoefficient(meteoDay, targetDate, factors)
 
