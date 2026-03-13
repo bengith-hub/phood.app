@@ -20,3 +20,9 @@
 
 [functions."check-alerts"]
   schedule = "0 8 * * *"
+
+[functions."generate-daily-tasks"]
+  schedule = "0 5 * * *"
+
+[functions."recap-taches-daily"]
+  schedule = "0 23 * * *"

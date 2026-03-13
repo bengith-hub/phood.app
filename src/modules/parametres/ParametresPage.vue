@@ -14,7 +14,7 @@ const profiles = ref<Profile[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const saveMsg = ref('')
-const activeTab = ref<'general' | 'zones' | 'users' | 'calendriers' | 'zelty' | 'pennylane'>('general')
+const activeTab = ref<'general' | 'zones' | 'users' | 'calendriers' | 'zelty' | 'pennylane' | 'taches'>('general')
 
 // Invite user
 const showInviteForm = ref(false)
@@ -146,6 +146,8 @@ async function saveConfig() {
       etablissement_email: config.value.etablissement_email,
       etablissement_contact: config.value.etablissement_contact,
       etablissement_creneaux_livraison: config.value.etablissement_creneaux_livraison,
+      destinataires_email_taches: config.value.destinataires_email_taches,
+      plan_salle_url: config.value.plan_salle_url,
     })
     saveMsg.value = 'Enregistré'
     setTimeout(() => saveMsg.value = '', 3000)
@@ -537,6 +539,7 @@ function formatDuration(ms: number | null) {
             { key: 'calendriers', label: 'Calendriers' },
             { key: 'zelty', label: 'Zelty' },
             { key: 'pennylane', label: 'PennyLane' },
+            { key: 'taches', label: 'Tâches' },
           ]"
           :key="tab.key"
           class="tab"
@@ -1038,6 +1041,40 @@ function formatDuration(ms: number | null) {
           </div>
         </div>
       </div>
+
+      <!-- Tâches -->
+      <div v-if="activeTab === 'taches'" class="tab-content">
+        <div class="settings-form" v-if="config">
+          <div class="settings-fieldset">
+            <legend class="fieldset-legend">Récap email quotidien</legend>
+            <div class="field-row">
+              <label class="field-label">Destinataires du récap tâches</label>
+              <EmailTagInput v-model="config.destinataires_email_taches" />
+              <p class="field-hint">Email envoyé à 00h si le restaurant était ouvert (clôture Zelty détectée).</p>
+            </div>
+          </div>
+
+          <div class="settings-fieldset">
+            <legend class="fieldset-legend">Plan de salle</legend>
+            <div class="field-row">
+              <label class="field-label">URL du plan (Canva public ou Google Drawings)</label>
+              <input
+                v-model="config.plan_salle_url"
+                type="url"
+                class="field-input"
+                placeholder="https://www.canva.com/design/..."
+              >
+              <p class="field-hint">Affiché sur la tablette salle via l'icône plan en haut du kiosk tâches.</p>
+            </div>
+          </div>
+
+          <button class="btn-save" :disabled="saving" @click="saveConfig">
+            {{ saving ? 'Enregistrement...' : 'Enregistrer' }}
+          </button>
+          <p v-if="saveMsg" class="save-msg">{{ saveMsg }}</p>
+        </div>
+      </div>
+
     </template>
   </div>
 </template>

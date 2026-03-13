@@ -16,6 +16,12 @@ const router = createRouter({
       component: () => import('@/modules/auth/ResetPasswordPage.vue'),
       meta: { public: true },
     },
+    // Kiosk tâches — plein écran (hors AppLayout)
+    {
+      path: '/kiosk/taches/:station?',
+      name: 'kiosk-taches',
+      component: () => import('@/modules/taches/TachesKioskPage.vue'),
+    },
     {
       path: '/',
       component: () => import('@/layouts/AppLayout.vue'),
@@ -149,6 +155,13 @@ const router = createRouter({
           path: 'reporting',
           name: 'reporting',
           component: () => import('@/modules/reporting/ReportingPage.vue'),
+          meta: { requiresAdmin: true },
+        },
+        // Tâches admin
+        {
+          path: 'taches',
+          name: 'taches-admin',
+          component: () => import('@/modules/taches/TachesAdminPage.vue'),
           meta: { requiresAdmin: true },
         },
         // Paramètres

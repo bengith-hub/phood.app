@@ -16,10 +16,10 @@ Tous les modules principaux sont implementes et fonctionnels. Voir section "Stat
 | Composant | Technologie | Details |
 |---|---|---|
 | Frontend | Vue.js 3 (Composition API) + Vite + Pinia | PWA avec offline (IndexedDB via Dexie.js + Service Worker) |
-| Hebergement | Netlify | CDN statique + 13 Serverless Functions + scheduled functions |
+| Hebergement | Netlify | CDN statique + 15 Serverless Functions + 3 scheduled functions |
 | Base de donnees | Supabase (PostgreSQL) | 28 tables, RLS par role via `get_my_role()`, pg_cron + pg_net, 15 migrations |
 | Auth | Supabase Auth | Email/password + Google OAuth Workspace. Table `profiles` liee a `auth.users`, trigger auto `handle_new_user` |
-| Storage | Supabase Storage | 4 buckets prives (bl-photos, anomalies, pdfs, packaging). Compression client-side max 2048px |
+| Storage | Supabase Storage | 5 buckets prives (bl-photos, anomalies, pdfs, packaging, taches-photos). Compression client-side max 2048px |
 | Realtime | Supabase Realtime | Presence channels pour verrouillage commandes (heartbeat 30s, timeout 15 min) |
 | CRON | Supabase Edge Functions (Deno) | pg_cron -> pg_net -> 6 Edge Functions. 4 jobs quotidiens (06:00-07:30) + backup |
 | IA | OpenAI API (GPT-4.1-mini) | Lecture BL, detection allergenes + extraction ingredients (`contient`), extraction prix, parsing recettes. Structured output JSON strict. Fallback : GPT-4.1 standard |
@@ -71,6 +71,7 @@ src/
     useAutoSave.ts                 # IndexedDB auto-save every 5s
     useLocking.ts                  # Supabase Realtime presence locking
     useOffline.ts                  # Online/offline detection + sync indicator
+    useTaskRealtime.ts             # Supabase Realtime postgres_changes on tache_instances
   lib/
     supabase.ts                    # Supabase client init
     rest-client.ts                 # Generic REST wrapper (GET/POST/PATCH/DELETE/HEAD with count)
@@ -81,6 +82,7 @@ src/
     calendriers.ts                 # Jours feries, vacances scolaires, soldes (calcul local + API)
     create-notification.ts         # Create notification + optional email alert
   stores/
+    taches.ts                      # Task templates + instances CRUD + realtime handler
     commandes.ts                   # Orders CRUD + status machine + calendar sync
     fournisseurs.ts                # Suppliers CRUD
     mercuriale.ts                  # Supplier catalog (SKU, prices, conditionnements)
@@ -115,7 +117,12 @@ src/
     previsions/PrevisionsPage.vue  # Forecasts with weather, events, confidence scores
     factures/FacturesPage.vue      # Invoice list + reconciliation + depannage detection
     reporting/ReportingPage.vue    # 5 tabs: CM, top/flop, evolution, associations, accuracy
-    parametres/ParametresPage.vue  # 6 tabs: general, zones, users, calendriers, zelty, pennylane
+    taches/TachesKioskPage.vue     # Full-screen kiosk view (tablets: task carousel + validation)
+    taches/TachesAdminPage.vue     # Admin CRUD templates + push priority + today overview
+    taches/TacheTemplateModal.vue  # Modal create/edit recurring task template
+    taches/TacheCardKiosk.vue      # Individual task card (photo + name + Fait/Non fait buttons)
+    taches/TachePhotoCapture.vue   # Camera capture for proof photos
+    parametres/ParametresPage.vue  # 7 tabs: general, zones, users, calendriers, zelty, pennylane, taches
   types/database.ts                # All TypeScript interfaces (Commande, Fournisseur, Recette, etc.)
   router/index.ts                  # Routes with auth guard + lazy loading
 
@@ -131,6 +138,8 @@ netlify/functions/                 # 13 Netlify Serverless Functions
   sync-zelty-photos.js             # Manual: sync product photos from Zelty
   check-alerts.js                  # Scheduled: daily notification generation
   search-product-photo.js          # Search Zelty product images
+  generate-daily-tasks.js          # Scheduled: daily task instance generation from templates (05:00 UTC)
+  recap-taches-daily.js            # Scheduled: daily task recap email if Zelty closure exists (23:00 UTC)
   upload-photo.js                  # Client image upload helper
   invite-user.js                   # User invitation flow (create auth user + profile)
   enrich-suppliers-pennylane.js    # Match + enrich suppliers from PennyLane data
@@ -207,8 +216,22 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 - Cible CM configurable
 - Periode semaine/mois
 
-### 8. Parametres (IMPLEMENTE)
-- 6 onglets : General, Zones de stockage, Utilisateurs, Calendriers, Zelty, PennyLane
+### 8b. Taches Equipier — Kiosk Tablette (IMPLEMENTE)
+- 2 tablettes fixes (salle + cuisine) + iPad volant en mode **kiosk plein ecran** (PWA standalone)
+- Taches recurrentes par jour de semaine + taches prioritaires ponctuelles poussees par l'admin en temps reel
+- Validation : photo preuve obligatoire (fait) ou raison texte min 20 chars (non fait)
+- Annulation possible dans la meme journee (erreur de tap)
+- **Realtime** : sync instantanee entre devices via Supabase Realtime (`postgres_changes` sur `tache_instances`)
+- **Generation quotidienne** : Netlify Scheduled Function `generate-daily-tasks.js` a 05:00 UTC
+- **Recap email** : `recap-taches-daily.js` a 23:00 UTC, conditionne a la cloture Zelty du jour
+- **Admin responsive** : page `/taches` utilisable depuis iPhone pour push prioritaire a distance
+- Tables : `tache_templates` (config) + `tache_instances` (quotidien denormalise)
+- Storage bucket : `taches-photos` (reference/ + preuves/)
+- Wake Lock API pour empecher la mise en veille des tablettes
+- Routes kiosk : `/kiosk/taches/:station?` (hors AppLayout, plein ecran)
+
+### 9. Parametres (IMPLEMENTE)
+- 7 onglets : General, Zones de stockage, Utilisateurs, Calendriers, Zelty, PennyLane, Taches
 - General : seuils alertes, emails destinataires, Google Calendar ID
 - Zelty : import historique (backfill date range), sync photos, logs CRON
 - PennyLane : enrichissement fournisseurs (preview -> validation -> application)
@@ -248,7 +271,7 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 ### Supabase
 - Auth : table `profiles` avec role, trigger auto `handle_new_user` sur `auth.users`. Fonction `get_my_role()` pour RLS
 - Storage : 4 buckets prives (bl-photos, anomalies, pdfs, packaging)
-- Realtime : Presence channels pour verrouillage commandes (`useLocking` composable)
+- Realtime : Presence channels pour verrouillage commandes (`useLocking` composable) + postgres_changes pour taches (`useTaskRealtime` composable)
 - CRON : pg_cron -> pg_net -> Edge Functions (Deno). Service role key pour auth
 - RPC : `increment_stock()`, `decrement_stock()`, `recalibrate_stock()`
 - RLS enabled sur toutes les 28 tables
@@ -290,6 +313,8 @@ supabase/migrations/               # 15 migration files (001 through 014 + times
 | Sync horaires Places | 07:30 | Places API `/v1/places/{id}` | `horaires_ouverture` |
 | Backup Google Drive | quotidien | Supabase data (28 tables JSON) | Google Drive |
 | Check alerts | quotidien | Internal | `notifications` |
+| Generate daily tasks | 05:00 UTC | `tache_templates` | `tache_instances` |
+| Recap taches email | 23:00 UTC | `tache_instances` + `ventes_historique` | Email (Gmail API) |
 
 Architecture : `pg_cron` -> `pg_net` (HTTP call) -> Edge Function (Deno). Monitoring via table `cron_logs`.
 
@@ -398,6 +423,7 @@ duree_rotation = conditionnement_en_unite_stock / consommation_moyenne_journalie
 | Reporting | 95% | `ReportingPage.vue`, `reporting.ts` |
 | Fournisseurs | 100% | `FournisseursPage.vue`, `fournisseurs.ts` (tous champs CDC presents) |
 | Parametres | 100% | `ParametresPage.vue` (6 onglets, backfill Zelty, PennyLane enrich) |
+| Taches Equipier | 90% | `TachesKioskPage.vue`, `TachesAdminPage.vue`, `taches.ts`, `useTaskRealtime.ts` |
 | Notifications | 90% | `NotificationPanel.vue`, `notifications.ts`, `check-alerts.js` |
 | Offline/PWA | 100% | `dexie.ts`, `sync-queue.ts`, `useOffline.ts` |
 | Integrations | 95% | 13 Netlify Functions + 6 Edge Functions |

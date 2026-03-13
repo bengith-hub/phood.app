@@ -18,6 +18,8 @@ export interface Config {
   delai_expiration_avoir_heures: number
   destinataires_email_avoir: string[]
   destinataires_email_alertes: string[]
+  destinataires_email_taches: string[]
+  plan_salle_url: string | null
   google_calendar_id: string | null
   // Établissement (restaurant identity)
   etablissement_nom: string | null
@@ -470,4 +472,46 @@ export interface Notification {
   reference_id: string | null
   reference_type: string | null
   created_at: string
+}
+
+// ============================================================
+// Tâches Équipier (kiosk tablette)
+// ============================================================
+
+export type Station = 'salle' | 'cuisine'
+export type StatutTache = 'en_attente' | 'fait' | 'non_fait'
+
+export interface TacheTemplate {
+  id: string
+  nom: string
+  description: string | null
+  station: Station
+  jours_semaine: number[] // 0=dim, 1=lun...6=sam
+  photo_reference_url: string | null
+  priorite: boolean
+  expiration: string | null
+  ordre: number
+  actif: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TacheInstance {
+  id: string
+  template_id: string | null
+  date: string
+  nom: string
+  description: string | null
+  station: Station
+  photo_reference_url: string | null
+  priorite: boolean
+  statut: StatutTache
+  photo_preuve_url: string | null
+  raison_non_fait: string | null
+  valide_par: string | null
+  valide_at: string | null
+  ordre: number
+  created_at: string
+  updated_at: string
 }
