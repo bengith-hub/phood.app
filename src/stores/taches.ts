@@ -5,7 +5,7 @@ import { db } from '@/lib/dexie'
 import type { TacheTemplate, TacheInstance, Station, StatutTache } from '@/types/database'
 
 function todayISO() {
-  return new Date().toISOString().split('T')[0]
+  return new Date().toISOString().slice(0, 10)
 }
 
 export const useTachesStore = defineStore('taches', () => {

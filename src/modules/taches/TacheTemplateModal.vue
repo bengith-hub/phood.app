@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import type { TacheTemplate, Station } from '@/types/database'
-import { compressImage, blobToBase64 } from '@/lib/image-compress'
 
 const props = defineProps<{
   template?: TacheTemplate | null
