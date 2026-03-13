@@ -375,6 +375,44 @@ function removeModificateur(index: number) {
   modificateurs.value.splice(index, 1)
 }
 
+// --- Modifier ingredient linking ---
+const modIngSearch = ref<Record<number, string>>({})
+const showModIngDropdown = ref<Record<number, boolean>>({})
+
+function getModIngredientLabel(m: RecetteModificateur): string | null {
+  const first = m.impact_stock?.[0]
+  if (!first) return null
+  const ing = ingredientsStore.getById(first.ingredient_restaurant_id)
+  return ing?.nom || null
+}
+
+function filteredModIngredients(idx: number) {
+  const q = (modIngSearch.value[idx] || '').toLowerCase()
+  if (!q) return ingredientsStore.actifs.slice(0, 15)
+  return ingredientsStore.search(q).slice(0, 15)
+}
+
+function selectModIngredient(idx: number, ing: IngredientRestaurant) {
+  const m = modificateurs.value[idx]
+  if (!m) return
+  m.impact_stock = [{
+    ingredient_restaurant_id: ing.id,
+    quantite: m.impact_stock?.[0]?.quantite || 0,
+    unite: ing.unite_stock,
+  }]
+  modIngSearch.value[idx] = ''
+  showModIngDropdown.value[idx] = false
+}
+
+function removeModIngredient(idx: number) {
+  const m = modificateurs.value[idx]
+  if (m) m.impact_stock = []
+}
+
+function closeModIngDropdown(idx: number) {
+  setTimeout(() => { showModIngDropdown.value[idx] = false }, 150)
+}
+
 function buildPrixVente(): Recette['prix_vente'] {
   const pv: Record<string, PrixVenteCanal> = {}
   if (prixSurPlaceTTC.value > 0) {
@@ -937,20 +975,22 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       </div>
     </section>
 
-    <!-- SECTION: Variantes -->
+    <!-- SECTION: Variantes & Modificateurs -->
     <section class="form-section">
       <div class="section-header">
         <h2>Variantes</h2>
-        <button class="btn-add" @click="addVariante">+ Ajouter</button>
+        <button class="btn-add-small" @click="addVariante">+ Ajouter</button>
       </div>
-      <p class="section-hint">Ex : &laquo; Grande +50% &raquo; &rarr; coefficient 1.5</p>
+      <p class="section-hint">Synchro auto depuis Zelty. Coefficient multiplicateur pour les ingr&eacute;dients.</p>
       <div class="variante-list">
         <div v-for="(v, idx) in variantes" :key="idx" class="variante-row">
+          <span v-if="v.zelty_option_value_id" class="zelty-badge-xs" title="Synchronis&eacute; depuis Zelty">Z</span>
           <input
             v-model="v.nom"
             type="text"
             placeholder="Nom (ex: Grande)"
             class="input"
+            :readonly="!!v.zelty_option_value_id"
           />
           <input
             v-model.number="v.coefficient"
@@ -971,36 +1011,85 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       </div>
     </section>
 
-    <!-- SECTION: Modificateurs -->
     <section class="form-section">
       <div class="section-header">
         <h2>Modificateurs</h2>
-        <button class="btn-add" @click="addModificateur">+ Ajouter</button>
+        <button class="btn-add-small" @click="addModificateur">+ Ajouter</button>
       </div>
-      <p class="section-hint">Extras, retraits avec liens ingr&eacute;dients et suppl&eacute;ment prix</p>
+      <p class="section-hint">Extras et retraits avec lien ingr&eacute;dient et quantit&eacute;</p>
       <div class="mod-list">
-        <div v-for="(m, idx) in modificateurs" :key="idx" class="mod-row">
-          <input
-            v-model="m.nom"
-            type="text"
-            placeholder="Nom (ex: Extra sauce)"
-            class="input"
-          />
-          <select v-model="m.type" class="input input-sm">
-            <option value="extra">Extra</option>
-            <option value="sans">Sans</option>
-            <option value="remplacement">Remplacement</option>
-          </select>
-          <input
-            v-model.number="m.prix_supplement"
-            type="number"
-            min="0"
-            step="0.1"
-            inputmode="decimal"
-            placeholder="Suppl. &euro;"
-            class="input input-sm"
-          />
-          <button class="btn-remove" @click="removeModificateur(idx)">&times;</button>
+        <div v-for="(m, idx) in modificateurs" :key="idx" class="mod-card">
+          <div class="mod-row-top">
+            <span v-if="m.zelty_option_value_id" class="zelty-badge-xs" title="Synchronis&eacute; depuis Zelty">Z</span>
+            <input
+              v-model="m.nom"
+              type="text"
+              placeholder="Nom (ex: Extra sauce)"
+              class="input"
+              :readonly="!!m.zelty_option_value_id"
+            />
+            <select v-model="m.type" class="input input-type">
+              <option value="extra">Extra</option>
+              <option value="sans">Sans</option>
+            </select>
+            <input
+              v-if="m.type === 'extra'"
+              v-model.number="m.prix_supplement"
+              type="number"
+              min="0"
+              step="0.1"
+              inputmode="decimal"
+              placeholder="Suppl. &euro;"
+              class="input input-prix"
+            />
+            <button class="btn-remove" @click="removeModificateur(idx)">&times;</button>
+          </div>
+          <!-- Ingredient link row -->
+          <div class="mod-row-ingredient">
+            <template v-if="m.impact_stock && m.impact_stock.length > 0 && m.impact_stock[0] != null">
+              <span class="mod-ing-label">
+                {{ getModIngredientLabel(m) || 'Ingr\u00e9dient inconnu' }}
+              </span>
+              <template v-if="m.type === 'extra'">
+                <input
+                  :value="(m.impact_stock[0] as any).quantite"
+                  @input="(m.impact_stock[0] as any).quantite = Number(($event.target as HTMLInputElement).value)"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="decimal"
+                  placeholder="Qt\u00e9"
+                  class="input input-qty"
+                />
+                <span class="mod-ing-unite">{{ (m.impact_stock[0] as any).unite }}</span>
+              </template>
+              <button class="btn-remove-sm" @click="removeModIngredient(idx)" title="Retirer le lien">&times;</button>
+            </template>
+            <template v-else>
+              <div class="search-dropdown mod-ing-search" @click.stop>
+                <input
+                  :value="modIngSearch[idx] || ''"
+                  @input="modIngSearch[idx] = ($event.target as HTMLInputElement).value"
+                  type="text"
+                  placeholder="Lier un ingr&eacute;dient..."
+                  class="input input-sm"
+                  @focus="showModIngDropdown[idx] = true"
+                  @blur="closeModIngDropdown(idx)"
+                />
+                <div v-if="showModIngDropdown[idx] && filteredModIngredients(idx).length > 0" class="dropdown-list">
+                  <button
+                    v-for="ing in filteredModIngredients(idx)"
+                    :key="ing.id"
+                    class="dropdown-item"
+                    @mousedown.prevent="selectModIngredient(idx, ing)"
+                  >
+                    {{ ing.nom }}
+                    <span class="dd-meta">{{ ing.unite_stock }}</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
         </div>
         <div v-if="modificateurs.length === 0" class="empty-small">
           Aucun modificateur
@@ -1732,6 +1821,22 @@ h1 {
   flex-shrink: 0;
 }
 
+/* Zelty badge */
+.zelty-badge-xs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: #FFF7ED;
+  border: 1.5px solid var(--color-primary);
+  color: var(--color-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
 /* Variantes */
 .variante-list {
   display: flex;
@@ -1745,8 +1850,16 @@ h1 {
   gap: 10px;
 }
 
-.variante-row .input:first-child {
+.variante-row .input:first-child,
+.variante-row input[readonly] + .input,
+.variante-row .zelty-badge-xs + .input {
   flex: 1;
+}
+
+.variante-row input[readonly] {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: default;
 }
 
 .variante-preview {
@@ -1760,17 +1873,92 @@ h1 {
 .mod-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
-.mod-row {
+.mod-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+
+.mod-row-top {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.mod-row .input:first-child {
+.mod-row-top .input:first-child,
+.mod-row-top .zelty-badge-xs + .input {
   flex: 1;
+}
+
+.mod-row-top input[readonly] {
+  background: var(--bg-main);
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.input-type {
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.input-prix {
+  width: 90px;
+  flex-shrink: 0;
+}
+
+.mod-row-ingredient {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.mod-ing-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mod-ing-unite {
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.input-qty {
+  width: 70px;
+  flex-shrink: 0;
+}
+
+.mod-ing-search {
+  flex: 1;
+}
+
+.btn-remove-sm {
+  background: none;
+  border: none;
+  color: var(--color-danger, #dc2626);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.btn-add-small {
+  background: none;
+  border: 1.5px solid var(--color-primary);
+  color: var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 /* Prix de vente */

@@ -1177,8 +1177,12 @@ export const usePrevisionsStore = defineStore('previsions', () => {
 
     let dowCorr = overallDowCorr
     let dowDetail = ''
-    // Only use weather-conditional correction when it differs >5% from overall
-    if (isRainyDay && dwBucket?.rainy !== null && Math.abs(dwBucket!.rainy! - overallDowCorr) > 0.05) {
+    // Only use weather-conditional DOW correction when it differs >5% from overall.
+    // Skip rain-conditional correction for Saturday: the Saturday-specific rain coefficient
+    // (Layer 3: +10%/+30%) already captures the rain×Saturday interaction, so applying
+    // a weather-conditional DOW correction would double-count it.
+    const skipRainBucket = jourSemaine === 6
+    if (!skipRainBucket && isRainyDay && dwBucket?.rainy !== null && Math.abs(dwBucket!.rainy! - overallDowCorr) > 0.05) {
       dowCorr = dwBucket!.rainy!
       dowDetail = ` (pluie: ${dowCorr > 1 ? '+' : ''}${((dowCorr - 1) * 100).toFixed(0)}%)`
     } else if (isSunnyDay && dwBucket?.sunny !== null && Math.abs(dwBucket!.sunny! - overallDowCorr) > 0.05) {

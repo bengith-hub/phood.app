@@ -18,6 +18,9 @@
 [functions."sync-zelty-products"]
   schedule = "0 6 * * *"
 
+[functions."sync-zelty-options"]
+  schedule = "0 6 * * *"
+
 [functions."check-alerts"]
   schedule = "0 8 * * *"
 
