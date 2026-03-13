@@ -296,7 +296,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       const mpCoeff = calculateMonthPositionCoefficient(d, dummyFactors)
       const evts = getEventsForDate(v.date)
       let evtCoeff = 1
-      for (const evt of evts) evtCoeff *= evt.coefficient
+      for (const evt of evts) evtCoeff *= getEffectiveEventCoefficient(evt, dow)
 
       const predicted = baseCA * wCoeff * tCoeff * mpCoeff * evtCoeff
       if (predicted <= 0) continue
@@ -396,7 +396,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       const mpCoeff = calculateMonthPositionCoefficient(d, dummyFactors)
       const evts = getEventsForDate(v.date)
       let evtCoeff = 1
-      for (const evt of evts) evtCoeff *= evt.coefficient
+      for (const evt of evts) evtCoeff *= getEffectiveEventCoefficient(evt, dow)
 
       const predicted = baseCA * wCoeff * tCoeff * mpCoeff * evtCoeff
       if (predicted <= 0) continue
@@ -530,7 +530,7 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       const dowC = dowCorrections.value[dow] ?? 1
       const evts = getEventsForDate(dStr)
       let evtC = 1
-      for (const evt of evts) evtC *= evt.coefficient
+      for (const evt of evts) evtC *= getEffectiveEventCoefficient(evt, dow)
 
       const predicted = baseCA * wC * tC * mpC * dowC * evtC
       if (predicted <= 0) continue
@@ -766,6 +766,26 @@ export const usePrevisionsStore = defineStore('previsions', () => {
     return evenements.value.filter(e => {
       return dateStr >= e.date_debut && dateStr <= e.date_fin
     })
+  }
+
+  /**
+   * Adjust event coefficient based on day of week.
+   * Ramadan impact is weaker on Saturdays (-9%) than weekdays (-17%)
+   * based on 2 years of inpulse data (2024+2025).
+   * The DB stores a single coefficient; this function adjusts it at runtime.
+   */
+  function getEffectiveEventCoefficient(evt: Evenement, dayOfWeek: number): number {
+    const name = evt.nom.toLowerCase()
+    if (name.includes('ramadan')) {
+      // DB coefficient represents the weekday impact (e.g. 0.83 for -17%)
+      // Saturday impact is roughly half: -9% (0.91)
+      if (dayOfWeek === 6) {
+        // Scale: if DB has 0.83 (-17%), Saturday gets 0.91 (-9%)
+        // Formula: 1 - (1 - dbCoeff) * 0.53  (ratio 9/17 ≈ 0.53)
+        return 1 - (1 - evt.coefficient) * 0.53
+      }
+    }
+    return evt.coefficient
   }
 
   // --- Exponential weights for same-weekday averaging (most recent first) ---
@@ -1216,14 +1236,15 @@ export const usePrevisionsStore = defineStore('previsions', () => {
       })
     }
 
-    // Events
+    // Events (with DOW-adjusted coefficients for Ramadan)
     const dayEvents = getEventsForDate(dateStr)
     for (const evt of dayEvents) {
+      const effCoeff = getEffectiveEventCoefficient(evt, jourSemaine)
       factors.push({
         label: evt.nom,
         type: 'evenement',
-        coefficient: evt.coefficient,
-        detail: `${evt.type} — coefficient ${evt.coefficient.toFixed(2)}`,
+        coefficient: effCoeff,
+        detail: `${evt.type} — coefficient ${effCoeff.toFixed(2)}`,
       })
     }
 
