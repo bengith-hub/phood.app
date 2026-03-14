@@ -19,7 +19,7 @@ const TAB_HELP: Record<string, { title: string; desc: string; extra?: string; sc
   recettes: {
     title: 'Recettes = plats et produits vendus',
     desc: 'Les plats que vous vendez, avec leur composition en ingrédients et/ou sous-recettes. Peuvent être liées à la caisse Zelty pour la décrémentation auto du stock. Supportent les variantes de taille (Normal/Grand) et les modificateurs (extras, sans).',
-    extra: '<strong>Variantes</strong> = tailles (Normal x1, Grand x1.5) — <strong>Modificateurs</strong> = extras (+80g poulet) ou sans (-10g coriandre)<br/><strong>Zelty</strong> : les nouveaux produits créés dans Zelty sont détectés automatiquement chaque jour (7h). Vous pouvez aussi forcer la synchronisation dans <em>Paramètres &gt; Zelty</em>, ou lier manuellement une recette à un produit Zelty depuis le détail de la recette.',
+    extra: '<strong>Options</strong> = tailles (Normal ×1, Grand ×1.5), extras (+80g poulet, +3€), retraits (sans coriandre), choix (sauce, café...). Synchronisées automatiquement depuis Zelty.<br/><strong>Zelty</strong> : les nouveaux produits créés dans Zelty sont détectés automatiquement chaque jour (7h). Vous pouvez aussi forcer la synchronisation dans <em>Paramètres &gt; Zelty</em>, ou lier manuellement une recette à un produit Zelty depuis le détail de la recette.',
     schema: 'Produit fournisseur → Ingrédient → Sous-recette → <strong>RECETTE VENDUE (Zelty)</strong>',
   },
   sous_recettes: {

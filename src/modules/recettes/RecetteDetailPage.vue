@@ -8,8 +8,7 @@ import { restCall } from '@/lib/rest-client'
 import type {
   Recette,
   RecetteType,
-  RecetteVariante,
-  RecetteModificateur,
+  RecetteOption,
   PrixVenteCanal,
   IngredientRestaurant,
 } from '@/types/database'
@@ -124,11 +123,8 @@ interface IngredientLigne {
 }
 const ingredientLignes = ref<IngredientLigne[]>([])
 
-// Variantes
-const variantes = ref<RecetteVariante[]>([])
-
-// Modificateurs
-const modificateurs = ref<RecetteModificateur[]>([])
+// Options (unified: taille, extra, sans, choix)
+const options = ref<RecetteOption[]>([])
 
 // Search dropdowns
 const ingredientSearch = ref('')
@@ -354,64 +350,57 @@ function removeLigne(index: number) {
   ingredientLignes.value.splice(index, 1)
 }
 
-function addVariante() {
-  variantes.value.push({ nom: '', coefficient: 1 })
+function addOption(type: RecetteOption['type']) {
+  const opt: RecetteOption = { nom: '', type }
+  if (type === 'taille') opt.coefficient = 1.0
+  if (type === 'extra') opt.prix_supplement = 0
+  options.value.push(opt)
 }
 
-function removeVariante(index: number) {
-  variantes.value.splice(index, 1)
+function removeOption(index: number) {
+  options.value.splice(index, 1)
 }
 
-function addModificateur() {
-  modificateurs.value.push({
-    nom: '',
-    type: 'extra' as const,
-    impact_stock: [],
-    prix_supplement: 0,
-  })
-}
+// --- Option ingredient linking ---
+const optIngSearch = ref<Record<number, string>>({})
+const showOptIngDropdown = ref<Record<number, boolean>>({})
 
-function removeModificateur(index: number) {
-  modificateurs.value.splice(index, 1)
-}
-
-// --- Modifier ingredient linking ---
-const modIngSearch = ref<Record<number, string>>({})
-const showModIngDropdown = ref<Record<number, boolean>>({})
-
-function getModIngredientLabel(m: RecetteModificateur): string | null {
-  const first = m.impact_stock?.[0]
+function getOptIngredientLabel(o: RecetteOption): string | null {
+  const first = o.impact_stock?.[0]
   if (!first) return null
   const ing = ingredientsStore.getById(first.ingredient_restaurant_id)
   return ing?.nom || null
 }
 
-function filteredModIngredients(idx: number) {
-  const q = (modIngSearch.value[idx] || '').toLowerCase()
+function filteredOptIngredients(idx: number) {
+  const q = (optIngSearch.value[idx] || '').toLowerCase()
   if (!q) return ingredientsStore.actifs.slice(0, 15)
   return ingredientsStore.search(q).slice(0, 15)
 }
 
-function selectModIngredient(idx: number, ing: IngredientRestaurant) {
-  const m = modificateurs.value[idx]
-  if (!m) return
-  m.impact_stock = [{
+function selectOptIngredient(idx: number, ing: IngredientRestaurant) {
+  const o = options.value[idx]
+  if (!o) return
+  o.impact_stock = [{
     ingredient_restaurant_id: ing.id,
-    quantite: m.impact_stock?.[0]?.quantite || 0,
+    quantite: o.impact_stock?.[0]?.quantite || 0,
     unite: ing.unite_stock,
   }]
-  modIngSearch.value[idx] = ''
-  showModIngDropdown.value[idx] = false
+  optIngSearch.value[idx] = ''
+  showOptIngDropdown.value[idx] = false
 }
 
-function removeModIngredient(idx: number) {
-  const m = modificateurs.value[idx]
-  if (m) m.impact_stock = []
+function removeOptIngredient(idx: number) {
+  const o = options.value[idx]
+  if (o) o.impact_stock = undefined
 }
 
-function closeModIngDropdown(idx: number) {
-  setTimeout(() => { showModIngDropdown.value[idx] = false }, 150)
+function closeOptIngDropdown(idx: number) {
+  setTimeout(() => { showOptIngDropdown.value[idx] = false }, 150)
 }
+
+// Show add-option dropdown
+const showAddOptionMenu = ref(false)
 
 function buildPrixVente(): Recette['prix_vente'] {
   const pv: Record<string, PrixVenteCanal> = {}
@@ -443,8 +432,7 @@ async function handleSave() {
       cout_emballage: coutEmballage.value || null,
       prix_vente: buildPrixVente(),
       zelty_product_id: zeltyProductId.value || null,
-      variantes: variantes.value.length > 0 ? variantes.value : null,
-      modificateurs: modificateurs.value.length > 0 ? modificateurs.value : null,
+      options: options.value.length > 0 ? options.value : null,
       photo_url: photoUrl.value || null,
       actif: actif.value,
     }
@@ -549,9 +537,8 @@ onMounted(async () => {
     zeltyProductId.value = r.zelty_product_id
     if (r.zelty_product_id) fetchZeltyDishes()
     actif.value = r.actif
-    variantes.value = r.variantes ? [...r.variantes] : []
-    modificateurs.value = r.modificateurs
-      ? r.modificateurs.map(m => ({ ...m, impact_stock: [...(m.impact_stock || [])] }))
+    options.value = r.options
+      ? r.options.map(o => ({ ...o, impact_stock: o.impact_stock ? [...o.impact_stock] : undefined }))
       : []
 
     // Prix
@@ -975,113 +962,103 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
       </div>
     </section>
 
-    <!-- SECTION: Variantes & Modificateurs -->
+    <!-- SECTION: Options (unified — taille, extra, sans, choix) -->
     <section class="form-section">
       <div class="section-header">
-        <h2>Variantes</h2>
-        <button class="btn-add-small" @click="addVariante">+ Ajouter</button>
-      </div>
-      <p class="section-hint">Synchro auto depuis Zelty. Coefficient multiplicateur pour les ingr&eacute;dients.</p>
-      <div class="variante-list">
-        <div v-for="(v, idx) in variantes" :key="idx" class="variante-row">
-          <span v-if="v.zelty_option_value_id" class="zelty-badge-xs" title="Synchronis&eacute; depuis Zelty">Z</span>
-          <input
-            v-model="v.nom"
-            type="text"
-            placeholder="Nom (ex: Grande)"
-            class="input"
-            :readonly="!!v.zelty_option_value_id"
-          />
-          <input
-            v-model.number="v.coefficient"
-            type="number"
-            min="0.1"
-            step="0.1"
-            inputmode="decimal"
-            class="input input-sm"
-          />
-          <span class="variante-preview">
-            = {{ (coutParPortion * v.coefficient).toFixed(2) }} &euro;/portion
-          </span>
-          <button class="btn-remove" @click="removeVariante(idx)">&times;</button>
-        </div>
-        <div v-if="variantes.length === 0" class="empty-small">
-          Aucune variante
+        <h2>Options</h2>
+        <div class="add-option-wrapper" @click.stop>
+          <button class="btn-add-small" @click="showAddOptionMenu = !showAddOptionMenu">+ Ajouter</button>
+          <div v-if="showAddOptionMenu" class="add-option-menu">
+            <button @click="addOption('taille'); showAddOptionMenu = false">Taille</button>
+            <button @click="addOption('extra'); showAddOptionMenu = false">Extra</button>
+            <button @click="addOption('sans'); showAddOptionMenu = false">Sans</button>
+            <button @click="addOption('choix'); showAddOptionMenu = false">Choix</button>
+          </div>
         </div>
       </div>
-    </section>
-
-    <section class="form-section">
-      <div class="section-header">
-        <h2>Modificateurs</h2>
-        <button class="btn-add-small" @click="addModificateur">+ Ajouter</button>
-      </div>
-      <p class="section-hint">Extras et retraits avec lien ingr&eacute;dient et quantit&eacute;</p>
-      <div class="mod-list">
-        <div v-for="(m, idx) in modificateurs" :key="idx" class="mod-card">
-          <div class="mod-row-top">
-            <span v-if="m.zelty_option_value_id" class="zelty-badge-xs" title="Synchronis&eacute; depuis Zelty">Z</span>
+      <p class="section-hint">Synchronis&eacute;es depuis Zelty. Tailles, extras, retraits et choix.</p>
+      <div class="options-list">
+        <div v-for="(o, idx) in options" :key="idx" class="option-card">
+          <div class="option-row-top">
+            <span v-if="o.zelty_option_value_id" class="zelty-badge-xs" title="Synchronis&eacute; depuis Zelty">Z</span>
             <input
-              v-model="m.nom"
+              v-model="o.nom"
               type="text"
-              placeholder="Nom (ex: Extra sauce)"
+              placeholder="Nom"
               class="input"
-              :readonly="!!m.zelty_option_value_id"
+              :readonly="!!o.zelty_option_value_id"
             />
-            <select v-model="m.type" class="input input-type">
+            <select v-model="o.type" class="input input-type">
+              <option value="taille">Taille</option>
               <option value="extra">Extra</option>
               <option value="sans">Sans</option>
+              <option value="choix">Choix</option>
             </select>
-            <input
-              v-if="m.type === 'extra'"
-              v-model.number="m.prix_supplement"
-              type="number"
-              min="0"
-              step="0.1"
-              inputmode="decimal"
-              placeholder="Suppl. &euro;"
-              class="input input-prix"
-            />
-            <button class="btn-remove" @click="removeModificateur(idx)">&times;</button>
+            <!-- Coefficient for taille -->
+            <template v-if="o.type === 'taille'">
+              <input
+                v-model.number="o.coefficient"
+                type="number"
+                min="0.1"
+                step="0.1"
+                inputmode="decimal"
+                placeholder="Coeff"
+                class="input input-coeff"
+              />
+              <span class="option-preview">= {{ (coutParPortion * (o.coefficient || 1)).toFixed(2) }}&euro;/p</span>
+            </template>
+            <!-- Prix supplement for extra -->
+            <template v-if="o.type === 'extra'">
+              <input
+                v-model.number="o.prix_supplement"
+                type="number"
+                min="0"
+                step="0.1"
+                inputmode="decimal"
+                placeholder="+&euro;"
+                class="input input-prix"
+              />
+            </template>
+            <button class="btn-remove" @click="removeOption(idx)">&times;</button>
           </div>
-          <!-- Ingredient link row -->
-          <div class="mod-row-ingredient">
-            <template v-if="m.impact_stock && m.impact_stock.length > 0 && m.impact_stock[0] != null">
-              <span class="mod-ing-label">
-                {{ getModIngredientLabel(m) || 'Ingr\u00e9dient inconnu' }}
+          <!-- Ingredient link row (for sans + extra only) -->
+          <div v-if="o.type === 'sans' || o.type === 'extra'" class="option-row-ingredient">
+            <template v-if="o.impact_stock && o.impact_stock.length > 0 && o.impact_stock[0] != null">
+              <span class="opt-ing-label">
+                {{ getOptIngredientLabel(o) || 'Ingr\u00e9dient inconnu' }}
               </span>
-              <template v-if="m.type === 'extra'">
+              <template v-if="o.type === 'extra'">
                 <input
-                  :value="(m.impact_stock[0] as any).quantite"
-                  @input="(m.impact_stock[0] as any).quantite = Number(($event.target as HTMLInputElement).value)"
+                  :value="(o.impact_stock[0] as any).quantite"
+                  @input="(o.impact_stock[0] as any).quantite = Number(($event.target as HTMLInputElement).value)"
                   type="number"
                   min="0"
                   step="1"
                   inputmode="decimal"
-                  placeholder="Qt\u00e9"
+                  placeholder="Qt&eacute;"
                   class="input input-qty"
                 />
-                <span class="mod-ing-unite">{{ (m.impact_stock[0] as any).unite }}</span>
+                <span class="opt-ing-unite">{{ (o.impact_stock[0] as any).unite }}</span>
               </template>
-              <button class="btn-remove-sm" @click="removeModIngredient(idx)" title="Retirer le lien">&times;</button>
+              <button class="btn-remove-sm" @click="removeOptIngredient(idx)" title="Retirer le lien">&times;</button>
             </template>
             <template v-else>
-              <div class="search-dropdown mod-ing-search" @click.stop>
+              <div class="search-dropdown opt-ing-search" @click.stop>
                 <input
-                  :value="modIngSearch[idx] || ''"
-                  @input="modIngSearch[idx] = ($event.target as HTMLInputElement).value"
+                  :value="optIngSearch[idx] || ''"
+                  @input="optIngSearch[idx] = ($event.target as HTMLInputElement).value"
                   type="text"
                   placeholder="Lier un ingr&eacute;dient..."
                   class="input input-sm"
-                  @focus="showModIngDropdown[idx] = true"
-                  @blur="closeModIngDropdown(idx)"
+                  @focus="showOptIngDropdown[idx] = true"
+                  @blur="closeOptIngDropdown(idx)"
                 />
-                <div v-if="showModIngDropdown[idx] && filteredModIngredients(idx).length > 0" class="dropdown-list">
+                <div v-if="showOptIngDropdown[idx] && filteredOptIngredients(idx).length > 0" class="dropdown-list">
                   <button
-                    v-for="ing in filteredModIngredients(idx)"
+                    v-for="ing in filteredOptIngredients(idx)"
                     :key="ing.id"
                     class="dropdown-item"
-                    @mousedown.prevent="selectModIngredient(idx, ing)"
+                    @mousedown.prevent="selectOptIngredient(idx, ing)"
                   >
                     {{ ing.nom }}
                     <span class="dd-meta">{{ ing.unite_stock }}</span>
@@ -1091,8 +1068,8 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
             </template>
           </div>
         </div>
-        <div v-if="modificateurs.length === 0" class="empty-small">
-          Aucun modificateur
+        <div v-if="options.length === 0" class="empty-small">
+          Aucune option
         </div>
       </div>
     </section>
@@ -1837,64 +1814,32 @@ h1 {
   flex-shrink: 0;
 }
 
-/* Variantes */
-.variante-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.variante-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.variante-row .input:first-child,
-.variante-row input[readonly] + .input,
-.variante-row .zelty-badge-xs + .input {
-  flex: 1;
-}
-
-.variante-row input[readonly] {
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  cursor: default;
-}
-
-.variante-preview {
-  font-size: 13px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  min-width: 120px;
-}
-
-/* Modificateurs */
-.mod-list {
+/* Options (unified) */
+.options-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.mod-card {
+.option-card {
   background: var(--bg-card);
   border-radius: var(--radius-md);
   padding: 12px;
   border: 1px solid var(--border);
 }
 
-.mod-row-top {
+.option-row-top {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.mod-row-top .input:first-child,
-.mod-row-top .zelty-badge-xs + .input {
+.option-row-top .input:first-child,
+.option-row-top .zelty-badge-xs + .input {
   flex: 1;
 }
 
-.mod-row-top input[readonly] {
+.option-row-top input[readonly] {
   background: var(--bg-main);
   color: var(--text-secondary);
   cursor: default;
@@ -1905,12 +1850,23 @@ h1 {
   flex-shrink: 0;
 }
 
+.input-coeff {
+  width: 80px;
+  flex-shrink: 0;
+}
+
 .input-prix {
   width: 90px;
   flex-shrink: 0;
 }
 
-.mod-row-ingredient {
+.option-preview {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.option-row-ingredient {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1920,12 +1876,12 @@ h1 {
   font-size: 14px;
 }
 
-.mod-ing-label {
+.opt-ing-label {
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.mod-ing-unite {
+.opt-ing-unite {
   color: var(--text-tertiary);
   font-size: 13px;
 }
@@ -1935,8 +1891,40 @@ h1 {
   flex-shrink: 0;
 }
 
-.mod-ing-search {
+.opt-ing-search {
   flex: 1;
+}
+
+.add-option-wrapper {
+  position: relative;
+}
+
+.add-option-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+}
+
+.add-option-menu button {
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.add-option-menu button:hover {
+  background: var(--bg-main);
 }
 
 .btn-remove-sm {
@@ -2117,8 +2105,7 @@ h1 {
     flex-wrap: wrap;
   }
 
-  .variante-row,
-  .mod-row {
+  .option-row-top {
     flex-wrap: wrap;
   }
 }

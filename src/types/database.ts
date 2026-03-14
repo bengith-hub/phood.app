@@ -178,22 +178,17 @@ export interface PrixVenteCanal {
   tva: number
 }
 
-export interface RecetteVariante {
+export interface RecetteOption {
   nom: string
-  zelty_option_value_id?: number  // Zelty option value ID (e.g., 1215713=Normal, 1215714=Grand)
-  coefficient: number             // Multiplier for all ingredients (e.g., 1.0, 1.5)
-}
-
-export interface RecetteModificateur {
-  nom: string
-  zelty_option_value_id?: number  // Zelty option value ID for matching
-  type: 'extra' | 'sans'
-  impact_stock: Array<{
+  zelty_option_value_id?: number  // Zelty option value ID for auto-sync
+  type: 'taille' | 'extra' | 'sans' | 'choix'  // classification
+  coefficient?: number       // pour taille (ex: 1.5 pour Grand)
+  prix_supplement?: number   // pour extras payants (€)
+  impact_stock?: Array<{
     ingredient_restaurant_id: string
     quantite: number
     unite: string
-  }>
-  prix_supplement: number
+  }>                         // lien ingrédient (sans → qté 0, extra → qté X)
 }
 
 export interface Recette {
@@ -211,8 +206,7 @@ export interface Recette {
     livraison?: PrixVenteCanal
   } | null
   zelty_product_id: string | null
-  variantes: RecetteVariante[] | null
-  modificateurs: RecetteModificateur[] | null
+  options: RecetteOption[] | null
   photo_url: string | null
   instructions: string | null
   actif: boolean

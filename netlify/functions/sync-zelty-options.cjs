@@ -1,14 +1,12 @@
 /**
- * Netlify Scheduled Function: Sync Zelty catalog options → recettes variantes/modificateurs
+ * Netlify Scheduled Function: Sync Zelty catalog options → recettes.options
  * Runs every day at 06:00 UTC (07:00 Paris winter / 08:00 Paris summer)
  *
  * - Fetches all dishes + options from Zelty catalog
- * - For each recipe with zelty_product_id, maps its dish's options
- * - Auto-classifies: Taille → variantes, "Sans X" → sans, price>0 → extra
+ * - For each recipe with zelty_product_id, classifies its dish's options
+ * - Auto-classifies: taille/extra/sans/choix (unified RecetteOption model)
  * - Fuzzy-matches ingredients for impact_stock
  * - Preserves existing user-configured entries (by zelty_option_value_id)
- *
- * Also callable manually via POST (from Paramètres or curl)
  *
  * Schedule configured in netlify.toml
  */
@@ -22,6 +20,16 @@ function normalize(s) {
 
 function cleanEmojis(s) {
   return s.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim();
+}
+
+/**
+ * Guess coefficient for taille options based on name.
+ */
+function guessCoefficient(name) {
+  const n = normalize(name);
+  if (n.includes('grand') || n.includes('large') || n.includes('xl')) return 1.5;
+  if (n.includes('petit') || n.includes('small')) return 0.7;
+  return 1.0;
 }
 
 /**
@@ -113,20 +121,20 @@ async function main() {
       zeltyOptions.set(opt.id, opt);
     }
 
-    // 4. Build dish → classified options map (DYNAMIC — no hardcoded option IDs)
+    // 4. Build dish → unified options list (DYNAMIC — no hardcoded IDs)
     //
     // Classification rules:
-    //   a) Option group name contains "taille" → variantes (Normal/Grand with coefficients)
-    //   b) Option group name contains "n'aimez pas" or is a "sans" group → all values are "sans" modificateurs
-    //   c) For ALL other option groups, classify per-value:
-    //      - value name starts with "Sans " → "sans" modificateur
-    //      - value price > 0 → "extra" modificateur
-    //      - value price = 0 and not "Sans" → variante (free choice: café style, sauce, flavor...)
+    //   a) Option group name contains "taille" → type 'taille' with auto-coefficient
+    //   b) Option group name contains "n'aimez pas" → all values type 'sans'
+    //   c) For other groups, per-value:
+    //      - value name starts with "Sans " → type 'sans'
+    //      - value price > 0 → type 'extra'
+    //      - value price = 0 and not "Sans" → type 'choix' (free choice)
     //
     const dishOptionsMap = new Map();
     for (const dish of allDishes) {
       const dishId = String(dish.id);
-      const info = { varianteValues: [], sansValues: [], extraValues: [] };
+      const optionValues = [];
 
       for (const optId of (dish.options || [])) {
         const opt = zeltyOptions.get(optId);
@@ -136,68 +144,45 @@ async function main() {
         const isTailleGroup = optNameLower.includes('taille');
         const isSansGroup = opt.name.includes("n'aimez pas") || optNameLower.includes('sans');
 
-        if (isTailleGroup) {
-          // --- Taille group → variantes with intelligent coefficient ---
-          for (const v of (opt.values || [])) {
-            const vName = cleanEmojis(v.name);
-            const vNameLower = normalize(vName);
-            // Guess coefficient: "normal"→1.0, "grand"/"large"→1.5, "petit"/"small"→0.7, else 1.0
-            let coeff = 1.0;
-            if (vNameLower.includes('grand') || vNameLower.includes('large') || vNameLower.includes('xl')) coeff = 1.5;
-            else if (vNameLower.includes('petit') || vNameLower.includes('small')) coeff = 0.7;
+        for (const v of (opt.values || [])) {
+          const vName = cleanEmojis(v.name);
+          const priceCents = typeof v.price === 'object'
+            ? (v.price.original_amount_inc_tax || 0)
+            : (v.price || 0);
+          const isSansValue = /^Sans\s+/i.test(vName);
 
-            info.varianteValues.push({
-              zelty_option_value_id: v.id,
-              nom: vName,
-              coefficient: coeff,
-            });
-          }
-        } else if (isSansGroup) {
-          // --- "N'aimez pas" / "sans" group → all values are "sans" ---
-          for (const v of (opt.values || [])) {
-            info.sansValues.push({
-              zelty_option_value_id: v.id,
-              nom: cleanEmojis(v.name),
-            });
-          }
-        } else {
-          // --- Generic option group: classify each value individually ---
-          for (const v of (opt.values || [])) {
-            const vName = cleanEmojis(v.name);
-            const priceCents = typeof v.price === 'object'
-              ? (v.price.original_amount_inc_tax || 0)
-              : (v.price || 0);
-            const isSansValue = /^Sans\s+/i.test(vName);
+          let type, coefficient, prix_supplement;
 
-            if (isSansValue) {
-              info.sansValues.push({
-                zelty_option_value_id: v.id,
-                nom: vName,
-              });
-            } else if (priceCents > 0) {
-              info.extraValues.push({
-                zelty_option_value_id: v.id,
-                nom: vName,
-                prix: priceCents,
-              });
-            } else {
-              // Free choice (sauce, flavor, coffee style...) → variante coeff 1.0
-              info.varianteValues.push({
-                zelty_option_value_id: v.id,
-                nom: vName,
-                coefficient: 1.0,
-              });
-            }
+          if (isTailleGroup) {
+            type = 'taille';
+            coefficient = guessCoefficient(vName);
+          } else if (isSansGroup || isSansValue) {
+            type = 'sans';
+          } else if (priceCents > 0) {
+            type = 'extra';
+            prix_supplement = priceCents / 100; // centimes → euros
+          } else {
+            type = 'choix';
           }
+
+          const entry = {
+            zelty_option_value_id: v.id,
+            nom: vName,
+            type,
+          };
+          if (coefficient !== undefined) entry.coefficient = coefficient;
+          if (prix_supplement !== undefined) entry.prix_supplement = prix_supplement;
+
+          optionValues.push(entry);
         }
       }
 
-      dishOptionsMap.set(dishId, info);
+      dishOptionsMap.set(dishId, optionValues);
     }
 
-    // 5. Fetch recettes with zelty_product_id
+    // 5. Fetch recettes with zelty_product_id (read new 'options' column)
     const recettesResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/recettes?select=id,nom,zelty_product_id,variantes,modificateurs&zelty_product_id=not.is.null`,
+      `${SUPABASE_URL}/rest/v1/recettes?select=id,nom,zelty_product_id,options&zelty_product_id=not.is.null`,
       { headers: supaHeaders },
     );
     if (!recettesResp.ok) throw new Error(`Supabase recettes fetch error: ${recettesResp.status}`);
@@ -212,126 +197,67 @@ async function main() {
     const ingredients = await ingResp.json();
 
     // 7. Process each recipe
-    let updatedVariantes = 0;
-    let updatedModificateurs = 0;
+    let updatedCount = 0;
     let skipped = 0;
     let unchanged = 0;
 
     for (const recette of recettes) {
-      const dishInfo = dishOptionsMap.get(recette.zelty_product_id);
-      if (!dishInfo) {
+      const dishOpts = dishOptionsMap.get(recette.zelty_product_id);
+      if (!dishOpts || dishOpts.length === 0) {
         skipped++;
         continue;
       }
 
-      const updates = {};
+      const existing = recette.options || [];
+      const existingZeltyIds = new Set(
+        existing.map(o => o.zelty_option_value_id).filter(Boolean)
+      );
 
-      // --- Variantes (dynamic — from any option group classified as variante) ---
-      if (dishInfo.varianteValues.length > 0) {
-        const existing = recette.variantes || [];
-        const existingZeltyIds = new Set(existing.map(v => v.zelty_option_value_id).filter(Boolean));
-        const manualEntries = existing.filter(v => !v.zelty_option_value_id);
+      // Find new options not yet in recipe
+      const newOpts = dishOpts.filter(
+        ov => !existingZeltyIds.has(ov.zelty_option_value_id)
+      );
 
-        // Keep existing Zelty variantes (preserve user-modified coefficients)
-        const keptZelty = existing.filter(v => v.zelty_option_value_id);
-
-        // Find new variante values not yet in the recipe
-        const newVariantes = dishInfo.varianteValues.filter(
-          vv => !existingZeltyIds.has(vv.zelty_option_value_id)
-        );
-
-        if (newVariantes.length > 0) {
-          updates.variantes = [
-            ...keptZelty,
-            ...newVariantes.map(vv => ({
-              nom: vv.nom,
-              zelty_option_value_id: vv.zelty_option_value_id,
-              coefficient: vv.coefficient,
-            })),
-            ...manualEntries,
-          ];
-          updatedVariantes++;
-        }
-      }
-
-      // --- Modificateurs ---
-      const existingMods = recette.modificateurs || [];
-      const existingModIds = new Set(existingMods.map(m => m.zelty_option_value_id).filter(Boolean));
-      const newMods = [...existingMods];
-      let modsAdded = 0;
-
-      // Add "sans" modificateurs
-      for (const sv of dishInfo.sansValues) {
-        if (!existingModIds.has(sv.zelty_option_value_id)) {
-          const matched = findIngredient(sv.nom, ingredients);
-          const mod = {
-            nom: sv.nom,
-            zelty_option_value_id: sv.zelty_option_value_id,
-            type: 'sans',
-            impact_stock: [],
-            prix_supplement: 0,
-          };
-          if (matched) {
-            mod.impact_stock = [{
-              ingredient_restaurant_id: matched.id,
-              quantite: 0,
-              unite: matched.unite_stock || 'g',
-            }];
-          }
-          newMods.push(mod);
-          modsAdded++;
-        }
-      }
-
-      // Add "extra" modificateurs
-      for (const ev of dishInfo.extraValues) {
-        if (!existingModIds.has(ev.zelty_option_value_id)) {
-          const matched = findIngredient(ev.nom, ingredients);
-          const mod = {
-            nom: ev.nom,
-            zelty_option_value_id: ev.zelty_option_value_id,
-            type: 'extra',
-            impact_stock: [],
-            prix_supplement: (ev.prix || 0) / 100, // centimes → euros
-          };
-          if (matched) {
-            mod.impact_stock = [{
-              ingredient_restaurant_id: matched.id,
-              quantite: 0, // admin fills exact qty later
-              unite: matched.unite_stock || 'g',
-            }];
-          }
-          newMods.push(mod);
-          modsAdded++;
-        }
-      }
-
-      if (modsAdded > 0) {
-        updates.modificateurs = newMods;
-        updatedModificateurs++;
-      }
-
-      // --- Apply updates ---
-      if (Object.keys(updates).length > 0) {
-        const patchResp = await fetch(
-          `${SUPABASE_URL}/rest/v1/recettes?id=eq.${recette.id}`,
-          {
-            method: 'PATCH',
-            headers: supaHeaders,
-            body: JSON.stringify(updates),
-          }
-        );
-        if (!patchResp.ok) {
-          const errText = await patchResp.text();
-          console.error(`Failed to update ${recette.nom}: ${errText}`);
-        } else {
-          const parts = [];
-          if (updates.variantes) parts.push('variantes');
-          if (updates.modificateurs) parts.push(`${modsAdded} modificateurs`);
-          console.log(`  ✓ ${recette.nom} → ${parts.join(' + ')}`);
-        }
-      } else {
+      if (newOpts.length === 0) {
         unchanged++;
+        continue;
+      }
+
+      // Fuzzy-match ingredients for sans/extra options
+      for (const opt of newOpts) {
+        if (opt.type === 'sans' || opt.type === 'extra') {
+          const matched = findIngredient(opt.nom, ingredients);
+          if (matched) {
+            opt.impact_stock = [{
+              ingredient_restaurant_id: matched.id,
+              quantite: 0, // admin fills exact qty for extras later
+              unite: matched.unite_stock || 'g',
+            }];
+          }
+        }
+      }
+
+      // Merge: keep existing (preserve user edits) + add new
+      const merged = [...existing, ...newOpts];
+
+      const patchResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/recettes?id=eq.${recette.id}`,
+        {
+          method: 'PATCH',
+          headers: supaHeaders,
+          body: JSON.stringify({ options: merged }),
+        }
+      );
+      if (!patchResp.ok) {
+        const errText = await patchResp.text();
+        console.error(`Failed to update ${recette.nom}: ${errText}`);
+      } else {
+        const types = newOpts.map(o => o.type);
+        const counts = {};
+        for (const t of types) counts[t] = (counts[t] || 0) + 1;
+        const desc = Object.entries(counts).map(([t, c]) => `${c} ${t}`).join(' + ');
+        console.log(`  ✓ ${recette.nom} → ${desc}`);
+        updatedCount++;
       }
     }
 
@@ -339,9 +265,8 @@ async function main() {
     const durationMs = Date.now() - startTime;
     const summary = {
       recettes_total: recettes.length,
-      updated_variantes: updatedVariantes,
-      updated_modificateurs: updatedModificateurs,
-      skipped_no_match: skipped,
+      updated: updatedCount,
+      skipped_no_options: skipped,
       unchanged,
     };
 
