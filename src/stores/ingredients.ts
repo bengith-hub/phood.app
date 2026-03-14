@@ -87,14 +87,17 @@ export const useIngredientsStore = defineStore('ingredients', () => {
     )
   }
 
-  async function save(item: Partial<IngredientRestaurant> & { id?: string }) {
+  async function save(item: Partial<IngredientRestaurant> & { id?: string }): Promise<IngredientRestaurant | undefined> {
+    let created: IngredientRestaurant | undefined
     if (item.id) {
       const { id, ...payload } = item
       await restCall('PATCH', `ingredients_restaurant?id=eq.${id}`, payload)
     } else {
-      await restCall('POST', 'ingredients_restaurant', item)
+      const result = await restCall<IngredientRestaurant[]>('POST', 'ingredients_restaurant', item)
+      created = result?.[0]
     }
     await fetchAll()
+    return created
   }
 
   async function uploadPhoto(ingredientId: string, file: File): Promise<string> {

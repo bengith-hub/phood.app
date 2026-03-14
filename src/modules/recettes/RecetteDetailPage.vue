@@ -394,7 +394,7 @@ function selectOptIngredient(idx: number, ing: IngredientRestaurant) {
   // Auto-fill from ingredient's quantite_extra (configured once per ingredient)
   let autoQty = o.impact_stock?.[0]?.quantite || 0
   let autoUnite = ing.unite_extra || ing.unite_stock
-  if (autoQty === 0 && o.type === 'extra' && ing.quantite_extra) {
+  if (autoQty === 0 && (o.type === 'extra' || o.type === 'choix') && ing.quantite_extra) {
     autoQty = ing.quantite_extra
     autoUnite = ing.unite_extra || ing.unite_stock
   }
@@ -1063,13 +1063,17 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
             </template>
             <button class="btn-remove" @click="removeOption(idx)">&times;</button>
           </div>
-          <!-- Ingredient link row (for sans + extra only) -->
-          <div v-if="o.type === 'sans' || o.type === 'extra'" class="option-row-ingredient">
+          <!-- Info row for choix without ingredient link -->
+          <div v-if="o.type === 'choix' && !(o.impact_stock && o.impact_stock.length > 0 && o.impact_stock[0] != null)" class="option-row-choix-help">
+            💡 Le coût vient de l'ingrédient de la recette. Liez un ingrédient ci-dessous si ce choix utilise un ingrédient spécifique (ex: sirop).
+          </div>
+          <!-- Ingredient link row (for sans, extra, and choix) -->
+          <div v-if="o.type === 'sans' || o.type === 'extra' || o.type === 'choix'" class="option-row-ingredient">
             <template v-if="o.impact_stock && o.impact_stock.length > 0 && o.impact_stock[0] != null">
               <span class="opt-ing-label">
                 {{ getOptIngredientLabel(o) || 'Ingr\u00e9dient inconnu' }}
               </span>
-              <template v-if="o.type === 'extra'">
+              <template v-if="o.type === 'extra' || o.type === 'choix'">
                 <input
                   :value="(o.impact_stock[0] as any).quantite"
                   @input="(o.impact_stock[0] as any).quantite = Number(($event.target as HTMLInputElement).value)"
@@ -1942,6 +1946,14 @@ h1 {
   font-weight: 600;
   color: var(--text-secondary);
   flex-shrink: 0;
+}
+
+.option-row-choix-help {
+  margin-top: 6px;
+  padding: 6px 12px 6px 20px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
 }
 
 .option-row-ingredient {

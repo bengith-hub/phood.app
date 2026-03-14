@@ -26,6 +26,14 @@ const linkedMercuriale = computed(() => {
   return mercurialeStore.getByIngredientId(ingredientId.value)
 })
 
+/** Coût unitaire calculé dynamiquement depuis la mercuriale (pas la valeur figée en DB) */
+const computedCoutUnitaire = computed(() => {
+  if (!form.value.fournisseur_prefere_id) return null
+  const merc = mercurialeStore.getById(form.value.fournisseur_prefere_id)
+  if (!merc) return null
+  return calculateCoutUnitaire(merc, form.value.unite_stock || 'kg')
+})
+
 function getFournisseurNom(fournisseurId: string) {
   return fournisseursStore.getById(fournisseurId)?.nom ?? 'Inconnu'
 }
@@ -35,9 +43,9 @@ async function changePreferredSupplier(mercurialeId: string | null) {
   form.value.fournisseur_prefere_id = mercurialeId
   try {
     const merc = mercurialeId ? mercurialeStore.getById(mercurialeId) : null
-    // Recalculate cout_unitaire from the new preferred supplier
+    // computedCoutUnitaire will update automatically via the computed
+    // Persist the new cost to DB for other pages
     const newCout = merc ? calculateCoutUnitaire(merc, form.value.unite_stock || 'kg') : 0
-    form.value.cout_unitaire = newCout
     await store.save({
       id: ingredientId.value,
       fournisseur_prefere_id: mercurialeId,
@@ -113,10 +121,14 @@ async function handleSave() {
   saving.value = true
   try {
     // Strip enriched fields that don't belong to the DB table
-    const { mercuriale_photo_url, mercuriale_sku, mercuriale_designation, fournisseur_nom, fournisseur_id: _fid, ...cleanForm } = form.value as Record<string, unknown>
+    const { mercuriale_photo_url, mercuriale_sku, mercuriale_designation, fournisseur_nom, fournisseur_id: _fid, cout_unitaire: _oldCout, ...cleanForm } = form.value as Record<string, unknown>
+    // Always persist the dynamically computed cost
+    const freshCout = computedCoutUnitaire.value ?? 0
     await store.save({
       ...cleanForm,
       id: isNew.value ? undefined : ingredientId.value,
+      cout_unitaire: freshCout,
+      ...(freshCout > 0 ? { cout_source: 'mercuriale', cout_maj_date: new Date().toISOString() } : {}),
     } as Partial<IngredientRestaurant> & { id?: string })
     router.back()
   } catch (e: unknown) {
@@ -134,6 +146,33 @@ async function handleDelete() {
     router.push('/recettes')
   } catch (e: unknown) {
     alert(e instanceof Error ? e.message : 'Erreur de suppression')
+  }
+}
+
+async function handleDuplicate() {
+  if (!form.value.nom) return
+  const newName = prompt('Nom du nouvel ingrédient :', form.value.nom + ' (copie)')
+  if (!newName?.trim()) return
+  saving.value = true
+  try {
+    const { mercuriale_photo_url, mercuriale_sku, mercuriale_designation, fournisseur_nom, fournisseur_id: _fid, cout_unitaire: _c, ...cleanForm } = form.value as Record<string, unknown>
+    const saved = await store.save({
+      ...cleanForm,
+      id: undefined,
+      nom: newName.trim(),
+      photo_url: null,  // don't copy photo (different ingredient)
+      fournisseur_prefere_id: null,  // reset preferred supplier
+      cout_unitaire: 0,
+    } as Partial<IngredientRestaurant> & { id?: string })
+    if (saved?.id) {
+      router.replace('/recettes/ingredients/' + saved.id)
+    } else {
+      router.back()
+    }
+  } catch (e: unknown) {
+    alert(e instanceof Error ? e.message : 'Erreur de duplication')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -297,16 +336,17 @@ onMounted(async () => {
         <span>Ingrédient actif</span>
       </label>
 
-      <!-- Cost info (read-only) -->
-      <div v-if="!isNew && form.cout_unitaire" class="info-row">
+      <!-- Cost info (read-only, calculated dynamically from mercuriale) -->
+      <div v-if="!isNew && computedCoutUnitaire" class="info-row">
         <span class="info-label">Coût unitaire</span>
-        <span class="info-value">{{ formatCout(form.cout_unitaire ?? 0) }} €/{{ form.unite_stock }}</span>
+        <span class="info-value">{{ formatCout(computedCoutUnitaire) }} €/{{ form.unite_stock }}</span>
       </div>
     </div>
 
     <!-- Actions -->
     <div class="actions-bar">
       <button v-if="!isNew" class="btn-danger" @click="handleDelete">Supprimer</button>
+      <button v-if="!isNew" class="btn-secondary" @click="handleDuplicate">Dupliquer</button>
       <div class="spacer" />
       <button class="btn-secondary" @click="router.back()">Annuler</button>
       <button class="btn-primary" :disabled="saving || !form.nom?.trim()" @click="handleSave">

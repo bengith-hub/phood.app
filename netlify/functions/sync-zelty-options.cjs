@@ -252,15 +252,15 @@ async function main() {
         continue;
       }
 
-      // Fuzzy-match ingredients for sans/extra options
+      // Fuzzy-match ingredients for sans/extra/choix options
       for (const opt of newOpts) {
-        if (opt.type === 'sans' || opt.type === 'extra') {
+        if (opt.type === 'sans' || opt.type === 'extra' || opt.type === 'choix') {
           const matched = findIngredient(opt.nom, ingredients);
           if (matched) {
             // Use ingredient's quantite_extra if available (configured once per ingredient)
             let autoQty = 0;
             let autoUnite = matched.unite_stock || 'g';
-            if (opt.type === 'extra' && matched.quantite_extra) {
+            if ((opt.type === 'extra' || opt.type === 'choix') && matched.quantite_extra) {
               autoQty = matched.quantite_extra;
               autoUnite = matched.unite_extra || matched.unite_stock || 'g';
             }
