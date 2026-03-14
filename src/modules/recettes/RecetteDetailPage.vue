@@ -1049,7 +1049,8 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
                   @input="optIngSearch[idx] = ($event.target as HTMLInputElement).value"
                   type="text"
                   placeholder="Lier un ingr&eacute;dient..."
-                  class="input input-sm"
+                  class="input"
+                  style="width: 100%"
                   @focus="showOptIngDropdown[idx] = true"
                   @blur="closeOptIngDropdown(idx)"
                 />
@@ -1872,8 +1873,16 @@ h1 {
   gap: 8px;
   margin-top: 8px;
   padding-top: 8px;
+  padding-left: 16px;
   border-top: 1px solid var(--border);
   font-size: 14px;
+}
+
+.option-row-ingredient::before {
+  content: '└';
+  color: var(--text-tertiary);
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 .opt-ing-label {
