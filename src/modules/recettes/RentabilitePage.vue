@@ -69,6 +69,10 @@ function getIngredientCost(id: string): number {
   return ingredientsStore.getById(id)?.cout_unitaire ?? 0
 }
 
+function getIngredientUniteStock(id: string): string {
+  return ingredientsStore.getById(id)?.unite_stock || 'g'
+}
+
 interface RecetteAnalysis {
   recette: Recette
   coutMatiere: number
@@ -133,7 +137,7 @@ const analyses = computed<RecetteAnalysis[]>(() => {
   const results: RecetteAnalysis[] = []
 
   for (const recette of recettesStore.plats) {
-    const coutMatiere = recettesStore.calculateCost(recette.id, getIngredientCost)
+    const coutMatiere = recettesStore.calculateCost(recette.id, getIngredientCost, 0, getIngredientUniteStock)
     const coutPerPortion = recette.nb_portions > 0 ? coutMatiere / recette.nb_portions : coutMatiere
     const coutEmballage = recette.cout_emballage ?? 0
     const coutTotal = coutPerPortion + coutEmballage

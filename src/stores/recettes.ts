@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { restCall, restFetchAll } from '@/lib/rest-client'
 import { db } from '@/lib/dexie'
+import { getUnitFactor } from '@/lib/unit-conversion'
 import type { Recette, RecetteIngredient } from '@/types/database'
 
 export const useRecettesStore = defineStore('recettes', () => {
@@ -70,7 +71,8 @@ export const useRecettesStore = defineStore('recettes', () => {
   function calculateCost(
     recetteId: string,
     getIngredientCost: (id: string) => number,
-    depth = 0
+    depth = 0,
+    getIngredientUniteStock?: (id: string) => string
   ): number {
     if (depth > 3) return 0 // max 3 levels
 
@@ -79,13 +81,15 @@ export const useRecettesStore = defineStore('recettes', () => {
 
     for (const ri of ingredients) {
       if (ri.ingredient_id) {
-        // Base ingredient
-        total += ri.quantite * getIngredientCost(ri.ingredient_id)
+        // Base ingredient — convert recipe unit to stock unit
+        const stockUnite = getIngredientUniteStock?.(ri.ingredient_id) || ri.unite
+        const factor = getUnitFactor(ri.unite, stockUnite)
+        total += ri.quantite * factor * getIngredientCost(ri.ingredient_id)
       } else if (ri.sous_recette_id) {
         // Sub-recipe: recurse
         const subRecette = getById(ri.sous_recette_id)
         if (subRecette) {
-          const subCost = calculateCost(ri.sous_recette_id, getIngredientCost, depth + 1)
+          const subCost = calculateCost(ri.sous_recette_id, getIngredientCost, depth + 1, getIngredientUniteStock)
           const costPerPortion = subRecette.nb_portions > 0 ? subCost / subRecette.nb_portions : subCost
           total += ri.quantite * costPerPortion
         }

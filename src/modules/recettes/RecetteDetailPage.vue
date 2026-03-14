@@ -5,6 +5,7 @@ import { useRecettesStore } from '@/stores/recettes'
 import { useIngredientsStore } from '@/stores/ingredients'
 import { useAuth } from '@/composables/useAuth'
 import { restCall } from '@/lib/rest-client'
+import { getUnitFactor } from '@/lib/unit-conversion'
 import type {
   Recette,
   RecetteType,
@@ -167,13 +168,21 @@ function getIngredientCost(id: string): number {
   return ing?.cout_unitaire ?? 0
 }
 
+function getIngredientUniteStock(id: string): string {
+  const ing = ingredientsStore.getById(id)
+  return ing?.unite_stock || 'g'
+}
+
 function ligneCost(ligne: IngredientLigne): number {
   if (ligne.ingredient_id) {
-    return ligne.quantite * getIngredientCost(ligne.ingredient_id)
+    const ing = ingredientsStore.getById(ligne.ingredient_id)
+    const stockUnite = ing?.unite_stock || ligne.unite
+    const factor = getUnitFactor(ligne.unite, stockUnite)
+    return ligne.quantite * factor * getIngredientCost(ligne.ingredient_id)
   } else if (ligne.sous_recette_id) {
     const sr = recettesStore.getById(ligne.sous_recette_id)
     if (sr) {
-      const srCost = recettesStore.calculateCost(ligne.sous_recette_id, getIngredientCost)
+      const srCost = recettesStore.calculateCost(ligne.sous_recette_id, getIngredientCost, 0, getIngredientUniteStock)
       const costPerPortion = sr.nb_portions > 0 ? srCost / sr.nb_portions : srCost
       return ligne.quantite * costPerPortion
     }
@@ -285,7 +294,7 @@ function buildTree(recId: string, depth = 0): TreeNode[] {
     } else if (ri.sous_recette_id) {
       const sr = recettesStore.getById(ri.sous_recette_id)
       if (sr) {
-        const srCost = recettesStore.calculateCost(ri.sous_recette_id, getIngredientCost)
+        const srCost = recettesStore.calculateCost(ri.sous_recette_id, getIngredientCost, 0, getIngredientUniteStock)
         const costPerPortion = sr.nb_portions > 0 ? srCost / sr.nb_portions : srCost
         nodes.push({
           label: sr.nom,
@@ -584,8 +593,6 @@ function closeDropdowns() {
   showSousRecetteDropdown.value = false
 }
 
-const UNITE_OPTIONS = ['kg', 'g', 'L', 'mL', 'cl', 'unite', 'piece', 'botte']
-
 // Unit families: only allow conversion within same category
 const UNITE_FAMILIES: Record<string, string[]> = {
   kg: ['kg', 'g'],
@@ -818,7 +825,7 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           <span class="ing-cost">
             {{
               ligne.ingredient_id
-                ? (ligne.quantite * getIngredientCost(ligne.ingredient_id)).toFixed(2)
+                ? ligneCost(ligne).toFixed(2)
                 : '--'
             }} &euro;
           </span>
