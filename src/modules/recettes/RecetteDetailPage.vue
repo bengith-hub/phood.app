@@ -390,9 +390,21 @@ function filteredOptIngredients(idx: number) {
 function selectOptIngredient(idx: number, ing: IngredientRestaurant) {
   const o = options.value[idx]
   if (!o) return
+
+  // Auto-fill quantity: look for this ingredient in the recipe's ingredient lines
+  let autoQty = o.impact_stock?.[0]?.quantite || 0
+  if (autoQty === 0 && o.type === 'extra') {
+    const recipeLine = ingredientLignes.value.find(l => l.ingredient_id === ing.id)
+    if (recipeLine) {
+      // Use the recipe's quantity in stock units
+      const factor = getUnitFactor(recipeLine.unite, ing.unite_stock)
+      autoQty = Math.round(recipeLine.quantite * factor * 100) / 100
+    }
+  }
+
   o.impact_stock = [{
     ingredient_restaurant_id: ing.id,
-    quantite: o.impact_stock?.[0]?.quantite || 0,
+    quantite: autoQty,
     unite: ing.unite_stock,
   }]
   optIngSearch.value[idx] = ''
@@ -1071,7 +1083,17 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
                   placeholder="Qt&eacute;"
                   class="input input-qty"
                 />
-                <span class="opt-ing-unite">{{ (o.impact_stock[0] as any).unite }}</span>
+                <select
+                  :value="(o.impact_stock[0] as any).unite"
+                  @change="(o.impact_stock[0] as any).unite = ($event.target as HTMLSelectElement).value"
+                  class="ing-unite-select"
+                  @click.stop
+                >
+                  <option
+                    v-for="u in uniteOptionsFor((o.impact_stock[0] as any).unite, (o.impact_stock[0] as any).ingredient_restaurant_id)"
+                    :key="u" :value="u"
+                  >{{ u }}</option>
+                </select>
               </template>
               <button class="btn-remove-sm" @click="removeOptIngredient(idx)" title="Retirer le lien">&times;</button>
             </template>
