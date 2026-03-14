@@ -605,8 +605,17 @@ const UNITE_FAMILIES: Record<string, string[]> = {
   botte: ['botte'],
 }
 
-function uniteOptionsFor(currentUnite: string): string[] {
-  return UNITE_FAMILIES[currentUnite] || [currentUnite]
+function uniteOptionsFor(currentUnite: string, ingredientId?: string | null): string[] {
+  // Base options on ingredient's unite_stock (not the potentially-wrong current unit)
+  let baseUnite = currentUnite
+  if (ingredientId) {
+    const ing = ingredientsStore.getById(ingredientId)
+    if (ing?.unite_stock) baseUnite = ing.unite_stock
+  }
+  const options = UNITE_FAMILIES[baseUnite] || [baseUnite]
+  // Include current unite if not already in list (backward compat)
+  if (!options.includes(currentUnite)) options.push(currentUnite)
+  return options
 }
 const TVA_OPTIONS = [5.5, 10, 20]
 const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
@@ -820,7 +829,7 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
             class="ing-qty"
           />
           <select v-model="ligne.unite" class="ing-unite-select" @click.stop>
-            <option v-for="u in uniteOptionsFor(ligne.unite)" :key="u" :value="u">{{ u }}</option>
+            <option v-for="u in uniteOptionsFor(ligne.unite, ligne.ingredient_id)" :key="u" :value="u">{{ u }}</option>
           </select>
           <span class="ing-cost">
             {{
