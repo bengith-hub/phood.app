@@ -824,7 +824,7 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           </select>
           <span class="ing-cost">
             {{
-              ligne.ingredient_id
+              (ligne.ingredient_id || ligne.sous_recette_id)
                 ? ligneCost(ligne).toFixed(2)
                 : '--'
             }} &euro;
