@@ -16,12 +16,6 @@
 const ZELTY_BASE_URL = 'https://api.zelty.fr/2.10';
 const PAGE_SIZE = 500;
 
-// Known Zelty option IDs
-const TAILLE_OPTION_ID = 241667;
-const TAILLE_NORMAL_VALUE = 1215713;
-const TAILLE_GRAND_VALUE = 1215714;
-const EXTRA_OPTION_IDS = [241669, 241943]; // "Un petit plus pour votre plat?" + Finger Phood
-
 function normalize(s) {
   return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
@@ -50,7 +44,7 @@ function findIngredient(optionName, ingredients) {
   }) || null;
 }
 
-exports.handler = async function (event) {
+async function main() {
   const ZELTY_API_KEY = process.env.ZELTY_API_KEY;
   const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
   const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -119,32 +113,81 @@ exports.handler = async function (event) {
       zeltyOptions.set(opt.id, opt);
     }
 
-    // 4. Build dish → classified options map
+    // 4. Build dish → classified options map (DYNAMIC — no hardcoded option IDs)
+    //
+    // Classification rules:
+    //   a) Option group name contains "taille" → variantes (Normal/Grand with coefficients)
+    //   b) Option group name contains "n'aimez pas" or is a "sans" group → all values are "sans" modificateurs
+    //   c) For ALL other option groups, classify per-value:
+    //      - value name starts with "Sans " → "sans" modificateur
+    //      - value price > 0 → "extra" modificateur
+    //      - value price = 0 and not "Sans" → variante (free choice: café style, sauce, flavor...)
+    //
     const dishOptionsMap = new Map();
     for (const dish of allDishes) {
       const dishId = String(dish.id);
-      const info = { hasTaille: false, sansValues: [], extraValues: [] };
+      const info = { varianteValues: [], sansValues: [], extraValues: [] };
 
       for (const optId of (dish.options || [])) {
         const opt = zeltyOptions.get(optId);
         if (!opt) continue;
 
-        if (optId === TAILLE_OPTION_ID) {
-          info.hasTaille = true;
-        } else if (EXTRA_OPTION_IDS.includes(optId)) {
+        const optNameLower = normalize(opt.name);
+        const isTailleGroup = optNameLower.includes('taille');
+        const isSansGroup = opt.name.includes("n'aimez pas") || optNameLower.includes('sans');
+
+        if (isTailleGroup) {
+          // --- Taille group → variantes with intelligent coefficient ---
           for (const v of (opt.values || [])) {
-            info.extraValues.push({
+            const vName = cleanEmojis(v.name);
+            const vNameLower = normalize(vName);
+            // Guess coefficient: "normal"→1.0, "grand"/"large"→1.5, "petit"/"small"→0.7, else 1.0
+            let coeff = 1.0;
+            if (vNameLower.includes('grand') || vNameLower.includes('large') || vNameLower.includes('xl')) coeff = 1.5;
+            else if (vNameLower.includes('petit') || vNameLower.includes('small')) coeff = 0.7;
+
+            info.varianteValues.push({
               zelty_option_value_id: v.id,
-              nom: cleanEmojis(v.name),
-              prix: v.price || 0,
+              nom: vName,
+              coefficient: coeff,
             });
           }
-        } else if (opt.name.includes("n'aimez pas") || opt.name.toLowerCase().includes('sans')) {
+        } else if (isSansGroup) {
+          // --- "N'aimez pas" / "sans" group → all values are "sans" ---
           for (const v of (opt.values || [])) {
             info.sansValues.push({
               zelty_option_value_id: v.id,
               nom: cleanEmojis(v.name),
             });
+          }
+        } else {
+          // --- Generic option group: classify each value individually ---
+          for (const v of (opt.values || [])) {
+            const vName = cleanEmojis(v.name);
+            const priceCents = typeof v.price === 'object'
+              ? (v.price.original_amount_inc_tax || 0)
+              : (v.price || 0);
+            const isSansValue = /^Sans\s+/i.test(vName);
+
+            if (isSansValue) {
+              info.sansValues.push({
+                zelty_option_value_id: v.id,
+                nom: vName,
+              });
+            } else if (priceCents > 0) {
+              info.extraValues.push({
+                zelty_option_value_id: v.id,
+                nom: vName,
+                prix: priceCents,
+              });
+            } else {
+              // Free choice (sauce, flavor, coffee style...) → variante coeff 1.0
+              info.varianteValues.push({
+                zelty_option_value_id: v.id,
+                nom: vName,
+                coefficient: 1.0,
+              });
+            }
           }
         }
       }
@@ -183,30 +226,28 @@ exports.handler = async function (event) {
 
       const updates = {};
 
-      // --- Variantes ---
-      if (dishInfo.hasTaille) {
+      // --- Variantes (dynamic — from any option group classified as variante) ---
+      if (dishInfo.varianteValues.length > 0) {
         const existing = recette.variantes || [];
-        const hasNormal = existing.some(v => v.zelty_option_value_id === TAILLE_NORMAL_VALUE);
-        const hasGrand = existing.some(v => v.zelty_option_value_id === TAILLE_GRAND_VALUE);
+        const existingZeltyIds = new Set(existing.map(v => v.zelty_option_value_id).filter(Boolean));
+        const manualEntries = existing.filter(v => !v.zelty_option_value_id);
 
-        if (!hasNormal || !hasGrand) {
-          // Preserve manual entries (without zelty_option_value_id)
-          const manualEntries = existing.filter(v => !v.zelty_option_value_id);
-          // Preserve existing Zelty entries that are not Normal/Grand
-          const otherZelty = existing.filter(v =>
-            v.zelty_option_value_id &&
-            v.zelty_option_value_id !== TAILLE_NORMAL_VALUE &&
-            v.zelty_option_value_id !== TAILLE_GRAND_VALUE
-          );
+        // Keep existing Zelty variantes (preserve user-modified coefficients)
+        const keptZelty = existing.filter(v => v.zelty_option_value_id);
 
-          // Keep user-configured coefficient if exists
-          const existingNormal = existing.find(v => v.zelty_option_value_id === TAILLE_NORMAL_VALUE);
-          const existingGrand = existing.find(v => v.zelty_option_value_id === TAILLE_GRAND_VALUE);
+        // Find new variante values not yet in the recipe
+        const newVariantes = dishInfo.varianteValues.filter(
+          vv => !existingZeltyIds.has(vv.zelty_option_value_id)
+        );
 
+        if (newVariantes.length > 0) {
           updates.variantes = [
-            existingNormal || { nom: 'Normal', zelty_option_value_id: TAILLE_NORMAL_VALUE, coefficient: 1.0 },
-            existingGrand || { nom: 'Grand', zelty_option_value_id: TAILLE_GRAND_VALUE, coefficient: 1.5 },
-            ...otherZelty,
+            ...keptZelty,
+            ...newVariantes.map(vv => ({
+              nom: vv.nom,
+              zelty_option_value_id: vv.zelty_option_value_id,
+              coefficient: vv.coefficient,
+            })),
             ...manualEntries,
           ];
           updatedVariantes++;
@@ -366,4 +407,22 @@ exports.handler = async function (event) {
       body: JSON.stringify({ error: err.message }),
     };
   }
+}
+
+// Netlify handler
+exports.handler = async function (event) {
+  return main();
 };
+
+// CLI: node netlify/functions/sync-zelty-options.cjs
+if (require.main === module) {
+  main()
+    .then(r => {
+      console.log('\nResult:', r.statusCode);
+      console.log(r.body);
+    })
+    .catch(err => {
+      console.error('FATAL:', err);
+      process.exit(1);
+    });
+}

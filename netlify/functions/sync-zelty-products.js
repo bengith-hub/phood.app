@@ -95,9 +95,26 @@ exports.handler = async function (event) {
     // 4. Find NEW dishes
     const newDishes = allDishes.filter(d => !existingZeltyIds.has(String(d.id)));
 
-    // 5. Create new recipes
+    // 5. Create new recipes (with prix_vente from Zelty)
     const created = [];
     for (const dish of newDishes) {
+      // Build prix_vente from Zelty price data
+      // Zelty: price/price_togo/price_delivery in centimes, tax/tax_takeaway/tax_delivery in 100ths (1000 = 10%)
+      let prix_vente = null;
+      if (dish.price && dish.price > 0) {
+        const ttcSP = dish.price / 100;
+        const tvaSP = (dish.tax || dish.tva || 1000) / 100;
+        const ttcEMP = dish.price_togo ? dish.price_togo / 100 : ttcSP;
+        const tvaEMP = dish.tax_takeaway ? dish.tax_takeaway / 100 : (dish.tvat ? dish.tvat / 100 : tvaSP);
+        const ttcLIV = dish.price_delivery ? dish.price_delivery / 100 : ttcSP;
+        const tvaLIV = dish.tax_delivery ? dish.tax_delivery / 100 : (dish.tvad ? dish.tvad / 100 : tvaSP);
+        prix_vente = {
+          sur_place: { ttc: ttcSP, tva: tvaSP },
+          emporter: { ttc: ttcEMP, tva: tvaEMP },
+          livraison: { ttc: ttcLIV, tva: tvaLIV },
+        };
+      }
+
       const recetteData = {
         nom: dish.name,
         type: 'recette',
@@ -105,6 +122,7 @@ exports.handler = async function (event) {
         actif: true,
         nb_portions: 1,
         photo_url: dish.image || dish.thumb || null,
+        prix_vente,
       };
 
       const insertResp = await fetch(
