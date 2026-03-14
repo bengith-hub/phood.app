@@ -585,6 +585,22 @@ function closeDropdowns() {
 }
 
 const UNITE_OPTIONS = ['kg', 'g', 'L', 'mL', 'cl', 'unite', 'piece', 'botte']
+
+// Unit families: only allow conversion within same category
+const UNITE_FAMILIES: Record<string, string[]> = {
+  kg: ['kg', 'g'],
+  g: ['g', 'kg'],
+  L: ['L', 'mL', 'cl'],
+  mL: ['mL', 'L', 'cl'],
+  cl: ['cl', 'mL', 'L'],
+  unite: ['unite', 'piece'],
+  piece: ['piece', 'unite'],
+  botte: ['botte'],
+}
+
+function uniteOptionsFor(currentUnite: string): string[] {
+  return UNITE_FAMILIES[currentUnite] || [currentUnite]
+}
 const TVA_OPTIONS = [5.5, 10, 20]
 const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
   { value: 'recette', label: 'Recette (plat)' },
@@ -796,8 +812,8 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
             inputmode="decimal"
             class="ing-qty"
           />
-          <select v-model="ligne.unite" class="ing-unite-select">
-            <option v-for="u in UNITE_OPTIONS" :key="u" :value="u">{{ u }}</option>
+          <select v-model="ligne.unite" class="ing-unite-select" @click.stop>
+            <option v-for="u in uniteOptionsFor(ligne.unite)" :key="u" :value="u">{{ u }}</option>
           </select>
           <span class="ing-cost">
             {{
