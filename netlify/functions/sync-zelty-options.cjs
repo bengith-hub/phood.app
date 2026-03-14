@@ -52,10 +52,11 @@ function guessCoefficient(name) {
 
 /**
  * Fuzzy-match an option name to an ingredient.
- * Strips "Sans " prefix, normalizes, then does bidirectional includes.
+ * Strips "Sans " / "Extra " prefix, normalizes, then does bidirectional includes.
+ * Also tries first-word matching for cases like "Piment Frais" → "Piment entier".
  */
 function findIngredient(optionName, ingredients) {
-  const cleaned = cleanEmojis(optionName).replace(/^Sans\s+/i, '');
+  const cleaned = cleanEmojis(optionName).replace(/^(Sans|Extra)\s+/i, '');
   const n = normalize(cleaned);
   if (!n || n.length < 2) return null;
 
@@ -64,10 +65,20 @@ function findIngredient(optionName, ingredients) {
   if (exact) return exact;
 
   // Bidirectional includes
-  return ingredients.find(ing => {
+  const incl = ingredients.find(ing => {
     const ingN = normalize(ing.nom);
     return ingN.includes(n) || n.includes(ingN);
-  }) || null;
+  });
+  if (incl) return incl;
+
+  // First-word match (e.g., "piment frais" matches "piment entier" via "piment")
+  const firstWord = n.split(/\s+/)[0];
+  if (firstWord && firstWord.length >= 3) {
+    const candidates = ingredients.filter(ing => normalize(ing.nom).startsWith(firstWord));
+    if (candidates.length === 1) return candidates[0]; // unambiguous match
+  }
+
+  return null;
 }
 
 async function main() {
