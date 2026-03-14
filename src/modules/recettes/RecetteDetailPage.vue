@@ -319,7 +319,7 @@ function addIngredient(ing: IngredientRestaurant) {
     ingredient_id: ing.id,
     sous_recette_id: null,
     quantite: qty,
-    unite: newIngUnite.value || ing.unite_stock,
+    unite: ing.unite_stock,
     label: ing.nom,
     sur_place: true,
     emporter: true,
@@ -796,7 +796,9 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
             inputmode="decimal"
             class="ing-qty"
           />
-          <span class="ing-unite">{{ ligne.unite }}</span>
+          <select v-model="ligne.unite" class="ing-unite-select">
+            <option v-for="u in UNITE_OPTIONS" :key="u" :value="u">{{ u }}</option>
+          </select>
           <span class="ing-cost">
             {{
               ligne.ingredient_id
@@ -850,9 +852,6 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
           placeholder="Qt&eacute;"
           class="input input-sm"
         />
-        <select v-model="newIngUnite" class="input input-sm">
-          <option v-for="u in UNITE_OPTIONS" :key="u" :value="u">{{ u }}</option>
-        </select>
       </div>
 
       <!-- Add sous-recette -->
@@ -1009,15 +1008,17 @@ const TYPE_OPTIONS: { value: RecetteType; label: string }[] = [
             </template>
             <!-- Prix supplement for extra -->
             <template v-if="o.type === 'extra'">
+              <span class="option-prix-label">+</span>
               <input
                 v-model.number="o.prix_supplement"
                 type="number"
                 min="0"
                 step="0.1"
                 inputmode="decimal"
-                placeholder="+&euro;"
+                placeholder="0.00"
                 class="input input-prix"
               />
+              <span class="option-prix-label">&euro;</span>
             </template>
             <button class="btn-remove" @click="removeOption(idx)">&times;</button>
           </div>
@@ -1487,6 +1488,24 @@ h1 {
   flex-shrink: 0;
 }
 
+.ing-unite-select {
+  width: 70px;
+  height: 36px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  padding: 0 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ing-unite-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
 .ing-cost {
   font-size: 14px;
   font-weight: 600;
@@ -1507,7 +1526,7 @@ h1 {
 .ih-spacer { width: 36px; flex-shrink: 0; }
 .ih-name { flex: 1; }
 .ih-qty { width: 80px; flex-shrink: 0; }
-.ih-unite { width: 50px; flex-shrink: 0; }
+.ih-unite { width: 70px; flex-shrink: 0; }
 .ih-cost { width: 70px; flex-shrink: 0; }
 .ih-canal {
   width: 42px;
@@ -1865,6 +1884,13 @@ h1 {
   font-size: 13px;
   color: var(--text-tertiary);
   white-space: nowrap;
+}
+
+.option-prix-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .option-row-ingredient {
