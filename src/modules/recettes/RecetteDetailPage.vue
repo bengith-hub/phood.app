@@ -391,21 +391,18 @@ function selectOptIngredient(idx: number, ing: IngredientRestaurant) {
   const o = options.value[idx]
   if (!o) return
 
-  // Auto-fill quantity: look for this ingredient in the recipe's ingredient lines
+  // Auto-fill from ingredient's quantite_extra (configured once per ingredient)
   let autoQty = o.impact_stock?.[0]?.quantite || 0
-  if (autoQty === 0 && o.type === 'extra') {
-    const recipeLine = ingredientLignes.value.find(l => l.ingredient_id === ing.id)
-    if (recipeLine) {
-      // Use the recipe's quantity in stock units
-      const factor = getUnitFactor(recipeLine.unite, ing.unite_stock)
-      autoQty = Math.round(recipeLine.quantite * factor * 100) / 100
-    }
+  let autoUnite = ing.unite_extra || ing.unite_stock
+  if (autoQty === 0 && o.type === 'extra' && ing.quantite_extra) {
+    autoQty = ing.quantite_extra
+    autoUnite = ing.unite_extra || ing.unite_stock
   }
 
   o.impact_stock = [{
     ingredient_restaurant_id: ing.id,
     quantite: autoQty,
-    unite: ing.unite_stock,
+    unite: autoUnite,
   }]
   optIngSearch.value[idx] = ''
   showOptIngDropdown.value[idx] = false

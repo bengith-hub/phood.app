@@ -108,6 +108,8 @@ export interface IngredientRestaurant {
   cout_source: string | null // 'mercuriale' default
   cout_maj_date: string | null
   rendement: number | null // yield coefficient, default 1.0
+  quantite_extra: number | null // default qty for Extra options (e.g., 10g ciboulette)
+  unite_extra: string | null    // unit for quantite_extra (defaults to unite_stock)
   stock_tampon: number
   stock_tampon_weekend: number | null
   stock_tampon_vacances: number | null

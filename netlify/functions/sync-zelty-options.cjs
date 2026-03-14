@@ -206,27 +206,13 @@ async function main() {
     if (!recettesResp.ok) throw new Error(`Supabase recettes fetch error: ${recettesResp.status}`);
     const recettes = await recettesResp.json();
 
-    // 6. Fetch all active ingredients for fuzzy matching
+    // 6. Fetch all active ingredients for fuzzy matching (include quantite_extra)
     const ingResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/ingredients_restaurant?select=id,nom,unite_stock&actif=eq.true`,
+      `${SUPABASE_URL}/rest/v1/ingredients_restaurant?select=id,nom,unite_stock,quantite_extra,unite_extra&actif=eq.true`,
       { headers: supaHeaders },
     );
     if (!ingResp.ok) throw new Error(`Supabase ingredients fetch error: ${ingResp.status}`);
     const ingredients = await ingResp.json();
-
-    // 6b. Fetch recette_ingredients for auto-filling extra quantities
-    const riResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/recette_ingredients?select=recette_id,ingredient_id,quantite,unite`,
-      { headers: supaHeaders },
-    );
-    const recetteIngredients = riResp.ok ? await riResp.json() : [];
-    // Build map: recette_id -> [{ ingredient_id, quantite, unite }]
-    const riByRecette = {};
-    for (const ri of recetteIngredients) {
-      if (!ri.ingredient_id) continue;
-      if (!riByRecette[ri.recette_id]) riByRecette[ri.recette_id] = [];
-      riByRecette[ri.recette_id].push(ri);
-    }
 
     // 7. Process each recipe
     let updatedCount = 0;
@@ -256,25 +242,21 @@ async function main() {
       }
 
       // Fuzzy-match ingredients for sans/extra options
-      const recipeLignes = riByRecette[recette.id] || [];
       for (const opt of newOpts) {
         if (opt.type === 'sans' || opt.type === 'extra') {
           const matched = findIngredient(opt.nom, ingredients);
           if (matched) {
-            // Auto-fill quantity from recipe's ingredient lines
+            // Use ingredient's quantite_extra if available (configured once per ingredient)
             let autoQty = 0;
-            if (opt.type === 'extra') {
-              const recipeLine = recipeLignes.find(l => l.ingredient_id === matched.id);
-              if (recipeLine) {
-                // Convert recipe line unit to ingredient stock unit
-                const factor = unitFactor(recipeLine.unite, matched.unite_stock || 'g');
-                autoQty = Math.round(recipeLine.quantite * factor * 100) / 100;
-              }
+            let autoUnite = matched.unite_stock || 'g';
+            if (opt.type === 'extra' && matched.quantite_extra) {
+              autoQty = matched.quantite_extra;
+              autoUnite = matched.unite_extra || matched.unite_stock || 'g';
             }
             opt.impact_stock = [{
               ingredient_restaurant_id: matched.id,
               quantite: autoQty,
-              unite: matched.unite_stock || 'g',
+              unite: autoUnite,
             }];
           }
         }
